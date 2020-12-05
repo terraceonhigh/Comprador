@@ -1,7 +1,7 @@
-import { remote, nativeTheme } from 'electron';
+import { nativeTheme, remote } from 'electron';
 import { APP_THEME_MODE_TYPE } from '../enums';
-import { settingsStorage } from './storageHelper';
-import { undefinedOrNull } from './funcs';
+import { undefinedOrNull } from '../utils/funcs';
+import { getAppThemeModeSetting } from './settings';
 
 // [appThemeModeSettings] is optional
 // if [appThemeModeSettings] is not provided then fetch the theme value from the settings
@@ -12,7 +12,7 @@ export const getAppThemeMode = (appThemeModeSettings) => {
   let _appThemeModeSettings = appThemeModeSettings;
 
   if (undefinedOrNull(_appThemeModeSettings)) {
-    _appThemeModeSettings = getAppThemeModeSettings();
+    _appThemeModeSettings = getAppThemeModeSetting();
   }
 
   switch (_appThemeModeSettings) {
@@ -37,10 +37,4 @@ export const getContrastingTheme = (appThemeMode) => {
   }
 
   return APP_THEME_MODE_TYPE.dark;
-};
-
-export const getAppThemeModeSettings = () => {
-  const setting = settingsStorage.getItems(['appThemeMode']);
-
-  return getAppThemeMode(setting.appThemeMode);
 };
