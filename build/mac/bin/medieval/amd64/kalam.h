@@ -5,7 +5,7 @@
 
 #line 1 "cgo-builtin-export-prolog"
 
-#include <stddef.h> /* for ptrdiff_t below */
+#include <stddef.h>
 
 #ifndef GO_CGO_EXPORT_PROLOGUE_H
 #define GO_CGO_EXPORT_PROLOGUE_H
@@ -21,6 +21,7 @@ typedef struct { const char *p; ptrdiff_t n; } _GoString_;
 
 #line 14 "kalam.go"
 	#include "stdint.h"
+	typedef void (* on_cb_result_t)(char*);
 
 #line 1 "cgo-generated-wrapper"
 
@@ -44,11 +45,17 @@ typedef long long GoInt64;
 typedef unsigned long long GoUint64;
 typedef GoInt64 GoInt;
 typedef GoUint64 GoUint;
-typedef __SIZE_TYPE__ GoUintptr;
+typedef size_t GoUintptr;
 typedef float GoFloat32;
 typedef double GoFloat64;
+#ifdef _MSC_VER
+#include <complex.h>
+typedef _Fcomplex GoComplex64;
+typedef _Dcomplex GoComplex128;
+#else
 typedef float _Complex GoComplex64;
 typedef double _Complex GoComplex128;
+#endif
 
 /*
   static assertion to make sure the file is being used on architecture
@@ -72,17 +79,17 @@ typedef struct { void *data; GoInt len; GoInt cap; } GoSlice;
 extern "C" {
 #endif
 
-extern void Initialize(GoInt64 ptr);
-extern void FetchDeviceInfo(GoInt64 ptr);
-extern void FetchStorages(GoInt64 ptr);
-extern void MakeDirectory(GoInt64 ptr, char* json);
-extern void FileExists(GoInt64 ptr, char* json);
-extern void DeleteFile(GoInt64 ptr, char* json);
-extern void RenameFile(GoInt64 ptr, char* json);
-extern void Walk(GoInt64 ptr, char* json);
-extern void UploadFiles(GoInt64 onPreprocessPtr, GoInt64 onProgressPtr, GoInt64 onDonePtr, char* json);
-extern void DownloadFiles(GoInt64 onPreprocessPtr, GoInt64 onProgressPtr, GoInt64 onDonePtr, char* json);
-extern void Dispose(GoInt64 ptr);
+extern void Initialize(on_cb_result_t* onDonePtr);
+extern void FetchDeviceInfo(on_cb_result_t* onDonePtr);
+extern void FetchStorages(on_cb_result_t* onDonePtr);
+extern void MakeDirectory(char* makeDirectoryInputJson, on_cb_result_t* onDonePtr);
+extern void FileExists(char* fileExistsInputJson, on_cb_result_t* onDonePtr);
+extern void DeleteFile(char* deleteFileInputJson, on_cb_result_t* onDonePtr);
+extern void RenameFile(char* renameFileInputJson, on_cb_result_t* onDonePtr);
+extern void Walk(char* walkInputJson, on_cb_result_t* onDonePtr);
+extern void UploadFiles(char* uploadFilesInputJson, on_cb_result_t* onPreprocessPtr, on_cb_result_t* onProgressPtr, on_cb_result_t* onDonePtr);
+extern void DownloadFiles(char* downloadFilesInputJson, on_cb_result_t* onPreprocessPtr, on_cb_result_t* onProgressPtr, on_cb_result_t* onDonePtr);
+extern void Dispose(on_cb_result_t* onDonePtr);
 
 #ifdef __cplusplus
 }
