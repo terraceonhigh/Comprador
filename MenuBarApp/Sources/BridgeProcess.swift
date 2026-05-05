@@ -5,6 +5,7 @@ import UserNotifications
 class BridgeProcess {
     private var process: Process?
     private(set) var port: Int?
+    private(set) var host: String = "127.0.0.1"
     private(set) var deviceName: String?
 
     /// Starts the bridge binary and waits for it to print PORT=N.
@@ -52,13 +53,13 @@ class BridgeProcess {
         self.process = p
         NSLog("AndroidFS: Bridge process started (PID %d)", p.processIdentifier)
 
-        // Read PORT= and DEVICE= from stdout with timeout
-        let result = try await withThrowingTaskGroup(of: (Int, String?).self) { group in
+        // Read PORT=, HOST=, and DEVICE= from stdout with timeout
+        let result = try await withThrowingTaskGroup(of: BridgeStartupInfo.self) { group in
             group.addTask {
                 try await self.readPortFromStdout(stdoutPipe)
             }
             group.addTask {
-                try await Task.sleep(nanoseconds: 15_000_000_000) // 15 seconds
+                try await Task.sleep(nanoseconds: 20_000_000_000) // 20 seconds
                 throw BridgeError.timeout
             }
 
@@ -67,10 +68,12 @@ class BridgeProcess {
             return result
         }
 
-        self.port = result.0
-        self.deviceName = result.1
-        NSLog("AndroidFS: Bridge ready on port %d, device: %@", result.0, result.1 ?? "unknown")
-        return result.0
+        self.port = result.port
+        self.host = result.host ?? "127.0.0.1"
+        self.deviceName = result.device
+        NSLog("AndroidFS: Bridge ready on %@:%d, device: %@",
+              self.host, result.port, result.device ?? "unknown")
+        return result.port
     }
 
     /// Stops the bridge process.
@@ -145,17 +148,18 @@ class BridgeProcess {
         return "build/bridge"
     }
 
-    private func readPortFromStdout(_ pipe: Pipe) async throws -> (Int, String?) {
+    private func readPortFromStdout(_ pipe: Pipe) async throws -> BridgeStartupInfo {
         var port: Int?
+        var host: String?
         var device: String?
         let handle = pipe.fileHandleForReading
         var accumulated = ""
 
-        while port == nil || device == nil {
+        while port == nil || device == nil || host == nil {
             let data = handle.availableData
             guard !data.isEmpty else {
                 if port != nil {
-                    break // Got port but no device name — that's OK
+                    break // Got port; host/device may have arrived but stream closed
                 }
                 throw BridgeError.exitedEarly
             }
@@ -166,22 +170,24 @@ class BridgeProcess {
                     if line.hasPrefix("PORT="), let p = Int(line.dropFirst(5)) {
                         port = p
                     }
+                    if line.hasPrefix("HOST=") {
+                        let h = String(line.dropFirst(5))
+                        if !h.isEmpty { host = h }
+                    }
                     if line.hasPrefix("DEVICE=") {
                         let name = String(line.dropFirst(7))
-                        if !name.isEmpty {
-                            device = name
-                        }
+                        if !name.isEmpty { device = name }
                     }
                 }
             }
 
-            // Once we have port, give a brief moment for DEVICE= to arrive
-            if port != nil && device == nil {
-                try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+            // Brief wait for the rest of the metadata to arrive once we have port.
+            if port != nil && (host == nil || device == nil) {
+                try? await Task.sleep(nanoseconds: 150_000_000) // 150ms
             }
         }
 
-        return (port!, device)
+        return BridgeStartupInfo(port: port!, host: host, device: device)
     }
 
     /// Posts a notification telling the user to select File Transfer mode.
@@ -203,6 +209,12 @@ class BridgeProcess {
             center.add(request)
         }
     }
+}
+
+struct BridgeStartupInfo {
+    let port: Int
+    let host: String?
+    let device: String?
 }
 
 enum BridgeError: LocalizedError, Equatable {
