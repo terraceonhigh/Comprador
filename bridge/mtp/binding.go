@@ -148,6 +148,15 @@ func DetectDevice() (*Device, error) {
 
 	log.Printf("Found %d raw MTP device(s)", int(numDevices))
 
+	// Log the first device's full USB descriptor tree before we try to
+	// open it. This is the diagnostic that tells us whether the device
+	// is exposing a PTP-class interface (kernel-claimed, can't free) or
+	// a vendor-class MTP interface (free for libusb to claim).
+	rawSlice := unsafe.Slice(rawDevices, int(numDevices))
+	if len(rawSlice) > 0 {
+		LogUSBInterfaces(uint16(rawSlice[0].device_entry.vendor_id))
+	}
+
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		killCompetingProcesses()
 
