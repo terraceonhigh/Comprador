@@ -40,6 +40,7 @@ import (
 	"io"
 	"log"
 	"sync"
+	"time"
 	"unsafe"
 )
 
@@ -114,7 +115,14 @@ func unregisterReader(id int) {
 
 // DetectDevice finds and opens the first available MTP device.
 // Uses the raw detection API for better diagnostics.
+//
+// Retries a few times because macOS launch agents (ptpcamerad,
+// AMPDeviceDiscoveryAgent) auto-claim PTP/MTP USB interfaces and respawn
+// within ~60ms of being killed. We kill them right before each attempt to
+// race the launchd respawn.
 func DetectDevice() (*Device, error) {
+	const maxAttempts = 6
+
 	var rawDevices *C.LIBMTP_raw_device_t
 	var numDevices C.int
 
@@ -138,15 +146,24 @@ func DetectDevice() (*Device, error) {
 	}
 	defer C.free(unsafe.Pointer(rawDevices))
 
-	log.Printf("Found %d raw MTP device(s), opening first...", int(numDevices))
+	log.Printf("Found %d raw MTP device(s)", int(numDevices))
 
-	dev := C.LIBMTP_Open_Raw_Device_Uncached(rawDevices)
-	if dev == nil {
-		return nil, fmt.Errorf("failed to open MTP device (session may be locked by another process)")
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		killCompetingProcesses()
+
+		dev := C.LIBMTP_Open_Raw_Device_Uncached(rawDevices)
+		if dev != nil {
+			log.Println("MTP device opened successfully")
+			return &Device{dev: dev}, nil
+		}
+
+		log.Printf("Open attempt %d/%d failed (USB interface locked); retrying", attempt, maxAttempts)
+		// Short pause; ptpcamerad takes ~60ms to respawn, we want to
+		// catch the window where it's dead.
+		time.Sleep(150 * time.Millisecond)
 	}
 
-	log.Println("MTP device opened successfully")
-	return &Device{dev: dev}, nil
+	return nil, fmt.Errorf("failed to open MTP device after %d attempts (USB interface locked by macOS daemon)", maxAttempts)
 }
 
 // Close releases the MTP device.

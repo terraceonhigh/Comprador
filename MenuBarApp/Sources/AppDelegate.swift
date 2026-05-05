@@ -1,4 +1,5 @@
 import Cocoa
+import ServiceManagement
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
@@ -14,6 +15,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupStatusItem()
         setupDeviceWatcher()
         updateIcon(state: .idle)
+        offerLoginItemOnFirstLaunch()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -53,11 +55,56 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         menu.addItem(NSMenuItem.separator())
+
+        let loginItem = NSMenuItem(title: "Start at Login",
+                                   action: #selector(toggleLoginItem),
+                                   keyEquivalent: "")
+        loginItem.state = LoginItem.isEnabled ? .on : .off
+        menu.addItem(loginItem)
+
         menu.addItem(NSMenuItem(title: "Quit AndroidFS",
                                 action: #selector(quitApp),
                                 keyEquivalent: "q"))
 
         statusItem.menu = menu
+    }
+
+    @objc private func toggleLoginItem() {
+        if LoginItem.isEnabled {
+            LoginItem.disable()
+        } else if LoginItem.requiresApproval {
+            // User previously disabled in System Settings — open the pane
+            // so they can flip it back on.
+            if let url = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") {
+                NSWorkspace.shared.open(url)
+            }
+        } else {
+            LoginItem.enable()
+        }
+        rebuildMenu()
+    }
+
+    private func offerLoginItemOnFirstLaunch() {
+        let key = "AndroidFS.didOfferLoginItem"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+
+        // Don't prompt if the user already has it enabled or explicitly disabled it
+        let status = SMAppService.mainApp.status
+        guard status == .notRegistered else { return }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            let alert = NSAlert()
+            alert.messageText = "Start AndroidFS at login?"
+            alert.informativeText = "AndroidFS can launch automatically so your phone shows up in Finder as soon as you plug it in."
+            alert.addButton(withTitle: "Start at Login")
+            alert.addButton(withTitle: "Not Now")
+            alert.alertStyle = .informational
+            if alert.runModal() == .alertFirstButtonReturn {
+                LoginItem.enable()
+                self.rebuildMenu()
+            }
+        }
     }
 
     // MARK: - Icon State

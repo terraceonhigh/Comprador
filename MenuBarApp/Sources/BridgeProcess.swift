@@ -107,7 +107,12 @@ class BridgeProcess {
     /// Kills macOS processes that auto-claim MTP/PTP USB interfaces,
     /// preventing libusb from claiming them.
     static func killCompetingProcesses() {
-        let processNames = ["PTPCamera", "AMPDevicesAgent"]
+        // Names vary across macOS versions; include both legacy and current.
+        let processNames = [
+            "ptpcamerad", "PTPCamera",
+            "AMPDeviceDiscoveryAgent", "AMPDevicesAgent",
+            "MTPCamera",
+        ]
         for name in processNames {
             let task = Process()
             task.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
