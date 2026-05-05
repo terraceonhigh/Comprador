@@ -24,11 +24,25 @@ That's it.
 
 ## Download
 
-Grab the latest release from
-[Releases](https://github.com/terraceonhigh/Comprador/releases).
+[**Download the latest release**](https://github.com/terraceonhigh/Comprador/releases/latest)
+→ unzip → drag `Comprador.app` to your Applications folder.
 
-**First launch:** Right-click the app → Open (macOS will warn about an
-unsigned app — click "Open" to proceed).
+**First launch is the awkward bit** because the app isn't yet
+notarized by Apple:
+
+1. Open Finder, navigate to Applications.
+2. **Right-click** (or Control-click) `Comprador.app` → **Open**.
+3. macOS shows a warning that the developer can't be verified.
+   Click **Open** anyway. (You only do this once.)
+4. Comprador appears in your menu bar with a small drive icon.
+
+After that, plug in your phone or camera and follow the steps above.
+
+> **Why the warning?** Notarized macOS distribution requires an Apple
+> Developer Program subscription, which is on the roadmap. Until then
+> you're trusting the binary you downloaded matches the open-source
+> code in this repo. If you'd rather not trust it, build from source
+> — instructions below.
 
 ### Requirements
 
@@ -37,6 +51,17 @@ unsigned app — click "Open" to proceed).
 - A data-capable USB cable
 - An Android phone, or a camera that exposes itself as a USB
   storage / PTP device when plugged in
+
+### Known issues
+
+- **First-plug-after-app-start may fail.** If your phone is already
+  connected when you launch Comprador, the bridge sometimes can't
+  claim the USB interface (macOS's `ptpcamerad` has it). The app
+  will tell you what to do: unplug and replug. After that, it works.
+  The proper fix is a DriverKit extension, which is on the roadmap.
+  Workaround for now: launch Comprador *before* plugging in.
+- **Apple Silicon only** — no Intel build yet.
+- **Single device at a time.**
 
 ## Building from Source
 
