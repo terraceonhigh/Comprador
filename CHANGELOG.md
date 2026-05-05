@@ -1,8 +1,11 @@
 # Changelog
 
-## v0.1.1 — 2026-05-04
+## v0.2.0 — 2026-05-04
 
 Distribution polish — same code as v0.1.0, signed and notarized.
+(Skipped v0.1.1–v0.1.3 because those tags exist in the upstream
+OpenMTP history this repo was forked from; bumping the minor version
+to disambiguate.)
 
 - **Notarized by Apple.** First launch no longer requires the
   right-click → Open dance. Double-click installs cleanly past
