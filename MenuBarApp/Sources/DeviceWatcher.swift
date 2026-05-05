@@ -19,6 +19,7 @@ class DeviceWatcher {
     private var onDetach: ((USBDevice) -> Void)?
     private var vendorIDs: Set<UInt16> = []
     private var vendorNames: [UInt16: String] = [:]
+    private var trackedLocations: Set<UInt32> = []  // devices we emitted attach for
 
     init() {
         loadVendorIDs()
@@ -139,21 +140,66 @@ class DeviceWatcher {
             defer { IOObjectRelease(service) }
 
             let vid = getIntProperty(service, key: "idVendor").map { UInt16($0) } ?? 0
+            let isKnownVendor = vendorIDs.contains(vid)
 
-            // Filter: only care about known Android vendors
-            guard vendorIDs.contains(vid) else { continue }
+            // For attach, also accept devices that expose a USB Still Image
+            // interface (class 6, the standard PTP/MTP class). This catches
+            // cameras and any phone we don't have a vendor ID for.
+            // For detach, accept anything we previously accepted — track via
+            // locationID so we don't have to walk the interface tree on a
+            // device that's already half-gone.
+            let isStillImage = attached
+                ? deviceHasStillImageInterface(service)
+                : false
+            let isPreviouslySeen = !attached
+                ? trackedLocations.contains(UInt32(getIntProperty(service, key: "locationID") ?? 0))
+                : false
+
+            guard isKnownVendor || isStillImage || isPreviouslySeen else { continue }
 
             let device = extractDeviceInfo(from: service)
-            NSLog("AndroidFS: USB %@ — %@ (vendor: 0x%04X, product: 0x%04X)",
+            let matchSource = isKnownVendor
+                ? "vendor"
+                : (isStillImage ? "image-class" : "tracked")
+            NSLog("AndroidFS: USB %@ — %@ (vendor: 0x%04X, product: 0x%04X, match: %@)",
                   attached ? "attached" : "detached",
-                  device.displayName, device.vendorID, device.productID)
+                  device.displayName, device.vendorID, device.productID, matchSource)
 
             if attached {
+                trackedLocations.insert(device.locationID)
                 onAttach?(device)
             } else {
+                trackedLocations.remove(device.locationID)
                 onDetach?(device)
             }
         }
+    }
+
+    /// Walks the USB device's children in the IOService plane looking for
+    /// any IOUSBHostInterface with bInterfaceClass = 6 (Still Image / PTP).
+    /// PTP is the standard for cameras and the underlying class many MTP
+    /// implementations expose, so this catches USB-PTP devices regardless
+    /// of whether their vendor ID is in our known-Android-OEM list.
+    private func deviceHasStillImageInterface(_ device: io_service_t) -> Bool {
+        var iter: io_iterator_t = 0
+        guard IORegistryEntryGetChildIterator(device, kIOServicePlane, &iter) == KERN_SUCCESS else {
+            return false
+        }
+        defer { IOObjectRelease(iter) }
+
+        while case let child = IOIteratorNext(iter), child != IO_OBJECT_NULL {
+            defer { IOObjectRelease(child) }
+
+            var classNameC = [CChar](repeating: 0, count: 128)
+            IOObjectGetClass(child, &classNameC)
+            let className = String(cString: classNameC)
+            guard className == "IOUSBHostInterface" else { continue }
+
+            if getIntProperty(child, key: "bInterfaceClass") == 6 {
+                return true
+            }
+        }
+        return false
     }
 
     private func extractDeviceInfo(from service: io_service_t) -> USBDevice {
