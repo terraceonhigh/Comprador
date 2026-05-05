@@ -172,14 +172,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         case error
     }
 
+    private static let pulseAnimationKey = "comprador.pulse"
+
     private func updateIcon(state: IconState) {
         guard let button = statusItem.button else { return }
 
         let symbolName: String
         switch state {
-        case .idle:
-            symbolName = "externaldrive"
-        case .connecting:
+        case .idle, .connecting:
             symbolName = "externaldrive"
         case .mounted:
             symbolName = "externaldrive.fill"
@@ -189,6 +189,37 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Comprador")
         button.image?.size = NSSize(width: 18, height: 18)
+
+        // Throb the icon while we're trying to connect so the user has a
+        // visible signal that the system is working — otherwise the
+        // 5–30s wait between attach and mount looks like nothing is
+        // happening. Steady icon for every other state.
+        if state == .connecting {
+            startPulse(on: button)
+        } else {
+            stopPulse(on: button)
+        }
+    }
+
+    private func startPulse(on button: NSStatusBarButton) {
+        button.wantsLayer = true
+        guard let layer = button.layer,
+              layer.animation(forKey: AppDelegate.pulseAnimationKey) == nil
+        else { return }
+
+        let pulse = CABasicAnimation(keyPath: "opacity")
+        pulse.fromValue = 1.0
+        pulse.toValue = 0.35
+        pulse.duration = 0.9
+        pulse.autoreverses = true
+        pulse.repeatCount = .infinity
+        pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        layer.add(pulse, forKey: AppDelegate.pulseAnimationKey)
+    }
+
+    private func stopPulse(on button: NSStatusBarButton) {
+        button.layer?.removeAnimation(forKey: AppDelegate.pulseAnimationKey)
+        button.layer?.opacity = 1.0
     }
 
     // MARK: - Device Watcher
