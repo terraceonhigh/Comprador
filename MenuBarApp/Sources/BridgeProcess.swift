@@ -11,11 +11,7 @@ class BridgeProcess {
     /// Starts the bridge binary and waits for it to print PORT=N.
     /// Returns the port number on success.
     /// Throws if the bridge fails to start or doesn't respond within the timeout.
-    /// `preferredHost`, if set, is exported as ANDROIDFS_HOST so the bridge skips
-    /// its own mDNS dance and uses the provided hostname directly. The caller is
-    /// responsible for ensuring the hostname resolves (typically by asking the
-    /// privileged helper to add it to /etc/hosts first).
-    func start(preferredHost: String? = nil) async throws -> Int {
+    func start() async throws -> Int {
         let bridgePath = findBridgeBinary()
         guard FileManager.default.fileExists(atPath: bridgePath) else {
             throw BridgeError.binaryNotFound(bridgePath)
@@ -37,9 +33,6 @@ class BridgeProcess {
             env["DYLD_LIBRARY_PATH"] = "\(homebrewLib):\(existing)"
         } else {
             env["DYLD_LIBRARY_PATH"] = homebrewLib
-        }
-        if let h = preferredHost, !h.isEmpty {
-            env["ANDROIDFS_HOST"] = h
         }
         p.environment = env
 

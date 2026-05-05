@@ -343,14 +343,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.bridge = bp
 
             do {
-                let preferredHost = HelperClient.isEnabled
-                    ? registerCleanHostname(for: device)
-                    : nil
+                // Start the bridge with no preferred host. The bridge does
+                // its own mDNS dance and prints PORT/HOST/DEVICE on stdout.
+                let port = try await bp.start()
 
-                let port = try await bp.start(preferredHost: preferredHost)
+                // Prefer the libmtp-derived friendly name (Android's
+                // Settings.Global.DEVICE_NAME → MTP DeviceFriendlyName →
+                // LIBMTP_Get_Friendlyname). Falls back to the IOKit USB
+                // product string only if libmtp gave us nothing.
                 let displayName = bp.deviceName ?? device.displayName
 
-                let _ = try await mountManager.mount(host: bp.host, port: port, displayName: displayName)
+                // If the helper is approved, override the bridge's
+                // mDNS-derived `.local` hostname with a clean single-label
+                // name pulled from /etc/hosts. Falls back to bp.host on
+                // any failure, which still gives the user the .local form.
+                var mountHost = bp.host
+                if HelperClient.isEnabled,
+                   let cleanLabel = registerCleanHostname(named: displayName) {
+                    mountHost = cleanLabel
+                }
+
+                let _ = try await mountManager.mount(host: mountHost, port: port, displayName: displayName)
 
                 await MainActor.run {
                     NSLog("AndroidFS: Device mounted as volume")
@@ -405,12 +418,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Sanitises the device's USB display name into a DNS label and asks
-    /// the privileged helper to point it at 127.0.0.1 in /etc/hosts.
-    /// Returns the hostname on success, or nil if the helper rejected it
-    /// (in which case the bridge falls back to mDNS).
-    private func registerCleanHostname(for device: USBDevice) -> String? {
-        let label = AppDelegate.sanitizeHostname(device.displayName)
+    /// Sanitises a friendly device name into a DNS label and asks the
+    /// privileged helper to point it at 127.0.0.1 in /etc/hosts. Returns
+    /// the hostname on success, or nil if the name didn't yield a valid
+    /// label or the helper rejected it (in which case the caller should
+    /// fall back to whatever the bridge advertised — typically mDNS).
+    private func registerCleanHostname(named friendlyName: String) -> String? {
+        let label = AppDelegate.sanitizeHostname(friendlyName)
         guard !label.isEmpty else { return nil }
         do {
             try HelperClient.addHost(label)
