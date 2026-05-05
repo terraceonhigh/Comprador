@@ -80,11 +80,27 @@ jobs:
           # (overwriting whatever dist-swiftc left).
           rm -f dist/Comprador.zip
           ditto -c -k --keepParent dist/Comprador.app dist/Comprador.zip
-          xcrun notarytool submit dist/Comprador.zip \
+          # Submit and capture the JSON output so we can extract the
+          # submission id even on success. --output-format json keeps
+          # parsing trivial.
+          SUBMIT_OUT=$(xcrun notarytool submit dist/Comprador.zip \
             --apple-id "$APPLE_ID" \
             --team-id "$APPLE_TEAM_ID" \
             --password "$APPLE_APP_PASSWORD" \
-            --wait
+            --output-format json \
+            --wait)
+          echo "$SUBMIT_OUT"
+          SUBMIT_ID=$(echo "$SUBMIT_OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+          STATUS=$(echo "$SUBMIT_OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')
+          if [ "$STATUS" != "Accepted" ]; then
+            echo "::group::notarytool log for $SUBMIT_ID (status=$STATUS)"
+            xcrun notarytool log "$SUBMIT_ID" \
+              --apple-id "$APPLE_ID" \
+              --team-id "$APPLE_TEAM_ID" \
+              --password "$APPLE_APP_PASSWORD" || true
+            echo "::endgroup::"
+            exit 1
+          fi
           xcrun stapler staple dist/Comprador.app
           xcrun stapler validate dist/Comprador.app
 
