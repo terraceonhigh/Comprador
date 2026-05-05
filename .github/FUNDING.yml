@@ -1,0 +1,10 @@
+# GitHub Sponsors button for the repo card.
+# Activates once https://github.com/sponsors/terraceonhigh is enrolled
+# (free, 1-2 day review). Until then this file is harmless.
+
+github: [terraceonhigh]
+
+# Uncomment any of these once the corresponding accounts exist.
+# ko_fi: terraceonhigh
+# buy_me_a_coffee: terraceonhigh
+# custom: ["https://buy.stripe.com/your-payment-link"]
