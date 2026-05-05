@@ -195,12 +195,12 @@ Comprador is free and will stay that way. If it's saved you the cost of
 a third-party transfer app, or just made your day a little less annoying,
 you can throw a few dollars in the tip jar:
 
-- [GitHub Sponsors](https://github.com/sponsors/terraceonhigh) — recurring
-  or one-time, no fees taken out of your contribution.
+- **Interac e-Transfer** (Canadian banking only) → `terrace@terrace.zone`.
+  Auto-deposit is on, so no security question is needed; the transfer
+  lands directly. Any amount is welcome and goes toward the project's
+  ongoing costs (Apple Developer Program annual renewal, signing
+  certificates, the domain).
 
-Even small recurring sponsorships meaningfully cover the project's
-infrastructure costs (Apple Developer Program enrollment, signing
-certificates, the domain you're reading this on if there is one).
 If you'd rather contribute code or testing, see
 [CONTRIBUTING](CONTRIBUTING.md).
 
