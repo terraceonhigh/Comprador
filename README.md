@@ -138,11 +138,14 @@ session-locked protocol doesn't map well to File Provider's pull-based model.
 
 ## Credits
 
-This project is a fork of [OpenMTP](https://github.com/ganeshrvel/openmtp)
-by Ganesh Rathinavel. The original Electron frontend and Node.js MTP
-bindings are not used — Comprador is a clean reimplementation with a
-different architecture (Go + Swift instead of Electron + Node).
+Comprador began as a fork of [OpenMTP](https://github.com/ganeshrvel/openmtp)
+by Ganesh Rathinavel, but no source from that project remains — Comprador
+is a clean reimplementation with a different architecture (Go WebDAV
+bridge + Swift menu bar app, in place of Electron + Node.js).
 
 ## License
 
-[MIT](LICENSE)
+[GNU General Public License, version 3 or later](LICENSE).
+
+Third-party components and their licenses (libmtp, `golang.org/x/net`)
+are listed in [NOTICES](NOTICES.md).
