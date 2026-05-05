@@ -164,23 +164,37 @@ class BridgeProcess {
     /// Photos.app) keep working.
     static func killCompetingProcesses() {
         let uid = getuid()
-        // user-domain LaunchAgents that compete for MTP/PTP devices.
+        // gui-domain LaunchAgents that compete for MTP/PTP devices.
+        // (Originally targeted user/<UID> — that domain doesn't host
+        // these services. `launchctl print user/501/com.apple.ptpcamerad`
+        // returns "Could not find service in domain", whereas
+        // `gui/501/com.apple.ptpcamerad` shows the running daemon.
+        // GUI agents are scoped to a logged-in graphical session; user
+        // agents would run in headless contexts too.)
         let agents = [
             "com.apple.ptpcamerad",
             "com.apple.AMPDeviceDiscoveryAgent",
             "com.apple.AMPDevicesAgent",
         ]
         for label in agents {
-            let target = "user/\(uid)/\(label)"
+            let target = "gui/\(uid)/\(label)"
+            let pipe = Pipe()
             let task = Process()
             task.executableURL = URL(fileURLWithPath: "/bin/launchctl")
             task.arguments = ["bootout", target]
             task.standardOutput = FileHandle.nullDevice
-            task.standardError = FileHandle.nullDevice
+            task.standardError = pipe
             try? task.run()
             task.waitUntilExit()
             if task.terminationStatus == 0 {
                 NSLog("Comprador: launchctl bootout %@ OK", label)
+            } else {
+                let stderr = String(
+                    data: pipe.fileHandleForReading.readDataToEndOfFile(),
+                    encoding: .utf8
+                )?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                NSLog("Comprador: launchctl bootout %@ failed (exit %d): %@",
+                      label, task.terminationStatus, stderr)
             }
         }
     }
@@ -203,7 +217,7 @@ class BridgeProcess {
             guard FileManager.default.fileExists(atPath: plistPath) else { continue }
             let task = Process()
             task.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-            task.arguments = ["bootstrap", "user/\(uid)", plistPath]
+            task.arguments = ["bootstrap", "gui/\(uid)", plistPath]
             task.standardOutput = FileHandle.nullDevice
             task.standardError = FileHandle.nullDevice
             try? task.run()
