@@ -6,6 +6,22 @@
 ptpcamerad already owns. Multi-day work; do not start without reading
 [TODO.md](../TODO.md) and the closing commits referenced below.
 
+> **Status update — 2026-05-04 (Dexter active):** Apple Developer
+> Program enrollment confirmed (Team ID `5875SC35WL`, individual).
+> The DriverKit USB Transport entitlement request is filed with
+> Apple (text in [ENTITLEMENT-REQUEST.md](ENTITLEMENT-REQUEST.md));
+> the System Extension Install capability is **self-service** on the
+> App ID page, not a separate Apple review (corrected mid-session
+> after Apple's portal made it obvious). Dext architecture committed
+> in [DEXT-DESIGN.md](DEXT-DESIGN.md). Empty
+> [USBDriver/](../USBDriver) directory reserved for the dext target
+> with a README. Host-side entitlement
+> `com.apple.developer.system-extension.install` added to
+> [Comprador.entitlements](../MenuBarApp/Comprador.entitlements);
+> `make app-swiftc` still builds cleanly (verified). Code work past
+> the design doc is gated on Apple approving the DriverKit USB
+> Transport entitlement (2–6 weeks).
+
 ---
 
 ## The problem in one paragraph
@@ -178,16 +194,23 @@ verify checksums.
 ## Distribution constraints
 
 - **Notarization is required.** Dexts must be notarized by Apple to
-  load. This means Mercer's pending Apple Developer Program
-  enrollment is a prerequisite for *anyone* installing a build.
-- **System Extension entitlement** is required on the host app
-  (`com.apple.developer.system-extension.install`). Apple has to
-  approve it; submit early.
+  load. This means Apple Developer Program enrollment is a
+  prerequisite for *anyone* installing a build. (Confirmed
+  2026-05-04: Team ID `5875SC35WL`.)
+- **System Extension Install capability** is required on the host
+  app (`com.apple.developer.system-extension.install`). This is a
+  self-service toggle on the App ID at developer.apple.com →
+  Identifiers — no Apple review, just tick the box when registering
+  the App ID. Earlier drafts of this doc described it as a separate
+  Apple review request; that was wrong.
 - **DriverKit USB Transport entitlement** is required on the dext
   (`com.apple.developer.driverkit.transport.usb`). Apple
   individually approves these; expect 2–6 weeks turnaround. Worth
   filing the request before writing much code so the timer runs in
-  parallel.
+  parallel. The form takes a single VID per submission, but
+  Comprador needs ~15 Android vendors plus camera vendors — see
+  [ENTITLEMENT-REQUEST.md](ENTITLEMENT-REQUEST.md) for the
+  multi-vendor handling.
 - The dext bundles inside `Comprador.app/Contents/Library/SystemExtensions/`
   and gets activated via `OSSystemExtensionRequest.activationRequest`.
 
@@ -236,13 +259,17 @@ overlapping windows, branch — `mercer/<topic>` and `dexter/<topic>`.
 
 Before starting Milestone 1, confirm with the human collaborator:
 
-- [ ] Apple Developer Program enrollment is active (need the team ID
-      to scaffold the dext bundle).
+- [x] Apple Developer Program enrollment is active (need the team ID
+      to scaffold the dext bundle). **Done 2026-05-04 — Team ID
+      `5875SC35WL`, individual enrollment.**
 - [ ] DriverKit USB Transport entitlement has been requested. (Apple
-      may take weeks; request before writing code.)
-- [ ] User has read this handoff and the linked TODO.md entry, and
+      may take weeks; request before writing code.) **Drafted in
+      [ENTITLEMENT-REQUEST.md](ENTITLEMENT-REQUEST.md); user is
+      filing the request with Apple — update the status table in
+      that file when filed and again when Apple responds.**
+- [x] User has read this handoff and the linked TODO.md entry, and
       agrees with the scope before you spend a week on Milestone 1.
-- [ ] User wants the dext as a system extension activated via
+- [x] User wants the dext as a system extension activated via
       `SMAppService.daemon` / `OSSystemExtensionRequest`, *not* as
       a plain helper. They are different mechanisms; this one
       requires Apple approval but gives the kernel access we need.
