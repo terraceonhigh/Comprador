@@ -1,10 +1,8 @@
-# GitHub Sponsors button for the repo card.
-# Activates once https://github.com/sponsors/terraceonhigh is enrolled
-# (free, 1-2 day review). Until then this file is harmless.
+# Repo card "Sponsor" button → routes to the README's Support section,
+# which has Interac e-Transfer instructions for terrace@terrace.zone
+# (auto-deposit enabled, so transfers land without a security question).
+#
+# Not using github_sponsors because Stripe / commercial-banking setup
+# isn't done yet; revisit if/when that's wired up.
 
-github: [terraceonhigh]
-
-# Uncomment any of these once the corresponding accounts exist.
-# ko_fi: terraceonhigh
-# buy_me_a_coffee: terraceonhigh
-# custom: ["https://buy.stripe.com/your-payment-link"]
+custom: ["https://github.com/terraceonhigh/Comprador#support"]
