@@ -7,6 +7,14 @@
       `dns-sd -P` and advertises the URL with that hostname. NetFS auto-names
       the volume from the URL host, so Finder now sees `/Volumes/Pixel-6.local`.
       Verified end-to-end with a stub WebDAV server.
+- [x] Drop the `.local` suffix from the Finder sidebar entry (Pixel-6.local → Pixel-6)
+      A privileged helper (LaunchDaemon registered via `SMAppService.daemon`)
+      now manages a block in `/etc/hosts` so the bridge can advertise
+      `http://Pixel-6:port/`. macOS prompts the user once to approve it in
+      Login Items; afterwards every device gets a clean single-label name.
+      Strict server-side validation (`^[A-Za-z][A-Za-z0-9-]{0,62}$`, no
+      reserved labels) prevents impersonation of real domains. mDNS remains
+      as a fallback when the helper isn't approved.
 - [x] Device name shows "Android Device" — fall back to `LIBMTP_Get_Modelname` when friendly name is empty (already in `binding.go`)
 - [x] Login item registration — offer to start at login on first launch via `SMAppService`
 

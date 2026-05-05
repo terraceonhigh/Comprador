@@ -37,12 +37,21 @@ func main() {
 
 	handler := webdav.NewHandler(session)
 
-	// Register a per-device .local hostname → 127.0.0.1 via mDNS so that
-	// NetFS, which auto-names volumes after the URL host, gives us a
-	// Finder volume named after the device instead of "127.0.0.1".
+	// Hostname for the WebDAV URL. NetFS auto-names volumes from the URL
+	// host, so a clean, single-label hostname → clean Finder volume name.
+	//
+	// Resolution order:
+	//   1. ANDROIDFS_HOST env var, if set (production: provided by the
+	//      menu-bar app after the privileged helper has added an entry to
+	//      /etc/hosts pointing it at 127.0.0.1).
+	//   2. mDNS fallback: register <DeviceName>.local → 127.0.0.1 via
+	//      dns-sd. Works without the helper but yields a `.local` suffix.
+	//   3. Bare 127.0.0.1, with the corresponding ugly Finder volume name.
 	host := "127.0.0.1"
-	hostReg, err := mtp.RegisterHostname(deviceName, port)
-	if err != nil {
+	if envHost := os.Getenv("ANDROIDFS_HOST"); envHost != "" {
+		host = envHost
+		log.Printf("Using app-provided hostname: %s", host)
+	} else if hostReg, err := mtp.RegisterHostname(deviceName, port); err != nil {
 		log.Printf("Hostname registration failed (volume will be named '127.0.0.1'): %v", err)
 	} else {
 		host = hostReg.Hostname
