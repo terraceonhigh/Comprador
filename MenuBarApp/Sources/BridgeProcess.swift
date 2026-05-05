@@ -190,7 +190,16 @@ class BridgeProcess {
         return BridgeStartupInfo(port: port!, host: host, device: device)
     }
 
-    /// Posts a notification telling the user to select File Transfer mode.
+    /// Posts a notification telling the user how to recover from a failed
+    /// connection. Two recovery paths are bundled because we can't tell
+    /// from the bridge side which one applies:
+    ///
+    ///   1. User hasn't selected File Transfer yet → tap the USB
+    ///      notification on the phone.
+    ///   2. User has selected File Transfer but the USB descriptor is
+    ///      stale (some Pixel/Android builds don't re-enumerate when the
+    ///      mode changes — the phone's UI says MTP but the OS still sees
+    ///      it as PTP) → unplug and replug to force fresh enumeration.
     static func postFileTransferNotification() {
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert]) { granted, _ in
@@ -198,7 +207,7 @@ class BridgeProcess {
 
             let content = UNMutableNotificationContent()
             content.title = "Check your phone"
-            content.body = "Select \"File Transfer\" from the USB notification to access your files in Finder."
+            content.body = "Select \"File Transfer\" on your phone. If it's already selected, unplug and replug to refresh the connection."
             content.sound = .default
 
             let request = UNNotificationRequest(
