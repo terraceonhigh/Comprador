@@ -25,24 +25,11 @@ That's it.
 ## Download
 
 [**Download the latest release**](https://github.com/terraceonhigh/Comprador/releases/latest)
-→ unzip → drag `Comprador.app` to your Applications folder.
+→ open the .dmg → drag `Comprador.app` to the Applications folder
+shortcut → eject the disk image.
 
-**First launch is the awkward bit** because the app isn't yet
-notarized by Apple:
-
-1. Open Finder, navigate to Applications.
-2. **Right-click** (or Control-click) `Comprador.app` → **Open**.
-3. macOS shows a warning that the developer can't be verified.
-   Click **Open** anyway. (You only do this once.)
-4. Comprador appears in your menu bar with a small drive icon.
-
-After that, plug in your phone or camera and follow the steps above.
-
-> **Why the warning?** Notarized macOS distribution requires an Apple
-> Developer Program subscription, which is on the roadmap. Until then
-> you're trusting the binary you downloaded matches the open-source
-> code in this repo. If you'd rather not trust it, build from source
-> — instructions below.
+Comprador is signed and notarized by Apple, so the first launch is
+just a double-click — no Gatekeeper warning, no right-click dance.
 
 ### Requirements
 
