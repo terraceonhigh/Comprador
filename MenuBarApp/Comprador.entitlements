@@ -2,7 +2,25 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- Required for IOKit USB device matching in DeviceWatcher.swift
+	     and for the libusb fallback path in the Go bridge. Approved by
+	     default; no Apple review needed. -->
 	<key>com.apple.security.device.usb</key>
+	<true/>
+
+	<!-- Required so AppDelegate can call OSSystemExtensionRequest
+	     .activationRequest to install the bundled USB DriverKit
+	     extension (com.comprador.app.USBDriver). Without this
+	     entitlement the activation request returns an error and
+	     macOS shows no install prompt.
+
+	     This is a self-service capability — no Apple review needed.
+	     Tick "System Extension" on the com.comprador.app App ID at
+	     developer.apple.com → Identifiers, and provisioning picks
+	     it up automatically. On ad-hoc signed builds this key is
+	     harmless: activation simply fails and the app falls back
+	     to the libusb + manual-replug recovery path. -->
+	<key>com.apple.developer.system-extension.install</key>
 	<true/>
 </dict>
 </plist>
