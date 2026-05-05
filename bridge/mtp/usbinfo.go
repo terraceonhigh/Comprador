@@ -100,6 +100,74 @@ func LogUSBInterfaces(vendorID uint16) {
 	log.Printf("usbinfo: enumeration complete (%d device(s) matching VID=0x%04x)", matched, vendorID)
 }
 
+// ResetDevice issues a USB-level port reset on the first matching device.
+// This is the software equivalent of physically unplugging and replugging
+// the cable — the kernel sees a detach + reattach and invalidates whatever
+// state ptpcamerad (or the kernel-resident USBImaging driver) had cached
+// against the device. Without this, killall-ing ptpcamerad doesn't actually
+// release the interface: launchd respawns it within ~60ms and the new
+// instance re-acquires the device before our claim window opens.
+//
+// Returns true if a reset was issued (bridge should exit so a fresh
+// invocation can re-detect and claim the freshly-re-enumerated device).
+func ResetDevice(vendorID uint16) bool {
+	var ctx *C.libusb_context
+	if rc := C.libusb_init(&ctx); rc != 0 {
+		log.Printf("usbinfo: libusb_init failed for reset: %d", rc)
+		return false
+	}
+	defer C.libusb_exit(ctx)
+
+	var devices **C.libusb_device
+	count := C.libusb_get_device_list(ctx, &devices)
+	if count < 0 {
+		log.Printf("usbinfo: libusb_get_device_list failed: %d", count)
+		return false
+	}
+	defer C.libusb_free_device_list(devices, 1)
+
+	devSlice := unsafe.Slice(devices, int(count))
+	for _, dev := range devSlice {
+		if dev == nil {
+			continue
+		}
+		var desc C.struct_libusb_device_descriptor
+		if C.libusb_get_device_descriptor(dev, &desc) != 0 {
+			continue
+		}
+		if uint16(desc.idVendor) != vendorID {
+			continue
+		}
+
+		var handle *C.libusb_device_handle
+		if rc := C.libusb_open(dev, &handle); rc != 0 {
+			log.Printf("usbinfo: libusb_open failed for VID=0x%04x PID=0x%04x: %d (continuing)",
+				uint16(desc.idVendor), uint16(desc.idProduct), int(rc))
+			continue
+		}
+
+		log.Printf("usbinfo: issuing USB port reset on VID=0x%04x PID=0x%04x (software unplug+replug)",
+			uint16(desc.idVendor), uint16(desc.idProduct))
+		rc := C.libusb_reset_device(handle)
+		C.libusb_close(handle)
+
+		switch rc {
+		case 0:
+			log.Printf("usbinfo: reset OK; device will re-enumerate, bridge exiting for fresh attempt")
+			return true
+		case C.LIBUSB_ERROR_NOT_FOUND:
+			// macOS frequently returns NOT_FOUND because the reset
+			// changed the device address mid-call — that's actually
+			// the success signal we want.
+			log.Printf("usbinfo: reset triggered re-enumeration (NOT_FOUND); bridge exiting for fresh attempt")
+			return true
+		default:
+			log.Printf("usbinfo: libusb_reset_device returned %d", int(rc))
+		}
+	}
+	return false
+}
+
 func classDescription(class uint8) string {
 	switch class {
 	case 0x00:

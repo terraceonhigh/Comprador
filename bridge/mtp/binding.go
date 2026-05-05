@@ -172,6 +172,21 @@ func DetectDevice() (*Device, error) {
 		time.Sleep(150 * time.Millisecond)
 	}
 
+	// Last resort: a USB-level port reset. The kernel's grip on the
+	// interface (or a respawned ptpcamerad's fast re-acquisition) means
+	// our claim attempts were always going to lose. Reset forces the
+	// same detach/reattach cycle as a physical replug, after which
+	// libmtp opens cleanly on the first attempt of the next bridge
+	// invocation. We sleep briefly so the USB layer has time to settle
+	// before the AppDelegate spawns a fresh bridge process.
+	if len(rawSlice) > 0 {
+		log.Printf("All %d attempts failed; trying software replug via libusb_reset_device", maxAttempts)
+		if ResetDevice(uint16(rawSlice[0].device_entry.vendor_id)) {
+			time.Sleep(1500 * time.Millisecond)
+			return nil, fmt.Errorf("USB reset issued; exiting so the next bridge invocation sees the freshly re-enumerated device")
+		}
+	}
+
 	return nil, fmt.Errorf("failed to open MTP device after %d attempts (USB interface locked by macOS daemon)", maxAttempts)
 }
 
