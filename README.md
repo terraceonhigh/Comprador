@@ -1,12 +1,24 @@
-# Comprador — Android File Transfer for macOS
+# Comprador
 
-Mount your Android phone as a Finder volume over USB. Just plug in, select File Transfer, and your phone appears in Finder.
+**See Android phones and cameras in Finder. Free and open source.**
+
+Plug in. Comprador mounts the device as a Finder volume — no extra app
+to open, no kernel extension, no subscription.
 
 ## How It Works
 
-1. Plug in your Android phone via USB
-2. Pull down notification shade → tap **File Transfer**
+**Android phones**
+
+1. Plug in your phone via USB
+2. Pull down the notification shade → tap **File Transfer**
 3. Phone appears in Finder sidebar
+
+**Cameras (DSLRs and mirrorless — Canon, Nikon, Sony, Fuji, etc.)**
+
+1. Plug in the camera via USB
+2. If the camera asks, choose **PC / Computer** mode (sometimes called
+   *MTP* or *PTP*)
+3. Camera appears in Finder sidebar
 
 That's it.
 
@@ -31,7 +43,7 @@ That's it.
 ## Download
 
 Grab the latest release from
-[Releases](https://github.com/terraceonhigh/macOS-mtp/releases).
+[Releases](https://github.com/terraceonhigh/Comprador/releases).
 
 **First launch:** Right-click the app → Open (macOS will warn about an
 unsigned app — click "Open" to proceed).
@@ -40,7 +52,9 @@ unsigned app — click "Open" to proceed).
 
 - macOS 13 (Ventura) or later
 - Apple Silicon Mac (ARM)
-- An Android phone with a data-capable USB cable
+- A data-capable USB cable
+- An Android phone, or a camera that exposes itself as a USB
+  storage / PTP device when plugged in
 
 ## Building from Source
 
