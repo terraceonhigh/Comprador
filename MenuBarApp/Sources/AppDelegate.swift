@@ -379,11 +379,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     rebuildMenu()
                     NSWorkspace.shared.open(mountedURL)
                 }
-                // Restore the LaunchAgents we tore down so Image Capture /
-                // Photos / Apple Mobile Device Service keep working in
-                // this session. We've already claimed the USB interface,
-                // so they can come back without disturbing us.
-                BridgeProcess.bootstrapCompetingDaemonsBack()
                 return // success
             } catch let bridgeErr as BridgeError where bridgeErr == .timeout {
                 NSLog("Comprador: Bridge timeout — prompting user")
