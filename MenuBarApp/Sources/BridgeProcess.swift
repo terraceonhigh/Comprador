@@ -146,26 +146,68 @@ class BridgeProcess {
 
     // MARK: - Private
 
-    /// Kills macOS processes that auto-claim MTP/PTP USB interfaces,
+    /// Tears down macOS daemons that auto-claim MTP/PTP USB interfaces,
     /// preventing libusb from claiming them.
+    ///
+    /// `killall` alone doesn't work because the relevant agents
+    /// (`com.apple.ptpcamerad`, etc.) are Mach-service-on-demand: launchd
+    /// respawns them within ~60ms of any kill, well before our claim
+    /// window opens.
+    ///
+    /// `launchctl bootout` actually unloads the agent from the running
+    /// launchd. It won't be brought back until something explicitly
+    /// requests its Mach service. Combined with our claim happening
+    /// within seconds, this gives the bridge a clear window.
+    ///
+    /// Use `bootstrapCompetingDaemonsBack()` after a successful mount
+    /// to restore them so other macOS components (Image Capture,
+    /// Photos.app) keep working.
     static func killCompetingProcesses() {
-        // Names vary across macOS versions; include both legacy and current.
-        let processNames = [
-            "ptpcamerad", "PTPCamera",
-            "AMPDeviceDiscoveryAgent", "AMPDevicesAgent",
-            "MTPCamera",
+        let uid = getuid()
+        // user-domain LaunchAgents that compete for MTP/PTP devices.
+        let agents = [
+            "com.apple.ptpcamerad",
+            "com.apple.AMPDeviceDiscoveryAgent",
+            "com.apple.AMPDevicesAgent",
         ]
-        for name in processNames {
+        for label in agents {
+            let target = "user/\(uid)/\(label)"
             let task = Process()
-            task.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
-            task.arguments = ["-9", name]
+            task.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+            task.arguments = ["bootout", target]
             task.standardOutput = FileHandle.nullDevice
             task.standardError = FileHandle.nullDevice
             try? task.run()
             task.waitUntilExit()
             if task.terminationStatus == 0 {
-                NSLog("Comprador: Killed %@", name)
+                NSLog("Comprador: launchctl bootout %@ OK", label)
             }
+        }
+    }
+
+    /// Restore the LaunchAgents that `killCompetingProcesses()` tore
+    /// down, so Image Capture / Photos / Apple Mobile Device Service
+    /// keep working after the bridge has claimed our device.
+    ///
+    /// Call this after the bridge successfully mounts. Failure is
+    /// silent — if a bootstrap fails, the agent will come back on next
+    /// login anyway.
+    static func bootstrapCompetingDaemonsBack() {
+        let uid = getuid()
+        let plists = [
+            "/System/Library/LaunchAgents/com.apple.ptpcamerad.plist",
+            "/System/Library/LaunchAgents/com.apple.AMPDeviceDiscoveryAgent.plist",
+            "/System/Library/LaunchAgents/com.apple.AMPDevicesAgent.plist",
+        ]
+        for plistPath in plists {
+            guard FileManager.default.fileExists(atPath: plistPath) else { continue }
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+            task.arguments = ["bootstrap", "user/\(uid)", plistPath]
+            task.standardOutput = FileHandle.nullDevice
+            task.standardError = FileHandle.nullDevice
+            try? task.run()
+            task.waitUntilExit()
         }
     }
 
