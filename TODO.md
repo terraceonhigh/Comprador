@@ -27,8 +27,19 @@
 ## Low impact (completeness)
 
 - [ ] Multiple storage support (phones with SD cards → subdirectories under single mount)
-- [ ] Notarization build configuration (hardened runtime + signing for distribution)
+- [x] Notarization build configuration (hardened runtime + signing for distribution)
 - [ ] Large directory performance (700+ entries block the session goroutine; consider async/paginated enumeration)
+- [ ] **Auto-spawn on USB connect (deferred).** macOS launchd supports
+      `LaunchEvents → com.apple.iokit.matching` to spawn an agent when a
+      matching USB device connects. Apple uses this for Image Capture etc.
+      Wired through `SMAppService.agent`, it'd let users who quit
+      Comprador have the app come back when they plug in a phone. But:
+      "Start at Login" already covers this for the common case (most
+      users enable it via the welcome window), the kernel-claim race
+      against ptpcamerad is unaffected, and it adds a Login Items row.
+      File this under "easy lever to pull *if* we see post-launch
+      reports of 'I plugged in a phone and nothing happened.'" Until
+      then, redundant.
 
 ## Known friction points
 
