@@ -13,8 +13,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var registeredHostname: String?  // hostname currently in /etc/hosts via helper
     private var welcomeController: WelcomeWindowController?
 
-    private static let openedFinderOnFirstMountKey = "Comprador.didOpenFinderOnFirstMount"
-
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Clear out any leftover webdav mounts from a prior session — otherwise
         // NetFS auto-suffixes today's mount as /Volumes/Pixel-6-1 and Finder
@@ -49,6 +47,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(deviceItem)
 
             if mountManager.isMounted {
+                menu.addItem(NSMenuItem(title: "Show in Finder",
+                                        action: #selector(showInFinder),
+                                        keyEquivalent: "f"))
                 menu.addItem(NSMenuItem(title: "Eject \(device.displayName)",
                                         action: #selector(ejectDevice),
                                         keyEquivalent: "e"))
@@ -161,16 +162,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// On the very first successful mount, surface a Finder window pointed
-    /// at the new volume so the user actually sees the win — without this,
-    /// the only feedback for a non-technical user is a slightly different
-    /// menu bar icon. Subsequent mounts are silent.
-    private func openFinderOnFirstMountIfNeeded(_ volumeURL: URL) {
-        let key = AppDelegate.openedFinderOnFirstMountKey
-        if UserDefaults.standard.bool(forKey: key) { return }
-        UserDefaults.standard.set(true, forKey: key)
-        NSWorkspace.shared.open(volumeURL)
-    }
 
     // MARK: - Icon State
 
@@ -271,6 +262,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    @objc private func showInFinder() {
+        guard let path = mountManager.mountPath else { return }
+        NSWorkspace.shared.open(path)
+    }
+
     @objc private func ejectDevice() {
         NSLog("Comprador: Eject requested")
         isConnecting = false
@@ -344,7 +340,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     isConnecting = false
                     updateIcon(state: .mounted)
                     rebuildMenu()
-                    openFinderOnFirstMountIfNeeded(mountedURL)
+                    NSWorkspace.shared.open(mountedURL)
                 }
                 return // success
             } catch let bridgeErr as BridgeError where bridgeErr == .timeout {
