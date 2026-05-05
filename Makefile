@@ -6,7 +6,7 @@ LIBMTP_DYLIB := /opt/homebrew/opt/libmtp/lib/libmtp.9.dylib
 LIBUSB_DYLIB := /opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib
 DIST_DIR   := dist
 
-.PHONY: bridge app app-debug dev run dist clean
+.PHONY: bridge app app-debug app-swiftc dev run run-swiftc dist dist-swiftc clean
 
 bridge:
 	cd bridge && CGO_CFLAGS="-I$(CURDIR)/bridge/cvendor" CGO_LDFLAGS="-L/opt/homebrew/lib" $(GO) build -o ../$(BRIDGE_OUT) .
@@ -81,6 +81,53 @@ dist: bridge
 	echo "  $(DIST_DIR)/$(APP_NAME).zip ($$(du -h $(DIST_DIR)/$(APP_NAME).zip | cut -f1))"; \
 	echo ""; \
 	echo "Testers: right-click → Open on first launch (unsigned)"
+
+# swiftc-based build — works without full Xcode (only Command Line Tools).
+# Produces build/swift/AndroidFS.app, ad-hoc signed.
+SWIFT_APP    := build/swift/$(APP_NAME).app
+SWIFT_BIN    := build/swift/$(APP_NAME)
+SWIFT_SRC    := $(wildcard MenuBarApp/Sources/*.swift)
+SWIFT_TARGET := arm64-apple-macosx13.0
+
+app-swiftc: bridge
+	@mkdir -p build/swift
+	swiftc -target $(SWIFT_TARGET) -O \
+		-framework Cocoa -framework IOKit -framework DiskArbitration \
+		-framework ServiceManagement -framework UserNotifications \
+		-o $(SWIFT_BIN) $(SWIFT_SRC)
+	@rm -rf $(SWIFT_APP)
+	@mkdir -p $(SWIFT_APP)/Contents/MacOS \
+	          $(SWIFT_APP)/Contents/Resources \
+	          $(SWIFT_APP)/Contents/Frameworks
+	cp $(SWIFT_BIN) $(SWIFT_APP)/Contents/MacOS/$(APP_NAME)
+	cp MenuBarApp/Info.plist $(SWIFT_APP)/Contents/Info.plist
+	cp MenuBarApp/Resources/VendorIDs.plist $(SWIFT_APP)/Contents/Resources/
+	@printf 'APPL????' > $(SWIFT_APP)/Contents/PkgInfo
+	$(call BUNDLE_BRIDGE,$(SWIFT_APP))
+	codesign --force --deep --sign - \
+		--entitlements MenuBarApp/AndroidFS.entitlements \
+		--options runtime \
+		$(SWIFT_APP)
+	@echo ""
+	@echo "Built: $(SWIFT_APP)"
+
+run-swiftc: app-swiftc
+	@killall $(APP_NAME) 2>/dev/null || true
+	@sleep 1
+	@echo "Launching $(SWIFT_APP)"
+	$(SWIFT_APP)/Contents/MacOS/$(APP_NAME)
+
+dist-swiftc: app-swiftc
+	@rm -rf $(DIST_DIR)
+	@mkdir -p $(DIST_DIR)
+	cp -R $(SWIFT_APP) $(DIST_DIR)/$(APP_NAME).app
+	cd $(DIST_DIR) && zip -qr $(APP_NAME).zip $(APP_NAME).app
+	@echo ""
+	@echo "=== Distribution ready ==="
+	@echo "  $(DIST_DIR)/$(APP_NAME).app"
+	@echo "  $(DIST_DIR)/$(APP_NAME).zip ($$(du -h $(DIST_DIR)/$(APP_NAME).zip | cut -f1))"
+	@echo ""
+	@echo "Testers: right-click → Open on first launch (ad-hoc signed)"
 
 clean:
 	rm -rf build/ dist/

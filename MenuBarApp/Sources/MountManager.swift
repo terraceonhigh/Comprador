@@ -3,6 +3,12 @@ import NetFS
 import DiskArbitration
 
 /// Manages mounting and unmounting WebDAV volumes.
+///
+/// Uses NetFS because /Volumes isn't user-writable on modern macOS, and NetFS
+/// goes through a privileged helper to create the mount point. The downside is
+/// NetFS auto-names the volume from the URL host (so it shows as "127.0.0.1"
+/// in Finder's sidebar). A custom name would require either an /etc/hosts
+/// entry (needs sudo) or registering a per-device mDNS .local hostname.
 class MountManager {
     private(set) var mountPath: URL?
     private var daSession: DASession?
@@ -23,21 +29,9 @@ class MountManager {
     /// Mounts a WebDAV URL and returns the mount path.
     func mount(port: Int, displayName: String) async throws -> URL {
         let serverURL = URL(string: "http://127.0.0.1:\(port)/")! as CFURL
+        let mountDir = URL(fileURLWithPath: "/Volumes") as CFURL
 
-        let safeName = displayName
-            .replacingOccurrences(of: "/", with: "-")
-            .replacingOccurrences(of: ":", with: "-")
-        let targetPath = "/Volumes/\(safeName)"
-        let mountDir = URL(fileURLWithPath: targetPath) as CFURL
-
-        // Remove stale mount point from previous run
-        let fm = FileManager.default
-        var isDir: ObjCBool = false
-        if fm.fileExists(atPath: targetPath, isDirectory: &isDir) {
-            try? fm.removeItem(atPath: targetPath)
-        }
-
-        NSLog("AndroidFS: Mounting WebDAV at port %d → %@", port, targetPath)
+        NSLog("AndroidFS: Mounting WebDAV from port %d", port)
 
         return try await withCheckedThrowingContinuation { continuation in
             var mountPoints: Unmanaged<CFArray>?
@@ -45,9 +39,7 @@ class MountManager {
             let openOptions: NSMutableDictionary = [
                 kNAUIOptionKey: kNAUIOptionNoUI,
             ]
-            let mountOptions: NSMutableDictionary = [
-                kNetFSMountAtMountDirKey: true,
-            ]
+            let mountOptions = NSMutableDictionary()
 
             let rc = NetFSMountURLSync(
                 serverURL,
@@ -60,39 +52,22 @@ class MountManager {
             )
 
             if rc != 0 {
-                NSLog("AndroidFS: Mount at %@ failed (error %d), falling back to /Volumes", targetPath, rc)
-
-                // Fallback: mount at /Volumes (creates /Volumes/127.0.0.1)
-                let fallbackDir = URL(fileURLWithPath: "/Volumes") as CFURL
-                let rc2 = NetFSMountURLSync(
-                    serverURL,
-                    fallbackDir,
-                    "" as CFString,
-                    "" as CFString,
-                    openOptions,
-                    NSMutableDictionary(),
-                    &mountPoints
-                )
-                if rc2 != 0 {
-                    NSLog("AndroidFS: Fallback mount also failed with error %d", rc2)
-                    continuation.resume(throwing: MountError.mountFailed(rc2))
-                    return
-                }
+                NSLog("AndroidFS: Mount failed with error %d", rc)
+                continuation.resume(throwing: MountError.mountFailed(rc))
+                return
             }
 
-            var mountURL: URL
+            let resolvedPath: URL
             if let points = mountPoints?.takeRetainedValue() as? [String],
-               let firstMount = points.first {
-                mountURL = URL(fileURLWithPath: firstMount)
-            } else if fm.fileExists(atPath: targetPath) {
-                mountURL = URL(fileURLWithPath: targetPath)
+               let first = points.first {
+                resolvedPath = URL(fileURLWithPath: first)
             } else {
-                mountURL = URL(fileURLWithPath: "/Volumes/127.0.0.1")
+                resolvedPath = URL(fileURLWithPath: "/Volumes/127.0.0.1")
             }
 
-            self.mountPath = mountURL
-            NSLog("AndroidFS: Mounted at %@", mountURL.path)
-            continuation.resume(returning: mountURL)
+            self.mountPath = resolvedPath
+            NSLog("AndroidFS: Mounted at %@", resolvedPath.path)
+            continuation.resume(returning: resolvedPath)
         }
     }
 
@@ -101,51 +76,42 @@ class MountManager {
         guard let path = mountPath else { return }
         NSLog("AndroidFS: Unmounting %@", path.path)
 
-        guard let session = daSession else {
-            // Fallback: use Process to call umount
-            fallbackUnmount(path)
-            mountPath = nil
-            return
-        }
-
-        guard let disk = DADiskCreateFromVolumePath(kCFAllocatorDefault, session, path as CFURL) else {
-            NSLog("AndroidFS: Could not create DADisk for %@, trying fallback", path.path)
-            fallbackUnmount(path)
-            mountPath = nil
-            return
-        }
-
-        DADiskUnmount(disk, DADiskUnmountOptions(kDADiskUnmountOptionDefault), { disk, dissenter, context in
-            if let dissenter = dissenter {
-                let status = DADissenterGetStatus(dissenter)
-                NSLog("AndroidFS: Clean unmount failed (status %d), forcing", status)
-                DADiskUnmount(disk, DADiskUnmountOptions(kDADiskUnmountOptionForce), nil, nil)
-            } else {
-                NSLog("AndroidFS: Unmounted successfully")
+        if let session = daSession,
+           let disk = DADiskCreateFromVolumePath(kCFAllocatorDefault, session, path as CFURL) {
+            DADiskUnmount(disk, DADiskUnmountOptions(kDADiskUnmountOptionDefault), { disk, dissenter, _ in
+                if let dissenter = dissenter {
+                    let status = DADissenterGetStatus(dissenter)
+                    NSLog("AndroidFS: Clean unmount failed (status %d), forcing", status)
+                    DADiskUnmount(disk, DADiskUnmountOptions(kDADiskUnmountOptionForce), nil, nil)
+                } else {
+                    NSLog("AndroidFS: Unmounted")
+                }
+            }, nil)
+        } else {
+            // Fallback: shell out to umount
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/sbin/umount")
+            p.arguments = [path.path]
+            p.standardOutput = FileHandle.nullDevice
+            p.standardError = FileHandle.nullDevice
+            try? p.run()
+            p.waitUntilExit()
+            if p.terminationStatus != 0 {
+                let fp = Process()
+                fp.executableURL = URL(fileURLWithPath: "/sbin/umount")
+                fp.arguments = ["-f", path.path]
+                fp.standardOutput = FileHandle.nullDevice
+                fp.standardError = FileHandle.nullDevice
+                try? fp.run()
+                fp.waitUntilExit()
             }
-        }, nil)
+        }
 
         mountPath = nil
     }
 
     var isMounted: Bool {
         mountPath != nil
-    }
-
-    private func fallbackUnmount(_ path: URL) {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/sbin/umount")
-        p.arguments = [path.path]
-        try? p.run()
-        p.waitUntilExit()
-        if p.terminationStatus != 0 {
-            // Force unmount
-            let fp = Process()
-            fp.executableURL = URL(fileURLWithPath: "/sbin/umount")
-            fp.arguments = ["-f", path.path]
-            try? fp.run()
-            fp.waitUntilExit()
-        }
     }
 }
 
