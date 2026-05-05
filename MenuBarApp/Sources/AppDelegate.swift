@@ -13,6 +13,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var registeredHostname: String?  // hostname currently in /etc/hosts via helper
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Clear out any leftover webdav mounts from a prior session — otherwise
+        // NetFS auto-suffixes today's mount as /Volumes/Pixel-6-1 and Finder
+        // ends up showing duplicates.
+        MountManager.cleanupStaleMounts()
+
         setupStatusItem()
         setupDeviceWatcher()
         updateIcon(state: .idle)
