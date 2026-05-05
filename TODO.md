@@ -39,6 +39,25 @@
       launchd's ~60ms respawn window.
 - [ ] PTPCamera must be killed before bridge can claim USB interface — works but inelegant
 - [ ] `libusb_detach_kernel_driver` timeout adds ~5s on some connections
-- [ ] If macOS daemon wins the race repeatedly, bridge fails entirely. Consider
-      using `IOUSBHostInterfaceOpen` with exclusive access via IOKit instead of
-      libusb on macOS.
+- [ ] **First-plug failure is unwinnable from libusb.** Captured 2026-05-04
+      with descriptor logging (`bridge/mtp/usbinfo.go`): the kernel binds
+      its USB Imaging Class driver to a class-6 PTP interface within
+      microseconds of enumeration. By the time we spawn the bridge,
+      ptpcamerad is *not* the holder — the kernel driver is — and macOS
+      forbids userspace from detaching kernel drivers (`libusb_detach_kernel_driver`
+      returns "Invalid argument", `libusb_reset_device` returns
+      `LIBUSB_ERROR_NO_DEVICE` because the call requires seized ownership
+      we don't have).
+
+      Physical unplug+replug works because the kernel re-binds with a
+      brief unclaimed window the bridge wins on attempt 1. Software
+      cannot reproduce this without IOKit.
+
+      **Proper fix:** Swift-side preflight using `IOUSBInterfaceOpenSeize`
+      from IOKit (probably in `BridgeProcess.start()` before exec). Seize
+      forces the kernel to release its claim so libusb can claim cleanly
+      from the bridge process. Estimated 1–2 days: write the IOKit dance
+      in Swift, hand off the seized state to the bridge process (probably
+      by reopening from libusb's side immediately after Swift releases),
+      validate against Pixel + Samsung + a camera. Until this lands,
+      first-plug failure stays a manual-replug problem.
