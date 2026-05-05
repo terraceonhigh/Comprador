@@ -134,11 +134,16 @@ app-swiftc: bridge helper
 	@echo ""
 	@echo "Built: $(SWIFT_APP)"
 
+SWIFT_LOG := build/comprador.log
+
 run-swiftc: app-swiftc
 	@killall $(APP_NAME) 2>/dev/null || true
 	@sleep 1
+	@mkdir -p build
 	@echo "Launching $(SWIFT_APP)"
-	$(SWIFT_APP)/Contents/MacOS/$(APP_NAME)
+	@echo "Tee'ing app + bridge output to $(SWIFT_LOG)"
+	@echo "  (tail in another terminal:  tail -f $(SWIFT_LOG))"
+	$(SWIFT_APP)/Contents/MacOS/$(APP_NAME) 2>&1 | tee $(SWIFT_LOG)
 
 dist-swiftc: app-swiftc
 	@rm -rf $(DIST_DIR)
