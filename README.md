@@ -47,10 +47,12 @@ unsigned app — click "Open" to proceed).
 ```bash
 # Prerequisites
 brew install libmtp go
-# Xcode must be installed (not just Command Line Tools)
 
-# Build the distributable app
+# With full Xcode installed:
 make dist
+
+# With only Command Line Tools (no Xcode):
+make dist-swiftc
 
 # Output: dist/AndroidFS.zip (~5 MB)
 ```
@@ -59,17 +61,29 @@ See [docs/BUILDING.md](docs/BUILDING.md) for full build instructions.
 
 ## Architecture
 
-AndroidFS has two components:
+AndroidFS has three components:
 
 **Go WebDAV Bridge** — A standalone binary that connects to the phone
 via libmtp (cgo) and serves its filesystem over HTTP WebDAV on localhost.
 
-**Swift Menu Bar App** — Watches for USB devices via IOKit, spawns the
-bridge when an Android phone is detected, and mounts the WebDAV server
+**Swift Menu Bar App** — Watches for USB devices via IOKit (matched by
+known Android vendor IDs *or* USB Still Image / PTP class), spawns the
+bridge when an MTP/PTP device is detected, and mounts the WebDAV server
 as a Finder volume via `NetFSMountURLSync`.
+
+**Privileged Helper** *(optional)* — A small Go LaunchDaemon, registered
+via `SMAppService.daemon`, that owns a managed block in `/etc/hosts`. It
+lets the bridge advertise URLs like `http://Pixel-6:port/` so Finder
+mounts the volume as `/Volumes/Pixel-6` instead of `/Volumes/Pixel-6.local`.
+The user is prompted once on first launch; without the helper the app
+falls back to mDNS-registered `<DeviceName>.local` hostnames.
 
 ```
 Phone ←USB→ libmtp ←cgo→ Go bridge ←HTTP→ WebDAV ←mount→ Finder
+                                ↑
+                         hostname from
+                       Settings.Global.DEVICE_NAME
+                       (via libmtp friendly name)
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
@@ -83,14 +97,22 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 - Delete files and folders on phone
 - Menu bar icon with device status
 - Automatic mount on plug-in, unmount on unplug
+- Volume named after the device (the same name you set under Android
+  Settings → About → Device name, via MTP `DeviceFriendlyName`)
+- "Start at Login" toggle via `SMAppService.mainApp`
+- Optional privileged helper that drops the `.local` suffix from the
+  Finder sidebar (`/Volumes/Pixel-6` instead of `/Volumes/Pixel-6.local`)
+- Picks up most cameras (PTP class), not just Android phones — libmtp
+  decides what's actually mountable
 
 ## Known Limitations
 
-- Volume appears as "127.0.0.1" in Finder sidebar (cosmetic — files work fine)
 - First connection takes ~15-30 seconds (USB interface settling)
 - Large directories (700+ files) are slow to enumerate (MTP protocol limitation)
 - ARM Macs only (no Intel build yet)
 - Not notarized (requires right-click → Open on first launch)
+- Without the helper, volume name keeps a `.local` suffix
+  (`Pixel-6.local` instead of `Pixel-6`)
 
 See [TODO.md](TODO.md) for the full roadmap.
 

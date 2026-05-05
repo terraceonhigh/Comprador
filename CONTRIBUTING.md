@@ -25,8 +25,12 @@ make run    # builds everything, launches the app
 
 ```
 bridge/              Go WebDAV bridge (cgo + libmtp)
-  mtp/               MTP device bindings and session management
+  mtp/               MTP device bindings, session management, mDNS,
+                     ptpcamerad killer
   webdav/            WebDAV filesystem implementation + Finder quirks
+  cmd/mdnstest/      Standalone debug binary for the dns-sd wrapper
+helper/              Privileged Go helper that manages /etc/hosts
+                     (registered as a LaunchDaemon via SMAppService.daemon)
 MenuBarApp/          Swift menu bar app (Xcode project)
   Sources/           Swift source files
   Resources/         Plist files, bundled assets

@@ -1,8 +1,18 @@
 # Testing AndroidFS
 
-## Automated Integration Tests
+## Automated Tests
 
-### Bridge test suite (`test.sh`)
+### Helper unit tests
+
+```bash
+make helper-test
+```
+
+Exercises the `/etc/hosts` block management against a temp file
+(no root required). Covers ADD/REMOVE/CLEAR, idempotency, name
+validation, and the wire-protocol dispatcher.
+
+### Bridge integration test suite (`test.sh`)
 
 Tests the Go WebDAV bridge against a real device. Requires a phone
 connected in File Transfer mode.
@@ -88,14 +98,55 @@ When things go wrong (bridge hangs, stale mount, USB session locked):
 
 ```bash
 # Kill everything
-killall AndroidFS bridge 2>/dev/null
-umount -f /Volumes/127.0.0.1 2>/dev/null
+killall AndroidFS bridge dns-sd androidfs-helper 2>/dev/null
+
+# Unmount any leftover webdav volumes
+for v in $(mount | awk '/webdav/ {print $3}'); do
+  diskutil unmount force "$v"
+done
 
 # If USB session is locked:
 # 1. Unplug phone
 # 2. Wait 3 seconds
 # 3. Replug phone
 # 4. Select File Transfer
+
+# If you want to wipe the helper's hosts entries between runs
+# (without uninstalling the daemon), the app does this automatically
+# on teardown — but you can force it via:
+echo "CLEAR" | nc -U /var/run/androidfs-helper.sock
+```
+
+## Testing the helper in isolation
+
+Run the helper without root by overriding the paths:
+
+```bash
+ANDROIDFS_SKIP_ROOT_CHECK=1 \
+ANDROIDFS_SOCKET_PATH=/tmp/test.sock \
+ANDROIDFS_HOSTS_PATH=/tmp/test-hosts \
+build/androidfs-helper
+
+# In another terminal:
+echo "ADD Pixel-6"     | nc -U /tmp/test.sock
+echo "ADD Galaxy-S24"  | nc -U /tmp/test.sock
+sed -n '/AndroidFS/,/AndroidFS END/p' /tmp/test-hosts
+echo "REMOVE Pixel-6"  | nc -U /tmp/test.sock
+echo "CLEAR"           | nc -U /tmp/test.sock
+```
+
+## Testing mDNS hostname registration
+
+The bridge registers `<DeviceName>.local` via `dns-sd -P` as a fallback
+when the helper isn't installed. Exercise it without an MTP device:
+
+```bash
+make bridge   # also builds build/mdnstest if you've added it
+build/mdnstest "Pixel 6"
+
+# In another terminal:
+dscacheutil -q host -a name Pixel-6.local   # should resolve to 127.0.0.1
+ping -c 1 Pixel-6.local
 ```
 
 ## Common Failures
@@ -107,4 +158,6 @@ umount -f /Volumes/127.0.0.1 2>/dev/null
 | Bridge hangs at "Detecting MTP device" | Previous session still locked | Unplug/replug phone |
 | Mount shows empty directory | PROPFIND response malformed | Check with `curl -X PROPFIND` |
 | Files copy but are empty on phone | Write path returns read-only file handle | Ensure O_WRONLY/O_TRUNC triggers mtpNewFile |
-| `libusb_claim_interface() = -3` | PTPCamera or another process holds USB | Kill PTPCamera; check `ps aux \| grep PTP` |
+| `libusb_claim_interface() = -3` | `ptpcamerad` / `AMPDeviceDiscoveryAgent` holds USB | Bridge kills them in a tight retry loop; if it still loses, unplug/replug for a fresh USB attach window |
+| Volume named `Pixel-6.local` instead of `Pixel-6` | Helper isn't installed or approved | Click "Install Helper" in the menu; toggle on in System Settings → Login Items |
+| Multiple `/Volumes/Pixel-6-1`, `-2` mounts | Stale mounts from prior crash | Cleared at next app launch; or run the umount loop in the Reset Procedure |
