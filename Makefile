@@ -112,8 +112,9 @@ SWIFT_TARGET := arm64-apple-macosx13.0
 app-swiftc: bridge helper
 	@mkdir -p build/swift
 	swiftc -target $(SWIFT_TARGET) -O \
-		-framework Cocoa -framework IOKit -framework DiskArbitration \
-		-framework ServiceManagement -framework UserNotifications \
+		-framework Cocoa -framework SwiftUI -framework IOKit \
+		-framework DiskArbitration -framework ServiceManagement \
+		-framework UserNotifications \
 		-o $(SWIFT_BIN) $(SWIFT_SRC)
 	@rm -rf $(SWIFT_APP)
 	@mkdir -p $(SWIFT_APP)/Contents/MacOS \
