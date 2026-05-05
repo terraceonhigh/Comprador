@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.1.1 — 2026-05-04
+
+Distribution polish — same code as v0.1.0, signed and notarized.
+
+- **Notarized by Apple.** First launch no longer requires the
+  right-click → Open dance. Double-click installs cleanly past
+  Gatekeeper.
+- **Ships as a .dmg.** Drag-to-Applications window with the standard
+  macOS install affordance, replacing the v0.1.0 .zip.
+- Both the `.app` and the `.dmg` are stapled, so first-launch works
+  fully offline.
+
 ## v0.1.0 — 2026-05-04
 
 First public release.
