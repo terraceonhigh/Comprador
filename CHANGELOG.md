@@ -1,19 +1,24 @@
 # Changelog
 
-## v0.2.0 — 2026-05-04
+## v0.2.3 — 2026-05-04
+
+First notarized release. (v0.2.0–v0.2.2 were burned getting the
+release pipeline through Apple's notary service — embedded binaries
+needed individual signing with hardened runtime + secure timestamp
+before the `.app` would pass.)
 
 Distribution polish — same code as v0.1.0, signed and notarized.
-(Skipped v0.1.1–v0.1.3 because those tags exist in the upstream
-OpenMTP history this repo was forked from; bumping the minor version
-to disambiguate.)
 
-- **Notarized by Apple.** First launch no longer requires the
-  right-click → Open dance. Double-click installs cleanly past
-  Gatekeeper.
-- **Ships as a .dmg.** Drag-to-Applications window with the standard
-  macOS install affordance, replacing the v0.1.0 .zip.
+- **Notarized by Apple.** First launch is just a double-click. No
+  Gatekeeper warning, no right-click → Open dance.
+- **Ships as a .dmg.** Standard drag-to-Applications window,
+  replacing the v0.1.0 .zip.
 - Both the `.app` and the `.dmg` are stapled, so first-launch works
-  fully offline.
+  fully offline — no Apple-server roundtrip required.
+
+(Skipped v0.1.1–v0.1.3 because those tags exist in the upstream
+OpenMTP history this repo was forked from. Bumped to v0.2.x to
+disambiguate.)
 
 ## v0.1.0 — 2026-05-04
 
