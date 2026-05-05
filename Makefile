@@ -7,7 +7,7 @@ LIBMTP_DYLIB := /opt/homebrew/opt/libmtp/lib/libmtp.9.dylib
 LIBUSB_DYLIB := /opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib
 DIST_DIR   := dist
 
-.PHONY: bridge helper helper-test app app-debug app-swiftc dev run run-swiftc dist dist-swiftc clean
+.PHONY: bridge helper helper-test app app-debug app-swiftc dev run run-swiftc dist dist-swiftc clean reset-onboarding
 
 bridge:
 	cd bridge && CGO_CFLAGS="-I$(CURDIR)/bridge/cvendor" CGO_LDFLAGS="-L/opt/homebrew/lib" $(GO) build -o ../$(BRIDGE_OUT) .
@@ -154,3 +154,11 @@ dist-swiftc: app-swiftc
 
 clean:
 	rm -rf build/ dist/
+
+# Wipe first-launch state so the welcome window appears again next run.
+# Useful when iterating on onboarding UX. Kills the running app first
+# because cfprefsd caches per-app defaults for live processes.
+reset-onboarding:
+	@killall $(APP_NAME) 2>/dev/null || true
+	@defaults delete com.comprador.app Comprador.didShowWelcome 2>/dev/null || true
+	@echo "Onboarding state cleared. Next run will show the welcome window."
