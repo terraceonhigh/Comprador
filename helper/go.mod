@@ -1,3 +1,3 @@
-module androidfs/helper
+module comprador/helper
 
 go 1.21

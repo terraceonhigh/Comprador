@@ -3,20 +3,20 @@
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>com.androidfs.helper</string>
+	<string>com.comprador.helper</string>
 	<key>BundleProgram</key>
-	<string>Contents/MacOS/androidfs-helper</string>
+	<string>Contents/MacOS/comprador-helper</string>
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
 	<true/>
 	<key>StandardOutPath</key>
-	<string>/var/log/androidfs-helper.log</string>
+	<string>/var/log/comprador-helper.log</string>
 	<key>StandardErrorPath</key>
-	<string>/var/log/androidfs-helper.log</string>
+	<string>/var/log/comprador-helper.log</string>
 	<key>AssociatedBundleIdentifiers</key>
 	<array>
-		<string>com.androidfs.app</string>
+		<string>com.comprador.app</string>
 	</array>
 </dict>
 </plist>

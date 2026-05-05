@@ -11,7 +11,7 @@ import (
 	"path"
 	"time"
 
-	"androidfs/bridge/mtp"
+	"comprador/bridge/mtp"
 
 	"golang.org/x/net/webdav"
 )

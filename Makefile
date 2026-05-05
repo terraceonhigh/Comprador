@@ -1,6 +1,6 @@
 BRIDGE_OUT := build/bridge
-HELPER_OUT := build/androidfs-helper
-APP_NAME   := AndroidFS
+HELPER_OUT := build/comprador-helper
+APP_NAME   := Comprador
 GO         := /opt/homebrew/bin/go
 DERIVED    := $(HOME)/Library/Developer/Xcode/DerivedData
 LIBMTP_DYLIB := /opt/homebrew/opt/libmtp/lib/libmtp.9.dylib
@@ -44,11 +44,11 @@ endef
 # referenced by the plist's BundleProgram (relative to the app bundle root).
 define BUNDLE_HELPER
 	mkdir -p "$(1)/Contents/Library/LaunchDaemons"; \
-	rm -f "$(1)/Contents/MacOS/androidfs-helper" \
-	      "$(1)/Contents/Library/LaunchDaemons/com.androidfs.helper.plist"; \
-	cp $(HELPER_OUT) "$(1)/Contents/MacOS/androidfs-helper"; \
-	cp helper/com.androidfs.helper.plist "$(1)/Contents/Library/LaunchDaemons/"; \
-	codesign --force --sign - "$(1)/Contents/MacOS/androidfs-helper"; \
+	rm -f "$(1)/Contents/MacOS/comprador-helper" \
+	      "$(1)/Contents/Library/LaunchDaemons/com.comprador.helper.plist"; \
+	cp $(HELPER_OUT) "$(1)/Contents/MacOS/comprador-helper"; \
+	cp helper/com.comprador.helper.plist "$(1)/Contents/Library/LaunchDaemons/"; \
+	codesign --force --sign - "$(1)/Contents/MacOS/comprador-helper"; \
 	echo "Bundled helper into $(1)"
 endef
 
@@ -103,7 +103,7 @@ dist: bridge
 	echo "Testers: right-click → Open on first launch (unsigned)"
 
 # swiftc-based build — works without full Xcode (only Command Line Tools).
-# Produces build/swift/AndroidFS.app, ad-hoc signed.
+# Produces build/swift/Comprador.app, ad-hoc signed.
 SWIFT_APP    := build/swift/$(APP_NAME).app
 SWIFT_BIN    := build/swift/$(APP_NAME)
 SWIFT_SRC    := $(wildcard MenuBarApp/Sources/*.swift)
@@ -127,7 +127,7 @@ app-swiftc: bridge helper
 	$(call BUNDLE_BRIDGE,$(SWIFT_APP))
 	$(call BUNDLE_HELPER,$(SWIFT_APP))
 	codesign --force --deep --sign - \
-		--entitlements MenuBarApp/AndroidFS.entitlements \
+		--entitlements MenuBarApp/Comprador.entitlements \
 		--options runtime \
 		$(SWIFT_APP)
 	@echo ""

@@ -52,7 +52,7 @@ class DeviceWatcher {
             vendorIDs.insert(vid)
             vendorNames[vid] = name
         }
-        NSLog("AndroidFS: Loaded %d vendor IDs", vendorIDs.count)
+        NSLog("Comprador: Loaded %d vendor IDs", vendorIDs.count)
     }
 
     /// Begin watching for USB device attach/detach events.
@@ -63,7 +63,7 @@ class DeviceWatcher {
 
         notifyPort = IONotificationPortCreate(kIOMainPortDefault)
         guard let notifyPort = notifyPort else {
-            NSLog("AndroidFS: Failed to create IONotificationPort")
+            NSLog("Comprador: Failed to create IONotificationPort")
             return
         }
 
@@ -89,11 +89,11 @@ class DeviceWatcher {
         )
 
         if krAdd == KERN_SUCCESS {
-            NSLog("AndroidFS: Registered for USB attach notifications")
+            NSLog("Comprador: Registered for USB attach notifications")
             // Drain initial iterator to arm the notification and catch already-connected devices
             handleIterator(addedIter, attached: true)
         } else {
-            NSLog("AndroidFS: Failed to register attach notification: %d", krAdd)
+            NSLog("Comprador: Failed to register attach notification: %d", krAdd)
         }
 
         // Detach notifications
@@ -112,11 +112,11 @@ class DeviceWatcher {
         )
 
         if krRemove == KERN_SUCCESS {
-            NSLog("AndroidFS: Registered for USB detach notifications")
+            NSLog("Comprador: Registered for USB detach notifications")
             // Drain initial iterator to arm the notification
             handleIterator(removedIter, attached: false)
         } else {
-            NSLog("AndroidFS: Failed to register detach notification: %d", krRemove)
+            NSLog("Comprador: Failed to register detach notification: %d", krRemove)
         }
     }
 
@@ -161,7 +161,7 @@ class DeviceWatcher {
             let matchSource = isKnownVendor
                 ? "vendor"
                 : (isStillImage ? "image-class" : "tracked")
-            NSLog("AndroidFS: USB %@ — %@ (vendor: 0x%04X, product: 0x%04X, match: %@)",
+            NSLog("Comprador: USB %@ — %@ (vendor: 0x%04X, product: 0x%04X, match: %@)",
                   attached ? "attached" : "detached",
                   device.displayName, device.vendorID, device.productID, matchSource)
 

@@ -1,5 +1,5 @@
-// AndroidFS helper — runs as root, edits /etc/hosts within an
-// AndroidFS-managed block so the bridge can advertise URLs like
+// Comprador helper — runs as root, edits /etc/hosts within an
+// Comprador-managed block so the bridge can advertise URLs like
 // http://Pixel-6:port/ that NetFS will mount as /Volumes/Pixel-6.
 //
 // The unprivileged main app talks to this daemon over a Unix domain socket.
@@ -34,9 +34,9 @@ import (
 
 const (
 	defaultHostsPath  = "/etc/hosts"
-	defaultSocketPath = "/var/run/androidfs-helper.sock"
-	beginMark         = "# AndroidFS BEGIN — managed by androidfs-helper, do not edit"
-	endMark           = "# AndroidFS END"
+	defaultSocketPath = "/var/run/comprador-helper.sock"
+	beginMark         = "# Comprador BEGIN — managed by comprador-helper, do not edit"
+	endMark           = "# Comprador END"
 )
 
 // Overridable for tests; set via env vars on startup.
@@ -53,15 +53,15 @@ var (
 func main() {
 	log.SetFlags(log.Ltime | log.Lmicroseconds)
 
-	if v := os.Getenv("ANDROIDFS_HOSTS_PATH"); v != "" {
+	if v := os.Getenv("COMPRADOR_HOSTS_PATH"); v != "" {
 		hostsPath = v
 	}
-	if v := os.Getenv("ANDROIDFS_SOCKET_PATH"); v != "" {
+	if v := os.Getenv("COMPRADOR_SOCKET_PATH"); v != "" {
 		socketPath = v
 	}
-	requireRoot := os.Getenv("ANDROIDFS_SKIP_ROOT_CHECK") == ""
+	requireRoot := os.Getenv("COMPRADOR_SKIP_ROOT_CHECK") == ""
 
-	log.Printf("androidfs-helper starting (pid %d, hosts=%s, sock=%s)",
+	log.Printf("comprador-helper starting (pid %d, hosts=%s, sock=%s)",
 		os.Getpid(), hostsPath, socketPath)
 
 	if requireRoot && os.Geteuid() != 0 {
@@ -268,7 +268,7 @@ func findBlock(lines []string) (begin, end int) {
 	begin, end = -1, -1
 	for i, l := range lines {
 		t := strings.TrimSpace(l)
-		if t == beginMark || strings.HasPrefix(t, "# AndroidFS BEGIN") {
+		if t == beginMark || strings.HasPrefix(t, "# Comprador BEGIN") {
 			begin = i
 		}
 		if t == endMark && begin != -1 {
@@ -312,7 +312,7 @@ func readHosts() ([]string, error) {
 func writeHosts(lines []string) error {
 	out := strings.Join(lines, "\n") + "\n"
 	dir := filepath.Dir(hostsPath)
-	tmp, err := os.CreateTemp(dir, ".androidfs-hosts-*")
+	tmp, err := os.CreateTemp(dir, ".comprador-hosts-*")
 	if err != nil {
 		return fmt.Errorf("tempfile: %w", err)
 	}

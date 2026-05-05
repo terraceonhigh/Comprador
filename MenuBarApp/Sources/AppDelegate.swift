@@ -81,7 +81,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         helperItem.state = HelperClient.isEnabled ? .on : .off
         menu.addItem(helperItem)
 
-        menu.addItem(NSMenuItem(title: "Quit AndroidFS",
+        menu.addItem(NSMenuItem(title: "Quit Comprador",
                                 action: #selector(quitApp),
                                 keyEquivalent: "q"))
 
@@ -116,7 +116,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Background-only apps (LSUIElement = true) can have NSAlert windows
     /// hidden behind whatever's in front, so we activate the app first.
     private func offerHelperOnFirstLaunch() {
-        let declinedKey = "AndroidFS.declinedHelper"
+        let declinedKey = "Comprador.declinedHelper"
         if HelperClient.isEnabled { return }
         if UserDefaults.standard.bool(forKey: declinedKey) { return }
 
@@ -127,7 +127,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             let alert = NSAlert()
             alert.messageText = "Show your phone's name in Finder"
-            alert.informativeText = "Without this, mounted volumes show as \"Pixel-6.local\" in Finder instead of \"Pixel-6\". The helper edits a managed block in /etc/hosts so the bridge can use a clean hostname, and only accepts single-label device names — it can't impersonate real domains.\n\nClicking Install opens System Settings → Login Items. Toggle \"AndroidFS Helper\" on to finish."
+            alert.informativeText = "Without this, mounted volumes show as \"Pixel-6.local\" in Finder instead of \"Pixel-6\". The helper edits a managed block in /etc/hosts so the bridge can use a clean hostname, and only accepts single-label device names — it can't impersonate real domains.\n\nClicking Install opens System Settings → Login Items. Toggle \"Comprador Helper\" on to finish."
             alert.addButton(withTitle: "Install Helper")
             alert.addButton(withTitle: "Not Now")
             alert.addButton(withTitle: "Don't Ask Again")
@@ -176,7 +176,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func offerLoginItemOnFirstLaunch() {
-        let key = "AndroidFS.didOfferLoginItem"
+        let key = "Comprador.didOfferLoginItem"
         guard !UserDefaults.standard.bool(forKey: key) else { return }
         UserDefaults.standard.set(true, forKey: key)
 
@@ -186,8 +186,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
             let alert = NSAlert()
-            alert.messageText = "Start AndroidFS at login?"
-            alert.informativeText = "AndroidFS can launch automatically so your phone shows up in Finder as soon as you plug it in."
+            alert.messageText = "Start Comprador at login?"
+            alert.informativeText = "Comprador can launch automatically so your phone shows up in Finder as soon as you plug it in."
             alert.addButton(withTitle: "Start at Login")
             alert.addButton(withTitle: "Not Now")
             alert.alertStyle = .informational
@@ -222,7 +222,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             symbolName = "externaldrive.badge.xmark"
         }
 
-        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "AndroidFS")
+        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Comprador")
         button.image?.size = NSSize(width: 18, height: 18)
     }
 
@@ -245,16 +245,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleDeviceAttached(_ device: USBDevice) {
-        NSLog("AndroidFS: Device attached — \(device.displayName) (vendor: 0x%04X, product: 0x%04X)",
+        NSLog("Comprador: Device attached — \(device.displayName) (vendor: 0x%04X, product: 0x%04X)",
               device.vendorID, device.productID)
 
         // Ignore attach events while we're already connecting or mounted
         if isConnecting {
-            NSLog("AndroidFS: Ignoring attach — connection already in progress")
+            NSLog("Comprador: Ignoring attach — connection already in progress")
             return
         }
         if mountManager.isMounted {
-            NSLog("AndroidFS: Ignoring attach — already mounted")
+            NSLog("Comprador: Ignoring attach — already mounted")
             return
         }
 
@@ -269,13 +269,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleDeviceDetached(_ device: USBDevice) {
-        NSLog("AndroidFS: Device detached — \(device.displayName) (vendor: 0x%04X, product: 0x%04X)",
+        NSLog("Comprador: Device detached — \(device.displayName) (vendor: 0x%04X, product: 0x%04X)",
               device.vendorID, device.productID)
 
         // Ignore spurious detach events during connection — USB re-enumeration
         // causes rapid detach/attach cycles when the phone switches to MTP mode
         if isConnecting {
-            NSLog("AndroidFS: Ignoring detach — connection in progress (USB re-enumeration)")
+            NSLog("Comprador: Ignoring detach — connection in progress (USB re-enumeration)")
             return
         }
 
@@ -298,7 +298,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func ejectDevice() {
-        NSLog("AndroidFS: Eject requested")
+        NSLog("Comprador: Eject requested")
         isConnecting = false
         Task {
             await teardown()
@@ -366,14 +366,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 let _ = try await mountManager.mount(host: mountHost, port: port, displayName: displayName)
 
                 await MainActor.run {
-                    NSLog("AndroidFS: Device mounted as volume")
+                    NSLog("Comprador: Device mounted as volume")
                     isConnecting = false
                     updateIcon(state: .mounted)
                     rebuildMenu()
                 }
                 return // success
             } catch let bridgeErr as BridgeError where bridgeErr == .timeout {
-                NSLog("AndroidFS: Bridge timeout — prompting user")
+                NSLog("Comprador: Bridge timeout — prompting user")
                 BridgeProcess.postFileTransferNotification()
                 bp.stop()
                 self.bridge = nil
@@ -387,9 +387,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 bp.stop()
                 self.bridge = nil
                 if attempt < retryDelays.count - 1 {
-                    NSLog("AndroidFS: Attempt %d failed (%@), retrying...", attempt + 1, err.localizedDescription)
+                    NSLog("Comprador: Attempt %d failed (%@), retrying...", attempt + 1, err.localizedDescription)
                 } else {
-                    NSLog("AndroidFS: All attempts failed — %@", err.localizedDescription)
+                    NSLog("Comprador: All attempts failed — %@", err.localizedDescription)
                     await MainActor.run {
                         isConnecting = false
                         updateIcon(state: .error)
@@ -411,7 +411,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             do {
                 try HelperClient.removeHost(host)
             } catch {
-                NSLog("AndroidFS: helper removeHost(%@) failed: %@",
+                NSLog("Comprador: helper removeHost(%@) failed: %@",
                       host, error.localizedDescription)
             }
             registeredHostname = nil
@@ -429,10 +429,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             try HelperClient.addHost(label)
             registeredHostname = label
-            NSLog("AndroidFS: registered hostname %@ via helper", label)
+            NSLog("Comprador: registered hostname %@ via helper", label)
             return label
         } catch {
-            NSLog("AndroidFS: helper addHost(%@) failed: %@",
+            NSLog("Comprador: helper addHost(%@) failed: %@",
                   label, error.localizedDescription)
             return nil
         }

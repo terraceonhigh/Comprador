@@ -1,7 +1,7 @@
 import Foundation
 import ServiceManagement
 
-/// Talks to the privileged androidfs-helper daemon over a Unix socket.
+/// Talks to the privileged comprador-helper daemon over a Unix socket.
 ///
 /// The helper is registered via `SMAppService.daemon`. macOS prompts the
 /// user once to approve a Login Item; after that it stays registered. The
@@ -9,8 +9,8 @@ import ServiceManagement
 /// URLs like `http://Pixel-6:port/` and have NetFS mount them as
 /// `/Volumes/Pixel-6` (no `.local` suffix).
 enum HelperClient {
-    static let socketPath = "/var/run/androidfs-helper.sock"
-    static let plistName = "com.androidfs.helper.plist"
+    static let socketPath = "/var/run/comprador-helper.sock"
+    static let plistName = "com.comprador.helper.plist"
 
     enum HelperError: LocalizedError {
         case notRegistered
@@ -21,7 +21,7 @@ enum HelperClient {
         var errorDescription: String? {
             switch self {
             case .notRegistered:
-                return "AndroidFS helper is not registered or has not been approved."
+                return "Comprador helper is not registered or has not been approved."
             case .socketUnreachable(let m):
                 return "Cannot reach helper daemon: \(m)"
             case .ioError(let m):
@@ -58,10 +58,10 @@ enum HelperClient {
         if svc.status == .enabled { return true }
         do {
             try svc.register()
-            NSLog("AndroidFS: helper register() OK, status now %@", statusDescription)
+            NSLog("Comprador: helper register() OK, status now %@", statusDescription)
             return true
         } catch {
-            NSLog("AndroidFS: helper register() failed: %@", error.localizedDescription)
+            NSLog("Comprador: helper register() failed: %@", error.localizedDescription)
             return false
         }
     }
@@ -74,7 +74,7 @@ enum HelperClient {
             try svc.unregister()
             return true
         } catch {
-            NSLog("AndroidFS: helper unregister() failed: %@", error.localizedDescription)
+            NSLog("Comprador: helper unregister() failed: %@", error.localizedDescription)
             return false
         }
     }
@@ -98,7 +98,7 @@ enum HelperClient {
         if reply != "OK" { throw HelperError.helperReturned(reply) }
     }
 
-    /// Drop the entire AndroidFS-managed block from /etc/hosts.
+    /// Drop the entire Comprador-managed block from /etc/hosts.
     static func clearHosts() throws {
         let reply = try send("CLEAR")
         if reply != "OK" { throw HelperError.helperReturned(reply) }

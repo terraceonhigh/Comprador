@@ -1,4 +1,4 @@
-# Contributing to AndroidFS
+# Contributing to Comprador
 
 ## How to Contribute
 

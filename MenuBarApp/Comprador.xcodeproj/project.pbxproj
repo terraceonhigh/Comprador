@@ -28,11 +28,11 @@
 		A2000009 /* LoginItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginItem.swift; sourceTree = "<group>"; };
 		A2000010 /* HelperClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelperClient.swift; sourceTree = "<group>"; };
 		A2000003 /* VendorIDs.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = VendorIDs.plist; sourceTree = "<group>"; };
-		A2000004 /* AndroidFS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AndroidFS.entitlements; sourceTree = "<group>"; };
+		A2000004 /* Comprador.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Comprador.entitlements; sourceTree = "<group>"; };
 		A2000005 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A2000010 /* IOKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOKit.framework; path = System/Library/Frameworks/IOKit.framework; sourceTree = SDKROOT; };
 		A2000011 /* DiskArbitration.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = DiskArbitration.framework; path = System/Library/Frameworks/DiskArbitration.framework; sourceTree = SDKROOT; };
-		A2000099 /* AndroidFS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AndroidFS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A2000099 /* Comprador.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Comprador.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -53,7 +53,7 @@
 			children = (
 				A4000002 /* Sources */,
 				A4000003 /* Resources */,
-				A2000004 /* AndroidFS.entitlements */,
+				A2000004 /* Comprador.entitlements */,
 				A2000005 /* Info.plist */,
 				A4000004 /* Frameworks */,
 				A4000005 /* Products */,
@@ -94,7 +94,7 @@
 		A4000005 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				A2000099 /* AndroidFS.app */,
+				A2000099 /* Comprador.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -102,9 +102,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		A5000001 /* AndroidFS */ = {
+		A5000001 /* Comprador */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = A7000001 /* Build configuration list for PBXNativeTarget "AndroidFS" */;
+			buildConfigurationList = A7000001 /* Build configuration list for PBXNativeTarget "Comprador" */;
 			buildPhases = (
 				A6000001 /* Sources */,
 				A3000001 /* Frameworks */,
@@ -114,9 +114,9 @@
 			);
 			dependencies = (
 			);
-			name = AndroidFS;
-			productName = AndroidFS;
-			productReference = A2000099 /* AndroidFS.app */;
+			name = Comprador;
+			productName = Comprador;
+			productReference = A2000099 /* Comprador.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -129,7 +129,7 @@
 				LastSwiftUpdateCheck = 1500;
 				LastUpgradeCheck = 1500;
 			};
-			buildConfigurationList = A7000002 /* Build configuration list for PBXProject "AndroidFS" */;
+			buildConfigurationList = A7000002 /* Build configuration list for PBXProject "Comprador" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -142,7 +142,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				A5000001 /* AndroidFS */,
+				A5000001 /* Comprador */,
 			);
 		};
 /* End PBXProject section */
@@ -180,7 +180,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = AndroidFS.entitlements;
+				CODE_SIGN_ENTITLEMENTS = Comprador.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
@@ -192,7 +192,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.androidfs.app;
+				PRODUCT_BUNDLE_IDENTIFIER = com.comprador.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
@@ -203,7 +203,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = AndroidFS.entitlements;
+				CODE_SIGN_ENTITLEMENTS = Comprador.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
@@ -215,7 +215,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.androidfs.app;
+				PRODUCT_BUNDLE_IDENTIFIER = com.comprador.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
@@ -272,7 +272,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		A7000001 /* Build configuration list for PBXNativeTarget "AndroidFS" */ = {
+		A7000001 /* Build configuration list for PBXNativeTarget "Comprador" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				A9000001 /* Debug */,
@@ -281,7 +281,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		A7000002 /* Build configuration list for PBXProject "AndroidFS" */ = {
+		A7000002 /* Build configuration list for PBXProject "Comprador" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				A9000003 /* Debug */,
