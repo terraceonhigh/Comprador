@@ -346,7 +346,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             do {
                 // Start the bridge with no preferred host. The bridge does
                 // its own mDNS dance and prints PORT/HOST/DEVICE on stdout.
-                let port = try await bp.start()
+                // Pass the device IDs so BridgeProcess can run the IOKit
+                // preflight (seize + re-enumerate) and break the kernel's
+                // bind on the USB interface before libusb's claim attempt.
+                let port = try await bp.start(
+                    seizeForVendor: device.vendorID,
+                    seizeForProduct: device.productID
+                )
 
                 // Prefer the libmtp-derived friendly name (Android's
                 // Settings.Global.DEVICE_NAME → MTP DeviceFriendlyName →
