@@ -60,14 +60,32 @@ jobs:
           IDENTITY=$(security find-identity -v -p codesigning build.keychain \
                       | awk '/Developer ID Application/{print $2; exit}')
           echo "Signing with $IDENTITY"
-          # --deep walks into Frameworks/, Resources/bridge,
-          # Library/LaunchDaemons/comprador-helper. --options runtime is
-          # required for notarization. Entitlements come from the project.
-          codesign --force --deep --options runtime --timestamp \
+
+          # codesign --deep is deprecated and doesn't reliably propagate
+          # --options runtime / --timestamp to nested binaries, which
+          # notarytool flags as critical errors. Sign each embedded
+          # binary individually, deepest-first, then the bundle.
+          BUNDLE=dist/Comprador.app
+          for path in \
+            "$BUNDLE/Contents/Frameworks/libmtp.9.dylib" \
+            "$BUNDLE/Contents/Frameworks/libusb-1.0.0.dylib" \
+            "$BUNDLE/Contents/Resources/bridge" \
+            "$BUNDLE/Contents/MacOS/comprador-helper"
+          do
+            if [ -e "$path" ]; then
+              echo "Signing $path"
+              codesign --force --options runtime --timestamp \
+                --sign "$IDENTITY" "$path"
+            fi
+          done
+
+          echo "Signing bundle"
+          codesign --force --options runtime --timestamp \
             --entitlements MenuBarApp/Comprador.entitlements \
             --sign "$IDENTITY" \
-            dist/Comprador.app
-          codesign --verify --strict --verbose=2 dist/Comprador.app
+            "$BUNDLE"
+
+          codesign --verify --strict --verbose=2 "$BUNDLE"
 
       - name: Notarize the .app
         env:
