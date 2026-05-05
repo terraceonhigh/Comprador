@@ -2,6 +2,10 @@
 
 **See Android phones and cameras in Finder. Free and open source.**
 
+<p align="center">
+  <img src="images/demo.png" alt="A Pixel 6 mounted as a Finder volume, showing the standard Android folder layout (Alarms, Android, Audiobooks, Books, DCIM, Documents, Download, Pictures, etc.)" width="640">
+</p>
+
 Plug in. Comprador mounts the device as a Finder volume — no extra app
 to open, no kernel extension, no subscription.
 
@@ -113,16 +117,50 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 - Picks up most cameras (PTP class), not just Android phones — libmtp
   decides what's actually mountable
 
-## Known Limitations
-
-- First connection takes ~15-30 seconds (USB interface settling)
-- Large directories (700+ files) are slow to enumerate (MTP protocol limitation)
-- ARM Macs only (no Intel build yet)
-- Not notarized (requires right-click → Open on first launch)
-- Without the helper, volume name keeps a `.local` suffix
-  (`Pixel-6.local` instead of `Pixel-6`)
-
 See [TODO.md](TODO.md) for the full roadmap.
+
+## FAQ
+
+**Where do my files actually live?**
+On your phone. Comprador only mounts a *view* — nothing is copied to
+your Mac unless you drag a file into a local Finder window. Closing the
+volume doesn't lose anything; opening it again shows the current state
+of the phone.
+
+**Does Comprador see my files? Are they uploaded anywhere?**
+No. Everything is local: your phone over USB, Comprador as a small
+WebDAV server bound to `localhost`, Finder as the WebDAV client. No
+cloud, no telemetry, no internet round-trips. The bridge process can't
+even *reach* the public internet without you configuring it to.
+
+**Does it work over Wi-Fi?**
+No. USB only. Wireless MTP is technically possible but isn't widely
+supported on the Android side, and adding the protocol surface would
+roughly double the attack surface for very little gain.
+
+**Does it work with iPhones?**
+No. iPhones don't speak MTP — they speak Apple's proprietary mobile
+device protocol, handled by Image Capture / Photos / iCloud / Finder
+sync. Comprador is for *non*-Apple phones and PTP/MTP cameras.
+
+**How do I uninstall?**
+Drag `Comprador.app` from `/Applications` to the Trash. The Login Item
+registration goes with it. If you installed the optional helper for
+clean volume names, it will also be torn down. The
+Comprador-managed block in `/etc/hosts` (also optional helper only) is
+left in place — remove it manually with `sudo $EDITOR /etc/hosts` if
+you want it gone; look for the `# BEGIN Comprador` markers.
+
+**Finder shows the volume but no files (or transfers stall).**
+The MTP session has gotten into a bad state — usually because the
+phone slept or the cable wiggled. Click the menu bar icon → **Eject**,
+then unplug and replug. Comprador re-mounts fresh.
+
+**How do I update?**
+Download the latest `.dmg` from
+[Releases](https://github.com/terraceonhigh/Comprador/releases/latest)
+and replace the app in Applications. Sparkle-style auto-update is on
+the roadmap.
 
 ## Why Not...
 
