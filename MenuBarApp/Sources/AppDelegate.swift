@@ -410,7 +410,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Returns the hostname on success, or nil if the helper rejected it
     /// (in which case the bridge falls back to mDNS).
     private func registerCleanHostname(for device: USBDevice) -> String? {
-        let label = sanitizeHostname(device.displayName)
+        let label = AppDelegate.sanitizeHostname(device.displayName)
         guard !label.isEmpty else { return nil }
         do {
             try HelperClient.addHost(label)
@@ -426,17 +426,38 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Convert a friendly device name into a single-label DNS hostname
     /// matching the helper's regex `^[A-Za-z][A-Za-z0-9-]{0,62}$`.
-    private func sanitizeHostname(_ name: String) -> String {
+    ///
+    /// Examples:
+    ///   "Pixel 6"          → "Pixel-6"
+    ///   "Galaxy S24 Ultra" → "Galaxy-S24-Ultra"
+    ///   "OnePlus 12"       → "OnePlus-12"
+    ///   "12 Pro"           → "Phone-12-Pro"   (must start with letter)
+    ///   "SM-S921B"         → "SM-S921B"       (Samsung internal code)
+    ///   "Galaxy 갤럭시"    → "Galaxy"          (non-ASCII letters dropped)
+    ///   ""                 → ""               (caller falls back to mDNS)
+    static func sanitizeHostname(_ name: String) -> String {
+        // Treat common separators as word boundaries.
         var s = name.replacingOccurrences(of: " ", with: "-")
                     .replacingOccurrences(of: "_", with: "-")
                     .replacingOccurrences(of: ".", with: "-")
-        s = s.unicodeScalars.filter {
-            CharacterSet.letters.contains($0) ||
-            CharacterSet.decimalDigits.contains($0) ||
-            $0 == "-"
-        }.map { Character($0) }.reduce("") { $0 + String($1) }
+
+        // Drop everything that isn't ASCII A-Z, a-z, 0-9, or hyphen. Swift's
+        // CharacterSet.letters / .decimalDigits are Unicode-wide — they
+        // accept 갤, 中, é, ٠ etc. — which the ASCII-only helper regex
+        // would then reject silently.
+        s = s.replacingOccurrences(of: "[^A-Za-z0-9-]",
+                                   with: "",
+                                   options: .regularExpression)
+        // Collapse runs of hyphens to one and trim.
+        s = s.replacingOccurrences(of: "-+",
+                                   with: "-",
+                                   options: .regularExpression)
         s = s.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-        // Must start with a letter; if it doesn't, prepend one.
+
+        if s.isEmpty { return "" }
+
+        // Must start with a letter; if it doesn't, prepend one. ASCII-only
+        // because of the strip above.
         if let first = s.first, !first.isLetter {
             s = "Phone-" + s
         }
