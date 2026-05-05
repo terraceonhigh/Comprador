@@ -84,13 +84,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func installHelper() {
-        if !HelperClient.isEnabled {
-            HelperClient.register()
-        }
-        if let url = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") {
-            NSWorkspace.shared.open(url)
-        }
-        rebuildMenu()
+        installHelperFlow()
     }
 
     @objc private func toggleLoginItem() {
@@ -108,25 +102,69 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         rebuildMenu()
     }
 
+    /// Prompt the user to install the helper. Fires on every launch until
+    /// either the helper is enabled OR the user explicitly skips with
+    /// "Don't ask again". This is intentionally persistent — the cleaner
+    /// volume names are the single biggest UX win and the prompt is
+    /// trivially dismissable.
+    ///
+    /// Background-only apps (LSUIElement = true) can have NSAlert windows
+    /// hidden behind whatever's in front, so we activate the app first.
     private func offerHelperOnFirstLaunch() {
-        let key = "AndroidFS.didOfferHelper"
-        guard !UserDefaults.standard.bool(forKey: key) else { return }
-        UserDefaults.standard.set(true, forKey: key)
+        let declinedKey = "AndroidFS.declinedHelper"
+        if HelperClient.isEnabled { return }
+        if UserDefaults.standard.bool(forKey: declinedKey) { return }
 
-        guard !HelperClient.isEnabled else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self = self else { return }
+            // Bring the app forward so the alert isn't buried.
+            NSApp.activate(ignoringOtherApps: true)
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             let alert = NSAlert()
             alert.messageText = "Show your phone's name in Finder"
-            alert.informativeText = "AndroidFS can install a small system helper that names mounted volumes after the device (e.g. \"Pixel-6\" instead of \"Pixel-6.local\"). The helper only edits a managed block in your hosts file and only accepts single-label names — it can't impersonate real domains. macOS will ask you to approve it once in System Settings → Login Items.\n\nIf you skip this, mounts will fall back to a `.local` suffix."
+            alert.informativeText = "Without this, mounted volumes show as \"Pixel-6.local\" in Finder instead of \"Pixel-6\". The helper edits a managed block in /etc/hosts so the bridge can use a clean hostname, and only accepts single-label device names — it can't impersonate real domains.\n\nClicking Install opens System Settings → Login Items. Toggle \"AndroidFS Helper\" on to finish."
             alert.addButton(withTitle: "Install Helper")
-            alert.addButton(withTitle: "Skip")
+            alert.addButton(withTitle: "Not Now")
+            alert.addButton(withTitle: "Don't Ask Again")
             alert.alertStyle = .informational
-            if alert.runModal() == .alertFirstButtonReturn {
-                HelperClient.register()
-                // The user still needs to flip the toggle in Login Items.
-                if let url = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") {
-                    NSWorkspace.shared.open(url)
+
+            switch alert.runModal() {
+            case .alertFirstButtonReturn:
+                self.installHelperFlow()
+            case .alertThirdButtonReturn:
+                UserDefaults.standard.set(true, forKey: declinedKey)
+            default:
+                break // "Not Now" — ask again next launch
+            }
+        }
+    }
+
+    /// Register the helper, open Login Items, then poll for approval so we
+    /// can confirm success without waiting for the next device attach.
+    private func installHelperFlow() {
+        HelperClient.register()
+        if let url = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") {
+            NSWorkspace.shared.open(url)
+        }
+        rebuildMenu()
+
+        // Poll for ~60s. If the user flips the toggle, congratulate;
+        // otherwise leave a hint via the menu state and move on.
+        Task { [weak self] in
+            for _ in 0..<60 {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                if HelperClient.isEnabled {
+                    await MainActor.run {
+                        self?.rebuildMenu()
+                        NSApp.activate(ignoringOtherApps: true)
+                        let done = NSAlert()
+                        done.messageText = "Helper installed"
+                        done.informativeText = "Future devices will mount with clean names like \"/Volumes/Pixel-6\" instead of \"/Volumes/Pixel-6.local\"."
+                        done.alertStyle = .informational
+                        done.addButton(withTitle: "OK")
+                        done.runModal()
+                    }
+                    return
                 }
             }
         }
