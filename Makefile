@@ -7,7 +7,7 @@ LIBMTP_DYLIB := /opt/homebrew/opt/libmtp/lib/libmtp.9.dylib
 LIBUSB_DYLIB := /opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib
 DIST_DIR   := dist
 
-.PHONY: bridge helper helper-test app app-debug app-swiftc dev run run-swiftc dist dist-swiftc clean reset-onboarding
+.PHONY: bridge helper helper-test app app-debug app-swiftc dev run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
 
 bridge:
 	cd bridge && CGO_CFLAGS="-I$(CURDIR)/bridge/cvendor" CGO_LDFLAGS="-L/opt/homebrew/lib" $(GO) build -o ../$(BRIDGE_OUT) .
@@ -156,6 +156,33 @@ dist-swiftc: app-swiftc
 	@echo "  $(DIST_DIR)/$(APP_NAME).zip ($$(du -h $(DIST_DIR)/$(APP_NAME).zip | cut -f1))"
 	@echo ""
 	@echo "Testers: right-click → Open on first launch (ad-hoc signed)"
+
+# Build a drag-to-Applications .dmg from the existing dist-swiftc output.
+# Uses macOS's built-in hdiutil — no extra tooling. The DMG is a 100MB
+# read-write scratch image that gets the .app and an /Applications
+# alias dropped in, then converted to a compressed read-only image.
+# That's the standard pattern for app .dmgs.
+dist-dmg: dist-swiftc
+	@rm -f $(DIST_DIR)/$(APP_NAME).dmg $(DIST_DIR)/$(APP_NAME)-rw.dmg
+	@echo "Creating scratch DMG..."
+	@hdiutil create -size 100m -fs HFS+ -volname "$(APP_NAME)" \
+		-srcfolder $(DIST_DIR)/$(APP_NAME).app \
+		-format UDRW $(DIST_DIR)/$(APP_NAME)-rw.dmg >/dev/null
+	@echo "Mounting scratch DMG..."
+	@hdiutil attach $(DIST_DIR)/$(APP_NAME)-rw.dmg \
+		-mountpoint /Volumes/$(APP_NAME) -nobrowse -quiet
+	@ln -sf /Applications /Volumes/$(APP_NAME)/Applications
+	@hdiutil detach /Volumes/$(APP_NAME) -quiet
+	@echo "Compressing..."
+	@hdiutil convert $(DIST_DIR)/$(APP_NAME)-rw.dmg \
+		-format UDZO -imagekey zlib-level=9 \
+		-o $(DIST_DIR)/$(APP_NAME).dmg >/dev/null
+	@rm -f $(DIST_DIR)/$(APP_NAME)-rw.dmg
+	@echo ""
+	@echo "=== DMG ready ==="
+	@echo "  $(DIST_DIR)/$(APP_NAME).dmg ($$(du -h $(DIST_DIR)/$(APP_NAME).dmg | cut -f1))"
+	@echo ""
+	@echo "Open with: open $(DIST_DIR)/$(APP_NAME).dmg"
 
 clean:
 	rm -rf build/ dist/
