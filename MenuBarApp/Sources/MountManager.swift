@@ -27,11 +27,13 @@ class MountManager {
     }
 
     /// Mounts a WebDAV URL and returns the mount path.
-    func mount(port: Int, displayName: String) async throws -> URL {
-        let serverURL = URL(string: "http://127.0.0.1:\(port)/")! as CFURL
+    /// `host` is the URL host the bridge advertises (typically a per-device
+    /// `<name>.local` registered via mDNS); NetFS auto-names the volume from it.
+    func mount(host: String, port: Int, displayName: String) async throws -> URL {
+        let serverURL = URL(string: "http://\(host):\(port)/")! as CFURL
         let mountDir = URL(fileURLWithPath: "/Volumes") as CFURL
 
-        NSLog("AndroidFS: Mounting WebDAV from port %d", port)
+        NSLog("AndroidFS: Mounting WebDAV from %@:%d", host, port)
 
         return try await withCheckedThrowingContinuation { continuation in
             var mountPoints: Unmanaged<CFArray>?
@@ -62,7 +64,7 @@ class MountManager {
                let first = points.first {
                 resolvedPath = URL(fileURLWithPath: first)
             } else {
-                resolvedPath = URL(fileURLWithPath: "/Volumes/127.0.0.1")
+                resolvedPath = URL(fileURLWithPath: "/Volumes/\(host)")
             }
 
             self.mountPath = resolvedPath

@@ -255,7 +255,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 let port = try await bp.start()
                 let displayName = bp.deviceName ?? device.displayName
 
-                let _ = try await mountManager.mount(port: port, displayName: displayName)
+                let _ = try await mountManager.mount(host: bp.host, port: port, displayName: displayName)
 
                 await MainActor.run {
                     NSLog("AndroidFS: Device mounted as volume")

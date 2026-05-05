@@ -2,11 +2,11 @@
 
 ## High impact (UX friction)
 
-- [ ] Volume shows as "127.0.0.1" in Finder sidebar — should show device name (e.g. "Pixel 6")
-      Tried mount_webdav -v directly: blocked by /Volumes not being user-writable.
-      NetFS auto-names from URL host with no override API. Real fix: register an
-      mDNS service + custom .local hostname for the bridge so NetFS picks the
-      device name.
+- [x] Volume shows as "127.0.0.1" in Finder sidebar — should show device name (e.g. "Pixel 6")
+      Bridge now registers `<DeviceName>.local → 127.0.0.1` via mDNS using
+      `dns-sd -P` and advertises the URL with that hostname. NetFS auto-names
+      the volume from the URL host, so Finder now sees `/Volumes/Pixel-6.local`.
+      Verified end-to-end with a stub WebDAV server.
 - [x] Device name shows "Android Device" — fall back to `LIBMTP_Get_Modelname` when friendly name is empty (already in `binding.go`)
 - [x] Login item registration — offer to start at login on first launch via `SMAppService`
 
