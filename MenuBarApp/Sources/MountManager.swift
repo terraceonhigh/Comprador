@@ -115,6 +115,46 @@ class MountManager {
     var isMounted: Bool {
         mountPath != nil
     }
+
+    /// Force-unmount every WebDAV volume that points at 127.0.0.1 (or a
+    /// hostname we've registered). Called at app startup to clear out
+    /// stale mounts left behind by a previous crash, kill, or restart —
+    /// otherwise NetFS picks `/Volumes/Pixel-6-1`, then `-2`, etc.
+    static func cleanupStaleMounts() {
+        let pipe = Pipe()
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/sbin/mount")
+        p.standardOutput = pipe
+        p.standardError = FileHandle.nullDevice
+        do { try p.run() } catch { return }
+        p.waitUntilExit()
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let output = String(data: data, encoding: .utf8) else { return }
+
+        for line in output.split(separator: "\n") {
+            // Format: "http://host:port/ on /Volumes/foo (webdav, ...)"
+            let s = String(line)
+            guard s.contains("(webdav") else { continue }
+            // Match anything that looks like our bridge: localhost-ish URLs.
+            let isOurs = s.contains("://127.0.0.1:")
+                || s.contains("://localhost:")
+                || s.range(of: #"://[A-Za-z][A-Za-z0-9-]+(\.local)?:[0-9]+/"#, options: .regularExpression) != nil
+            guard isOurs else { continue }
+            guard let onRange = s.range(of: " on "),
+                  let parenRange = s.range(of: " (webdav") else { continue }
+            let mp = String(s[onRange.upperBound..<parenRange.lowerBound])
+            NSLog("AndroidFS: cleaning up stale mount %@", mp)
+
+            let u = Process()
+            u.executableURL = URL(fileURLWithPath: "/sbin/umount")
+            u.arguments = ["-f", mp]
+            u.standardOutput = FileHandle.nullDevice
+            u.standardError = FileHandle.nullDevice
+            try? u.run()
+            u.waitUntilExit()
+        }
+    }
 }
 
 enum MountError: LocalizedError {
