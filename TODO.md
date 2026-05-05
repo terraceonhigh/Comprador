@@ -39,25 +39,40 @@
       launchd's ~60ms respawn window.
 - [ ] PTPCamera must be killed before bridge can claim USB interface — works but inelegant
 - [ ] `libusb_detach_kernel_driver` timeout adds ~5s on some connections
-- [ ] **First-plug failure is unwinnable from libusb.** Captured 2026-05-04
-      with descriptor logging (`bridge/mtp/usbinfo.go`): the kernel binds
-      its USB Imaging Class driver to a class-6 PTP interface within
-      microseconds of enumeration. By the time we spawn the bridge,
-      ptpcamerad is *not* the holder — the kernel driver is — and macOS
-      forbids userspace from detaching kernel drivers (`libusb_detach_kernel_driver`
-      returns "Invalid argument", `libusb_reset_device` returns
-      `LIBUSB_ERROR_NO_DEVICE` because the call requires seized ownership
-      we don't have).
+- [ ] **App-after-plug failure is unwinnable from any non-SIP-disabled path.**
+      Diagnosed 2026-05-04 across multiple sessions; recording the dead ends
+      so we don't re-walk them:
 
-      Physical unplug+replug works because the kernel re-binds with a
-      brief unclaimed window the bridge wins on attempt 1. Software
-      cannot reproduce this without IOKit.
+      Symptom: if Comprador starts *after* the phone is plugged in,
+      `libusb_claim_interface` fails with `LIBUSB_ERROR_ACCESS` and stays
+      failing across any number of retries, IOKit seizes, daemon kills,
+      or USB resets. If Comprador is already running when the phone is
+      plugged in, the bridge claims on attempt 1 — the bridge wins a
+      race against `ptpcamerad`'s exclusive-access claim, but only in
+      the first ~5–10 seconds after enumeration.
 
-      **Proper fix:** Swift-side preflight using `IOUSBInterfaceOpenSeize`
-      from IOKit (probably in `BridgeProcess.start()` before exec). Seize
-      forces the kernel to release its claim so libusb can claim cleanly
-      from the bridge process. Estimated 1–2 days: write the IOKit dance
-      in Swift, hand off the seized state to the bridge process (probably
-      by reopening from libusb's side immediately after Swift releases),
-      validate against Pixel + Samsung + a camera. Until this lands,
-      first-plug failure stays a manual-replug problem.
+      Tried and failed:
+      - `killall -9 ptpcamerad`: launchd respawns within ~60ms.
+      - `IOUSBDeviceInterface500.USBDeviceOpenSeize`: returns
+        `kIOReturnExclusiveAccess (0xE00002C5)`; IOKit refuses to evict
+        an exclusive holder from userspace.
+      - `libusb_detach_kernel_driver`: returns "Invalid argument";
+        macOS doesn't support userspace driver detach.
+      - `libusb_reset_device`: returns `LIBUSB_ERROR_NO_DEVICE`; the
+        macOS reset path requires seized ownership.
+      - `launchctl bootout gui/<UID>/com.apple.ptpcamerad`: refused
+        with "Operation not permitted while System Integrity Protection
+        is engaged". Even root cannot bootout Apple's
+        `/System/Library/LaunchAgents` services with SIP on.
+
+      Remaining options, all unacceptable for a consumer app:
+      - Ship a kext (Apple deprecated kexts; user must disable SIP).
+      - Ship a DriverKit extension (multi-week build, App Store review).
+      - Tell the user to disable SIP.
+
+      **Decision: accept the manual replug as the recovery path.** When
+      the claim fails, the failure notification already tells the user
+      to unplug and replug. The detach/attach cycle that follows fires
+      a fresh USB enumeration, and the auto-retry path mounts cleanly.
+      It's two seconds of physical action; not worth the consumer-hostile
+      fixes above.
