@@ -20,7 +20,11 @@ jobs:
   test:
     runs-on: docker
     container:
-      image: docker://golang:1.21-bookworm
+      # The `docker://` prefix is the runner-label syntax (e.g.
+      # `docker:docker://node:20-bookworm`), not the container.image
+      # syntax. The Docker daemon parses the prefix as "docker:/..."
+      # and rejects it. Plain `golang:1.21-bookworm` is what works.
+      image: golang:1.21-bookworm
     steps:
       - name: Checkout
         uses: actions/checkout@v4
