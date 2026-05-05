@@ -392,6 +392,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     NSLog("Comprador: Attempt %d failed (%@), retrying...", attempt + 1, err.localizedDescription)
                 } else {
                     NSLog("Comprador: All attempts failed — %@", err.localizedDescription)
+                    // Same recovery hint as the timeout path — we still
+                    // can't claim the USB interface, almost always because
+                    // the descriptor is stale (PTP) even though the phone
+                    // shows MTP, and macOS daemons hold the interface.
+                    BridgeProcess.postFileTransferNotification()
                     await MainActor.run {
                         isConnecting = false
                         updateIcon(state: .error)
