@@ -11,6 +11,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var connectedDevice: USBDevice?
     private var isConnecting = false  // lock out spurious events during connection
     private var registeredHostname: String?  // hostname currently in /etc/hosts via helper
+    private var welcomeController: WelcomeWindowController?
+
+    private static let openedFinderOnFirstMountKey = "Comprador.didOpenFinderOnFirstMount"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Clear out any leftover webdav mounts from a prior session — otherwise
@@ -21,8 +24,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupStatusItem()
         setupDeviceWatcher()
         updateIcon(state: .idle)
-        offerLoginItemOnFirstLaunch()
-        offerHelperOnFirstLaunch()
+        presentWelcomeIfNeeded()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -107,43 +109,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         rebuildMenu()
     }
 
-    /// Prompt the user to install the helper. Fires on every launch until
-    /// either the helper is enabled OR the user explicitly skips with
-    /// "Don't ask again". This is intentionally persistent — the cleaner
-    /// volume names are the single biggest UX win and the prompt is
-    /// trivially dismissable.
-    ///
-    /// Background-only apps (LSUIElement = true) can have NSAlert windows
-    /// hidden behind whatever's in front, so we activate the app first.
-    private func offerHelperOnFirstLaunch() {
-        let declinedKey = "Comprador.declinedHelper"
-        if HelperClient.isEnabled { return }
-        if UserDefaults.standard.bool(forKey: declinedKey) { return }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            guard let self = self else { return }
-            // Bring the app forward so the alert isn't buried.
-            NSApp.activate(ignoringOtherApps: true)
-
-            let alert = NSAlert()
-            alert.messageText = "Show your phone's name in Finder"
-            alert.informativeText = "Without this, mounted volumes show as \"Pixel-6.local\" in Finder instead of \"Pixel-6\". The helper edits a managed block in /etc/hosts so the bridge can use a clean hostname, and only accepts single-label device names — it can't impersonate real domains.\n\nClicking Install opens System Settings → Login Items. Toggle \"Comprador Helper\" on to finish."
-            alert.addButton(withTitle: "Install Helper")
-            alert.addButton(withTitle: "Not Now")
-            alert.addButton(withTitle: "Don't Ask Again")
-            alert.alertStyle = .informational
-
-            switch alert.runModal() {
-            case .alertFirstButtonReturn:
-                self.installHelperFlow()
-            case .alertThirdButtonReturn:
-                UserDefaults.standard.set(true, forKey: declinedKey)
-            default:
-                break // "Not Now" — ask again next launch
-            }
-        }
-    }
-
     /// Register the helper, open Login Items, then poll for approval so we
     /// can confirm success without waiting for the next device attach.
     private func installHelperFlow() {
@@ -175,27 +140,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func offerLoginItemOnFirstLaunch() {
-        let key = "Comprador.didOfferLoginItem"
-        guard !UserDefaults.standard.bool(forKey: key) else { return }
-        UserDefaults.standard.set(true, forKey: key)
+    /// Show the SwiftUI welcome window once on first launch. Replaces the
+    /// previous pair of NSAlert prompts (login item + helper). The helper
+    /// is no longer surfaced on first launch — the menu bar item still
+    /// offers it for users who want clean volume names.
+    private func presentWelcomeIfNeeded() {
+        guard WelcomeWindowController.shouldPresent() else { return }
 
-        // Don't prompt if the user already has it enabled or explicitly disabled it
-        let status = SMAppService.mainApp.status
-        guard status == .notRegistered else { return }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-            let alert = NSAlert()
-            alert.messageText = "Start Comprador at login?"
-            alert.informativeText = "Comprador can launch automatically so your phone shows up in Finder as soon as you plug it in."
-            alert.addButton(withTitle: "Start at Login")
-            alert.addButton(withTitle: "Not Now")
-            alert.alertStyle = .informational
-            if alert.runModal() == .alertFirstButtonReturn {
-                LoginItem.enable()
-                self.rebuildMenu()
-            }
+        // Tiny delay so the menu bar icon is in place before the window
+        // appears; otherwise the user sees the window without a status item
+        // to dismiss back to.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            guard let self = self else { return }
+            let controller = WelcomeWindowController()
+            self.welcomeController = controller
+            controller.present(onClose: { [weak self] in
+                self?.welcomeController = nil
+                self?.rebuildMenu()  // login item state may have changed
+            })
         }
+    }
+
+    /// On the very first successful mount, surface a Finder window pointed
+    /// at the new volume so the user actually sees the win — without this,
+    /// the only feedback for a non-technical user is a slightly different
+    /// menu bar icon. Subsequent mounts are silent.
+    private func openFinderOnFirstMountIfNeeded(_ volumeURL: URL) {
+        let key = AppDelegate.openedFinderOnFirstMountKey
+        if UserDefaults.standard.bool(forKey: key) { return }
+        UserDefaults.standard.set(true, forKey: key)
+        NSWorkspace.shared.open(volumeURL)
     }
 
     // MARK: - Icon State
@@ -363,13 +337,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     mountHost = cleanLabel
                 }
 
-                let _ = try await mountManager.mount(host: mountHost, port: port, displayName: displayName)
+                let mountedURL = try await mountManager.mount(host: mountHost, port: port, displayName: displayName)
 
                 await MainActor.run {
                     NSLog("Comprador: Device mounted as volume")
                     isConnecting = false
                     updateIcon(state: .mounted)
                     rebuildMenu()
+                    openFinderOnFirstMountIfNeeded(mountedURL)
                 }
                 return // success
             } catch let bridgeErr as BridgeError where bridgeErr == .timeout {
