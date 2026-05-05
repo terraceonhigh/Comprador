@@ -125,7 +125,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             for _ in 0..<60 {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
                 if HelperClient.isEnabled {
-                    await MainActor.run {
+                    await MainActor.run { [weak self] in
                         self?.rebuildMenu()
                         NSApp.activate(ignoringOtherApps: true)
                         let done = NSAlert()
