@@ -22,24 +22,6 @@ to open, no kernel extension, no subscription.
 
 That's it.
 
-## Screenshot
-
-```
-┌──────────────────────────────────┐
-│  Finder                          │
-│  ┌────────────┐ ┌──────────────┐ │
-│  │ Locations  │ │ Internal     │ │
-│  │            │ │  shared      │ │
-│  │ 💾 Pixel 6 │ │  storage/    │ │
-│  │            │ │              │ │
-│  │            │ │ 📁 DCIM      │ │
-│  │            │ │ 📁 Download  │ │
-│  │            │ │ 📁 Pictures  │ │
-│  │            │ │ 📁 Music     │ │
-│  └────────────┘ └──────────────┘ │
-└──────────────────────────────────┘
-```
-
 ## Download
 
 Grab the latest release from
@@ -156,6 +138,21 @@ Comprador began as a fork of [OpenMTP](https://github.com/ganeshrvel/openmtp)
 by Ganesh Rathinavel, but no source from that project remains — Comprador
 is a clean reimplementation with a different architecture (Go WebDAV
 bridge + Swift menu bar app, in place of Electron + Node.js).
+
+## Support
+
+Comprador is free and will stay that way. If it's saved you the cost of
+a third-party transfer app, or just made your day a little less annoying,
+you can throw a few dollars in the tip jar:
+
+- [GitHub Sponsors](https://github.com/sponsors/terraceonhigh) — recurring
+  or one-time, no fees taken out of your contribution.
+
+Even small recurring sponsorships meaningfully cover the project's
+infrastructure costs (Apple Developer Program enrollment, signing
+certificates, the domain you're reading this on if there is one).
+If you'd rather contribute code or testing, see
+[CONTRIBUTING](CONTRIBUTING.md).
 
 ## License
 
