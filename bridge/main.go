@@ -9,8 +9,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"androidfs/bridge/mtp"
-	"androidfs/bridge/webdav"
+	"comprador/bridge/mtp"
+	"comprador/bridge/webdav"
 )
 
 func main() {
@@ -41,14 +41,14 @@ func main() {
 	// host, so a clean, single-label hostname → clean Finder volume name.
 	//
 	// Resolution order:
-	//   1. ANDROIDFS_HOST env var, if set (production: provided by the
+	//   1. COMPRADOR_HOST env var, if set (production: provided by the
 	//      menu-bar app after the privileged helper has added an entry to
 	//      /etc/hosts pointing it at 127.0.0.1).
 	//   2. mDNS fallback: register <DeviceName>.local → 127.0.0.1 via
 	//      dns-sd. Works without the helper but yields a `.local` suffix.
 	//   3. Bare 127.0.0.1, with the corresponding ugly Finder volume name.
 	host := "127.0.0.1"
-	if envHost := os.Getenv("ANDROIDFS_HOST"); envHost != "" {
+	if envHost := os.Getenv("COMPRADOR_HOST"); envHost != "" {
 		host = envHost
 		log.Printf("Using app-provided hostname: %s", host)
 	} else if hostReg, err := mtp.RegisterHostname(deviceName, port); err != nil {

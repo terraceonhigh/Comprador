@@ -1,4 +1,4 @@
-module androidfs/bridge
+module comprador/bridge
 
 go 1.21
 

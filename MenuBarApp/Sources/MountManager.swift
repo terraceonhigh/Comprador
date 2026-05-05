@@ -33,7 +33,7 @@ class MountManager {
         let serverURL = URL(string: "http://\(host):\(port)/")! as CFURL
         let mountDir = URL(fileURLWithPath: "/Volumes") as CFURL
 
-        NSLog("AndroidFS: Mounting WebDAV from %@:%d", host, port)
+        NSLog("Comprador: Mounting WebDAV from %@:%d", host, port)
 
         return try await withCheckedThrowingContinuation { continuation in
             var mountPoints: Unmanaged<CFArray>?
@@ -54,7 +54,7 @@ class MountManager {
             )
 
             if rc != 0 {
-                NSLog("AndroidFS: Mount failed with error %d", rc)
+                NSLog("Comprador: Mount failed with error %d", rc)
                 continuation.resume(throwing: MountError.mountFailed(rc))
                 return
             }
@@ -68,7 +68,7 @@ class MountManager {
             }
 
             self.mountPath = resolvedPath
-            NSLog("AndroidFS: Mounted at %@", resolvedPath.path)
+            NSLog("Comprador: Mounted at %@", resolvedPath.path)
             continuation.resume(returning: resolvedPath)
         }
     }
@@ -76,17 +76,17 @@ class MountManager {
     /// Unmounts the currently mounted volume.
     func unmount() async {
         guard let path = mountPath else { return }
-        NSLog("AndroidFS: Unmounting %@", path.path)
+        NSLog("Comprador: Unmounting %@", path.path)
 
         if let session = daSession,
            let disk = DADiskCreateFromVolumePath(kCFAllocatorDefault, session, path as CFURL) {
             DADiskUnmount(disk, DADiskUnmountOptions(kDADiskUnmountOptionDefault), { disk, dissenter, _ in
                 if let dissenter = dissenter {
                     let status = DADissenterGetStatus(dissenter)
-                    NSLog("AndroidFS: Clean unmount failed (status %d), forcing", status)
+                    NSLog("Comprador: Clean unmount failed (status %d), forcing", status)
                     DADiskUnmount(disk, DADiskUnmountOptions(kDADiskUnmountOptionForce), nil, nil)
                 } else {
-                    NSLog("AndroidFS: Unmounted")
+                    NSLog("Comprador: Unmounted")
                 }
             }, nil)
         } else {
@@ -144,7 +144,7 @@ class MountManager {
             guard let onRange = s.range(of: " on "),
                   let parenRange = s.range(of: " (webdav") else { continue }
             let mp = String(s[onRange.upperBound..<parenRange.lowerBound])
-            NSLog("AndroidFS: cleaning up stale mount %@", mp)
+            NSLog("Comprador: cleaning up stale mount %@", mp)
 
             let u = Process()
             u.executableURL = URL(fileURLWithPath: "/sbin/umount")

@@ -1,8 +1,8 @@
-# AndroidFS Architecture
+# Comprador Architecture
 
 ## Overview
 
-AndroidFS is a macOS menu bar application that makes an Android phone
+Comprador is a macOS menu bar application that makes an Android phone
 appear as a mounted volume in Finder when connected via USB. It requires
 no developer mode, no USB debugging, and no user action beyond selecting
 "File Transfer" on the phone's USB notification.
@@ -11,7 +11,7 @@ no developer mode, no USB debugging, and no user action beyond selecting
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                          AndroidFS.app                            │
+│                          Comprador.app                            │
 │                                                                  │
 │  ┌──────────────┐  ┌──────────────┐  ┌─────────────┐             │
 │  │ DeviceWatcher│─▶│BridgeProcess │─▶│MountManager │             │
@@ -28,7 +28,7 @@ no developer mode, no USB debugging, and no user action beyond selecting
           │                  │
           ▼                  ▼
 ┌──────────────────┐  ┌──────────────────────────────────┐
-│ androidfs-helper │  │           libmtp / WebDAV         │
+│ comprador-helper │  │           libmtp / WebDAV         │
 │  (LaunchDaemon)  │  │                                   │
 │                  │  │   ┌──────────┐  ┌──────────┐     │
 │  edits /etc/hosts│  │   │  libmtp  │  │  WebDAV  │     │
@@ -113,13 +113,13 @@ no developer mode, no USB debugging, and no user action beyond selecting
 
 A small Go binary registered with launchd via `SMAppService.daemon`. The
 host app's bundle ships:
-- `Contents/MacOS/androidfs-helper` — the helper executable
-- `Contents/Library/LaunchDaemons/com.androidfs.helper.plist` — the
+- `Contents/MacOS/comprador-helper` — the helper executable
+- `Contents/Library/LaunchDaemons/com.comprador.helper.plist` — the
   LaunchDaemon definition
 
 After the user approves the daemon in System Settings → Login Items, it
 runs as root and listens on a Unix socket at
-`/var/run/androidfs-helper.sock` (mode 0666). Protocol is line-based:
+`/var/run/comprador-helper.sock` (mode 0666). Protocol is line-based:
 
     ADD <name>      → 127.0.0.1 <name> appended to managed block
     REMOVE <name>   → matching line removed
@@ -132,7 +132,7 @@ reserved labels (`localhost`, `broadcasthost`, etc.) — single-label,
 non-dotted names that can't impersonate real domains.
 
 Hosts file edits are atomic via `tempfile + rename` and fenced by an
-`# AndroidFS BEGIN ... # AndroidFS END` block so the helper never
+`# Comprador BEGIN ... # Comprador END` block so the helper never
 touches lines outside its scope.
 
 ## Key Design Decisions
@@ -165,7 +165,7 @@ when it detects a PTP/MTP USB device, claiming the USB interface before
 libmtp can call `libusb_claim_interface`. Both are LaunchAgents that
 launchd respawns in ~60ms after a SIGKILL, so the kill must happen *just
 before* the claim — we run it from within the bridge in a tight retry
-loop, not from Swift. The names matter: older AndroidFS code killed
+loop, not from Swift. The names matter: older Comprador code killed
 `PTPCamera` and `AMPDevicesAgent`, which silently no-op on modern macOS.
 
 ### Why a privileged helper for `/etc/hosts`?
@@ -177,7 +177,7 @@ point. mDNS lets the bridge resolve `<name>.local` without privileges
 but the suffix shows up in Finder.
 
 The helper, registered via `SMAppService.daemon`, lets the user grant
-one-time approval ("AndroidFS Helper" in Login Items). After that, every
+one-time approval ("Comprador Helper" in Login Items). After that, every
 device gets a clean single-label name in /etc/hosts and a clean
 `/Volumes/<name>` mount, with no further prompts. The narrow ADD/REMOVE
 protocol and strict server-side validation mean even a malicious client

@@ -1,4 +1,4 @@
-# Testing AndroidFS
+# Testing Comprador
 
 ## Automated Tests
 
@@ -98,7 +98,7 @@ When things go wrong (bridge hangs, stale mount, USB session locked):
 
 ```bash
 # Kill everything
-killall AndroidFS bridge dns-sd androidfs-helper 2>/dev/null
+killall Comprador bridge dns-sd comprador-helper 2>/dev/null
 
 # Unmount any leftover webdav volumes
 for v in $(mount | awk '/webdav/ {print $3}'); do
@@ -114,7 +114,7 @@ done
 # If you want to wipe the helper's hosts entries between runs
 # (without uninstalling the daemon), the app does this automatically
 # on teardown — but you can force it via:
-echo "CLEAR" | nc -U /var/run/androidfs-helper.sock
+echo "CLEAR" | nc -U /var/run/comprador-helper.sock
 ```
 
 ## Testing the helper in isolation
@@ -122,15 +122,15 @@ echo "CLEAR" | nc -U /var/run/androidfs-helper.sock
 Run the helper without root by overriding the paths:
 
 ```bash
-ANDROIDFS_SKIP_ROOT_CHECK=1 \
-ANDROIDFS_SOCKET_PATH=/tmp/test.sock \
-ANDROIDFS_HOSTS_PATH=/tmp/test-hosts \
-build/androidfs-helper
+COMPRADOR_SKIP_ROOT_CHECK=1 \
+COMPRADOR_SOCKET_PATH=/tmp/test.sock \
+COMPRADOR_HOSTS_PATH=/tmp/test-hosts \
+build/comprador-helper
 
 # In another terminal:
 echo "ADD Pixel-6"     | nc -U /tmp/test.sock
 echo "ADD Galaxy-S24"  | nc -U /tmp/test.sock
-sed -n '/AndroidFS/,/AndroidFS END/p' /tmp/test-hosts
+sed -n '/Comprador/,/Comprador END/p' /tmp/test-hosts
 echo "REMOVE Pixel-6"  | nc -U /tmp/test.sock
 echo "CLEAR"           | nc -U /tmp/test.sock
 ```

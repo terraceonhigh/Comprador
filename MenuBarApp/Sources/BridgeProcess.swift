@@ -17,7 +17,7 @@ class BridgeProcess {
             throw BridgeError.binaryNotFound(bridgePath)
         }
 
-        NSLog("AndroidFS: Starting bridge at %@", bridgePath)
+        NSLog("Comprador: Starting bridge at %@", bridgePath)
 
         // Kill macOS processes that auto-claim MTP/PTP USB interfaces
         BridgeProcess.killCompetingProcesses()
@@ -45,13 +45,13 @@ class BridgeProcess {
         stderrPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             if !data.isEmpty, let line = String(data: data, encoding: .utf8) {
-                NSLog("AndroidFS bridge: %@", line.trimmingCharacters(in: .whitespacesAndNewlines))
+                NSLog("Comprador bridge: %@", line.trimmingCharacters(in: .whitespacesAndNewlines))
             }
         }
 
         try p.run()
         self.process = p
-        NSLog("AndroidFS: Bridge process started (PID %d)", p.processIdentifier)
+        NSLog("Comprador: Bridge process started (PID %d)", p.processIdentifier)
 
         // Read PORT=, HOST=, and DEVICE= from stdout with timeout
         let result = try await withThrowingTaskGroup(of: BridgeStartupInfo.self) { group in
@@ -71,7 +71,7 @@ class BridgeProcess {
         self.port = result.port
         self.host = result.host ?? "127.0.0.1"
         self.deviceName = result.device
-        NSLog("AndroidFS: Bridge ready on %@:%d, device: %@",
+        NSLog("Comprador: Bridge ready on %@:%d, device: %@",
               self.host, result.port, result.device ?? "unknown")
         return result.port
     }
@@ -85,13 +85,13 @@ class BridgeProcess {
             return
         }
 
-        NSLog("AndroidFS: Stopping bridge (PID %d)", p.processIdentifier)
+        NSLog("Comprador: Stopping bridge (PID %d)", p.processIdentifier)
         p.terminate()
 
         // Give it a moment to exit cleanly, then force kill
         DispatchQueue.global().asyncAfter(deadline: .now() + 2) { [weak p] in
             if let p = p, p.isRunning {
-                NSLog("AndroidFS: Force killing bridge")
+                NSLog("Comprador: Force killing bridge")
                 p.interrupt()
             }
         }
@@ -125,7 +125,7 @@ class BridgeProcess {
             try? task.run()
             task.waitUntilExit()
             if task.terminationStatus == 0 {
-                NSLog("AndroidFS: Killed %@", name)
+                NSLog("Comprador: Killed %@", name)
             }
         }
     }

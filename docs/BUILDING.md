@@ -1,4 +1,4 @@
-# Building AndroidFS
+# Building Comprador
 
 ## Prerequisites
 
@@ -93,14 +93,14 @@ make clean
 
 ```
 dist/
-├── AndroidFS.app/
+├── Comprador.app/
 │   ├── Contents/
 │   │   ├── MacOS/
-│   │   │   ├── AndroidFS                              # Swift menu bar app
-│   │   │   └── androidfs-helper                       # Privileged helper
+│   │   │   ├── Comprador                              # Swift menu bar app
+│   │   │   └── comprador-helper                       # Privileged helper
 │   │   ├── Library/
 │   │   │   └── LaunchDaemons/
-│   │   │       └── com.androidfs.helper.plist         # SMAppService.daemon
+│   │   │       └── com.comprador.helper.plist         # SMAppService.daemon
 │   │   ├── Resources/
 │   │   │   ├── bridge                                 # Go WebDAV bridge
 │   │   │   └── VendorIDs.plist                        # Android vendor IDs
@@ -109,7 +109,7 @@ dist/
 │   │   │   └── libusb-1.0.0.dylib                     # USB library
 │   │   └── Info.plist
 │   └── ...
-└── AndroidFS.zip                                       # ~5MB, ready to share
+└── Comprador.zip                                       # ~5MB, ready to share
 ```
 
 All dynamic library paths are rewritten with `install_name_tool` to use
@@ -117,7 +117,7 @@ All dynamic library paths are rewritten with `install_name_tool` to use
 Homebrew installation needed on the target Mac.
 
 The helper plist's `BundleProgram` points at
-`Contents/MacOS/androidfs-helper`; `SMAppService.daemon(plistName:)`
+`Contents/MacOS/comprador-helper`; `SMAppService.daemon(plistName:)`
 reads it from the bundle on first registration. The daemon stays
 disabled until the user approves it under System Settings → Login Items.
 

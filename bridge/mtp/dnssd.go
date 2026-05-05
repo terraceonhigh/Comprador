@@ -24,7 +24,7 @@ type HostnameRegistration struct {
 
 // dnsSDServicePrefix tags our dns-sd subprocesses so we can detect orphans
 // from a previous crashed bridge run.
-const dnsSDServicePrefix = "AndroidFS-"
+const dnsSDServicePrefix = "Comprador-"
 
 // RegisterHostname publishes <hostname>.local → 127.0.0.1 via mDNS by
 // spawning `dns-sd -P`. Blocks until the registration is confirmed (or
@@ -106,7 +106,7 @@ func (h *HostnameRegistration) Stop() {
 	})
 }
 
-// killOrphanDNSSD sends SIGKILL to any leftover `dns-sd -P AndroidFS-*`
+// killOrphanDNSSD sends SIGKILL to any leftover `dns-sd -P Comprador-*`
 // processes from a prior bridge run that didn't shut down cleanly.
 func killOrphanDNSSD() {
 	cmd := exec.Command("/usr/bin/pkill", "-f", "dns-sd.*"+dnsSDServicePrefix)

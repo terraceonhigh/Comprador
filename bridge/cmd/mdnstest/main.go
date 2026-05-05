@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	"androidfs/bridge/mtp"
+	"comprador/bridge/mtp"
 )
 
 func main() {
