@@ -11,10 +11,49 @@ class BridgeProcess {
     /// Starts the bridge binary and waits for it to print PORT=N.
     /// Returns the port number on success.
     /// Throws if the bridge fails to start or doesn't respond within the timeout.
-    func start() async throws -> Int {
+    ///
+    /// If `seizeForVendor` and `seizeForProduct` are non-zero, an IOKit
+    /// preflight runs first: seizes exclusive access to the device,
+    /// re-enumerates it (USB-level detach/reattach, equivalent to physical
+    /// replug), and releases. This is the only reliable way to break the
+    /// macOS kernel driver's bind on a class-6 PTP interface so libusb's
+    /// claim_interface can succeed on the bridge's first attempt.
+    func start(seizeForVendor: UInt16 = 0, seizeForProduct: UInt16 = 0) async throws -> Int {
         let bridgePath = findBridgeBinary()
         guard FileManager.default.fileExists(atPath: bridgePath) else {
             throw BridgeError.binaryNotFound(bridgePath)
+        }
+
+        // IOKit preflight: force a software replug so the bridge sees a
+        // fresh, kernel-unclaimed device. This sequence (seize → reset →
+        // release) is what physical unplug+replug does at the hardware
+        // level — except we don't need the user to touch the cable.
+        if seizeForVendor != 0 && seizeForProduct != 0 {
+            let result = USBSeizer.seizeAndReset(
+                vendorID: seizeForVendor,
+                productID: seizeForProduct
+            )
+            switch result {
+            case .success:
+                NSLog("Comprador: IOKit preflight OK (seized + re-enumerated 0x%04X:0x%04X)",
+                      seizeForVendor, seizeForProduct)
+                // Wait for USB to settle after re-enumeration. ~1s is
+                // enough for IOKit to surface the new device handle;
+                // shorter and we race the kernel binding before our
+                // claim attempt.
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+            case .deviceNotFound:
+                NSLog("Comprador: IOKit preflight skipped (device 0x%04X:0x%04X not found)",
+                      seizeForVendor, seizeForProduct)
+            case .pluginCreateFailed(let rc):
+                NSLog("Comprador: IOKit preflight skipped (IOCreatePlugInInterfaceForService → 0x%X)",
+                      UInt32(bitPattern: Int32(rc)))
+            case .interfaceQueryFailed(let rc):
+                NSLog("Comprador: IOKit preflight skipped (QueryInterface → %d)", rc)
+            case .openSeizeFailed(let rc):
+                NSLog("Comprador: IOKit preflight skipped (USBDeviceOpenSeize → 0x%X)",
+                      UInt32(bitPattern: Int32(rc)))
+            }
         }
 
         NSLog("Comprador: Starting bridge at %@", bridgePath)
