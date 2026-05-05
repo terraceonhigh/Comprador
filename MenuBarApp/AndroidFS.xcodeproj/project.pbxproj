@@ -13,6 +13,7 @@
 		A1000005 /* BridgeProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000007 /* BridgeProcess.swift */; };
 		A1000006 /* MountManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000008 /* MountManager.swift */; };
 		A1000007 /* LoginItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000009 /* LoginItem.swift */; };
+		A1000008 /* HelperClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000010 /* HelperClient.swift */; };
 		A1000003 /* VendorIDs.plist in Resources */ = {isa = PBXBuildFile; fileRef = A2000003 /* VendorIDs.plist */; };
 		A1000010 /* IOKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000010 /* IOKit.framework */; };
 		A1000011 /* DiskArbitration.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000011 /* DiskArbitration.framework */; };
@@ -25,6 +26,7 @@
 		A2000007 /* BridgeProcess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeProcess.swift; sourceTree = "<group>"; };
 		A2000008 /* MountManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MountManager.swift; sourceTree = "<group>"; };
 		A2000009 /* LoginItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginItem.swift; sourceTree = "<group>"; };
+		A2000010 /* HelperClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelperClient.swift; sourceTree = "<group>"; };
 		A2000003 /* VendorIDs.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = VendorIDs.plist; sourceTree = "<group>"; };
 		A2000004 /* AndroidFS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AndroidFS.entitlements; sourceTree = "<group>"; };
 		A2000005 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -67,6 +69,7 @@
 				A2000007 /* BridgeProcess.swift */,
 				A2000008 /* MountManager.swift */,
 				A2000009 /* LoginItem.swift */,
+				A2000010 /* HelperClient.swift */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -166,6 +169,7 @@
 				A1000005 /* BridgeProcess.swift in Sources */,
 				A1000006 /* MountManager.swift in Sources */,
 				A1000007 /* LoginItem.swift in Sources */,
+				A1000008 /* HelperClient.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

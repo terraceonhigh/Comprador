@@ -10,12 +10,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // Current state
     private var connectedDevice: USBDevice?
     private var isConnecting = false  // lock out spurious events during connection
+    private var registeredHostname: String?  // hostname currently in /etc/hosts via helper
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
         setupDeviceWatcher()
         updateIcon(state: .idle)
         offerLoginItemOnFirstLaunch()
+        offerHelperOnFirstLaunch()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -62,11 +64,33 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         loginItem.state = LoginItem.isEnabled ? .on : .off
         menu.addItem(loginItem)
 
+        let helperLabel: String
+        switch HelperClient.statusDescription {
+        case "enabled":          helperLabel = "Helper installed"
+        case "requiresApproval": helperLabel = "Helper needs approval…"
+        default:                 helperLabel = "Install helper…"
+        }
+        let helperItem = NSMenuItem(title: helperLabel,
+                                    action: #selector(installHelper),
+                                    keyEquivalent: "")
+        helperItem.state = HelperClient.isEnabled ? .on : .off
+        menu.addItem(helperItem)
+
         menu.addItem(NSMenuItem(title: "Quit AndroidFS",
                                 action: #selector(quitApp),
                                 keyEquivalent: "q"))
 
         statusItem.menu = menu
+    }
+
+    @objc private func installHelper() {
+        if !HelperClient.isEnabled {
+            HelperClient.register()
+        }
+        if let url = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") {
+            NSWorkspace.shared.open(url)
+        }
+        rebuildMenu()
     }
 
     @objc private func toggleLoginItem() {
@@ -82,6 +106,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             LoginItem.enable()
         }
         rebuildMenu()
+    }
+
+    private func offerHelperOnFirstLaunch() {
+        let key = "AndroidFS.didOfferHelper"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+
+        guard !HelperClient.isEnabled else { return }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            let alert = NSAlert()
+            alert.messageText = "Show your phone's name in Finder"
+            alert.informativeText = "AndroidFS can install a small system helper that names mounted volumes after the device (e.g. \"Pixel-6\" instead of \"Pixel-6.local\"). The helper only edits a managed block in your hosts file and only accepts single-label names — it can't impersonate real domains. macOS will ask you to approve it once in System Settings → Login Items.\n\nIf you skip this, mounts will fall back to a `.local` suffix."
+            alert.addButton(withTitle: "Install Helper")
+            alert.addButton(withTitle: "Skip")
+            alert.alertStyle = .informational
+            if alert.runModal() == .alertFirstButtonReturn {
+                HelperClient.register()
+                // The user still needs to flip the toggle in Login Items.
+                if let url = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+        }
     }
 
     private func offerLoginItemOnFirstLaunch() {
@@ -252,7 +300,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.bridge = bp
 
             do {
-                let port = try await bp.start()
+                let preferredHost = HelperClient.isEnabled
+                    ? registerCleanHostname(for: device)
+                    : nil
+
+                let port = try await bp.start(preferredHost: preferredHost)
                 let displayName = bp.deviceName ?? device.displayName
 
                 let _ = try await mountManager.mount(host: bp.host, port: port, displayName: displayName)
@@ -298,5 +350,56 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         bridge?.stop()
         bridge = nil
+
+        if let host = registeredHostname {
+            do {
+                try HelperClient.removeHost(host)
+            } catch {
+                NSLog("AndroidFS: helper removeHost(%@) failed: %@",
+                      host, error.localizedDescription)
+            }
+            registeredHostname = nil
+        }
+    }
+
+    /// Sanitises the device's USB display name into a DNS label and asks
+    /// the privileged helper to point it at 127.0.0.1 in /etc/hosts.
+    /// Returns the hostname on success, or nil if the helper rejected it
+    /// (in which case the bridge falls back to mDNS).
+    private func registerCleanHostname(for device: USBDevice) -> String? {
+        let label = sanitizeHostname(device.displayName)
+        guard !label.isEmpty else { return nil }
+        do {
+            try HelperClient.addHost(label)
+            registeredHostname = label
+            NSLog("AndroidFS: registered hostname %@ via helper", label)
+            return label
+        } catch {
+            NSLog("AndroidFS: helper addHost(%@) failed: %@",
+                  label, error.localizedDescription)
+            return nil
+        }
+    }
+
+    /// Convert a friendly device name into a single-label DNS hostname
+    /// matching the helper's regex `^[A-Za-z][A-Za-z0-9-]{0,62}$`.
+    private func sanitizeHostname(_ name: String) -> String {
+        var s = name.replacingOccurrences(of: " ", with: "-")
+                    .replacingOccurrences(of: "_", with: "-")
+                    .replacingOccurrences(of: ".", with: "-")
+        s = s.unicodeScalars.filter {
+            CharacterSet.letters.contains($0) ||
+            CharacterSet.decimalDigits.contains($0) ||
+            $0 == "-"
+        }.map { Character($0) }.reduce("") { $0 + String($1) }
+        s = s.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        // Must start with a letter; if it doesn't, prepend one.
+        if let first = s.first, !first.isLetter {
+            s = "Phone-" + s
+        }
+        if s.count > 63 {
+            s = String(s.prefix(63)).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        }
+        return s
     }
 }

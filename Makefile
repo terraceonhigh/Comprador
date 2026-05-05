@@ -1,4 +1,5 @@
 BRIDGE_OUT := build/bridge
+HELPER_OUT := build/androidfs-helper
 APP_NAME   := AndroidFS
 GO         := /opt/homebrew/bin/go
 DERIVED    := $(HOME)/Library/Developer/Xcode/DerivedData
@@ -6,10 +7,16 @@ LIBMTP_DYLIB := /opt/homebrew/opt/libmtp/lib/libmtp.9.dylib
 LIBUSB_DYLIB := /opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib
 DIST_DIR   := dist
 
-.PHONY: bridge app app-debug app-swiftc dev run run-swiftc dist dist-swiftc clean
+.PHONY: bridge helper helper-test app app-debug app-swiftc dev run run-swiftc dist dist-swiftc clean
 
 bridge:
 	cd bridge && CGO_CFLAGS="-I$(CURDIR)/bridge/cvendor" CGO_LDFLAGS="-L/opt/homebrew/lib" $(GO) build -o ../$(BRIDGE_OUT) .
+
+helper:
+	cd helper && $(GO) build -o ../$(HELPER_OUT) .
+
+helper-test:
+	cd helper && $(GO) test -v ./...
 
 # Bundle bridge + all dylibs into an app directory, fix rpaths
 define BUNDLE_BRIDGE
@@ -30,6 +37,19 @@ define BUNDLE_BRIDGE
 	codesign --force --sign - "$(1)/Contents/Frameworks/libusb-1.0.0.dylib"; \
 	codesign --force --sign - "$(1)/Contents/Resources/bridge"; \
 	echo "Bundled bridge + libmtp + libusb into $(1)"
+endef
+
+# Bundle the privileged helper binary + LaunchDaemon plist. SMAppService.daemon
+# expects the plist at Contents/Library/LaunchDaemons/<plist> and the binary
+# referenced by the plist's BundleProgram (relative to the app bundle root).
+define BUNDLE_HELPER
+	mkdir -p "$(1)/Contents/Library/LaunchDaemons"; \
+	rm -f "$(1)/Contents/MacOS/androidfs-helper" \
+	      "$(1)/Contents/Library/LaunchDaemons/com.androidfs.helper.plist"; \
+	cp $(HELPER_OUT) "$(1)/Contents/MacOS/androidfs-helper"; \
+	cp helper/com.androidfs.helper.plist "$(1)/Contents/Library/LaunchDaemons/"; \
+	codesign --force --sign - "$(1)/Contents/MacOS/androidfs-helper"; \
+	echo "Bundled helper into $(1)"
 endef
 
 app: bridge
@@ -89,7 +109,7 @@ SWIFT_BIN    := build/swift/$(APP_NAME)
 SWIFT_SRC    := $(wildcard MenuBarApp/Sources/*.swift)
 SWIFT_TARGET := arm64-apple-macosx13.0
 
-app-swiftc: bridge
+app-swiftc: bridge helper
 	@mkdir -p build/swift
 	swiftc -target $(SWIFT_TARGET) -O \
 		-framework Cocoa -framework IOKit -framework DiskArbitration \
@@ -98,12 +118,14 @@ app-swiftc: bridge
 	@rm -rf $(SWIFT_APP)
 	@mkdir -p $(SWIFT_APP)/Contents/MacOS \
 	          $(SWIFT_APP)/Contents/Resources \
-	          $(SWIFT_APP)/Contents/Frameworks
+	          $(SWIFT_APP)/Contents/Frameworks \
+	          $(SWIFT_APP)/Contents/Library/LaunchDaemons
 	cp $(SWIFT_BIN) $(SWIFT_APP)/Contents/MacOS/$(APP_NAME)
 	cp MenuBarApp/Info.plist $(SWIFT_APP)/Contents/Info.plist
 	cp MenuBarApp/Resources/VendorIDs.plist $(SWIFT_APP)/Contents/Resources/
 	@printf 'APPL????' > $(SWIFT_APP)/Contents/PkgInfo
 	$(call BUNDLE_BRIDGE,$(SWIFT_APP))
+	$(call BUNDLE_HELPER,$(SWIFT_APP))
 	codesign --force --deep --sign - \
 		--entitlements MenuBarApp/AndroidFS.entitlements \
 		--options runtime \
