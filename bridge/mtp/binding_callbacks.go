@@ -30,15 +30,23 @@ import (
 func goDataPutFunc(params unsafe.Pointer, priv unsafe.Pointer, sendlen C.uint32_t, data *C.uchar, putlen *C.uint32_t) C.uint16_t {
 	ctx := (*struct{ id C.int })(priv)
 	callbackRegistry.mu.Lock()
-	w, ok := callbackRegistry.writers[int(ctx.id)]
+	entry, ok := callbackRegistry.writers[int(ctx.id)]
 	callbackRegistry.mu.Unlock()
 	if !ok {
 		return C.LIBMTP_HANDLER_RETURN_ERROR
 	}
 
-	goSlice := C.GoBytes(unsafe.Pointer(data), C.int(sendlen))
-	n, err := w.Write(goSlice)
-	*putlen = C.uint32_t(n)
+	// Reuse entry.buf instead of C.GoBytes (which allocates fresh).
+	// Grow the buffer once if libmtp's chunk exceeds our initial size;
+	// subsequent callbacks reuse the new capacity.
+	n := int(sendlen)
+	if cap(entry.buf) < n {
+		entry.buf = make([]byte, n)
+	}
+	goSlice := entry.buf[:n]
+	C.memcpy(unsafe.Pointer(&goSlice[0]), unsafe.Pointer(data), C.ulong(n))
+	written, err := entry.w.Write(goSlice)
+	*putlen = C.uint32_t(written)
 	if err != nil {
 		return C.LIBMTP_HANDLER_RETURN_ERROR
 	}
@@ -60,14 +68,23 @@ func goDataPutFunc(params unsafe.Pointer, priv unsafe.Pointer, sendlen C.uint32_
 func goDataGetFunc(params unsafe.Pointer, priv unsafe.Pointer, wantlen C.uint32_t, data *C.uchar, gotlen *C.uint32_t) C.uint16_t {
 	ctx := (*struct{ id C.int })(priv)
 	callbackRegistry.mu.Lock()
-	r, ok := callbackRegistry.readers[int(ctx.id)]
+	entry, ok := callbackRegistry.readers[int(ctx.id)]
 	callbackRegistry.mu.Unlock()
 	if !ok {
 		return C.LIBMTP_HANDLER_RETURN_ERROR
 	}
 
-	goSlice := make([]byte, int(wantlen))
-	n, err := r.Read(goSlice)
+	// Reuse entry.buf instead of `make([]byte, int(wantlen))` per call.
+	// Grow once if a libmtp request exceeds our initial size; subsequent
+	// callbacks reuse the new capacity. This is the path #1 fix from
+	// docs/DECISIONS.md — caps Go-side memory at one chunk for the
+	// whole transfer, instead of accumulating one allocation per chunk.
+	want := int(wantlen)
+	if cap(entry.buf) < want {
+		entry.buf = make([]byte, want)
+	}
+	goSlice := entry.buf[:want]
+	n, err := entry.r.Read(goSlice)
 	if n > 0 {
 		C.memcpy(unsafe.Pointer(data), unsafe.Pointer(&goSlice[0]), C.ulong(n))
 	}
