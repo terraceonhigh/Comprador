@@ -1,58 +1,69 @@
 # Comprador — TODO
 
-## Architecture risk — open
+## Architecture risk — partially mitigated, still open
 
 - [ ] **Reconsider the architecture if RAM is a binding constraint.**
-      Observed 2026-05-06 on an 8 GiB-RAM Mac: dragging a 9.09 GiB
-      Attenborough.mkv in Finder, with ~67 MiB free system memory:
-      Finder's progress bar climbed silently while webdavfs accepted
-      bytes it had nowhere to buffer; the bridge received zero body
-      bytes for the first ~3 minutes; eventually webdavfs flushed
-      ~4.3 GiB in a burst (truncated by the writeseq cap). Phase 2
-      auto-completion then worked end-to-end (companion picked up
-      the partial, found source via `NSMetadataQuery`, streamed the
-      remainder, bridge committed with matching md5).
 
-      But the *journey* was unacceptable for an end user: minutes of
-      Finder progress with no actual transfer, opaque memory
-      starvation, intermittent EADDRNOTAVAIL on the companion's own
-      URLSession because new TCP connections couldn't allocate
-      ephemeral source ports, and a long URLSession timeout window
-      where the upload looked failed but was actually being committed
-      to MTP. We can't ship something that behaves this way on a
-      machine the user is realistically going to own.
+      **Original observation 2026-05-06 (pre-streaming-refactor):** on
+      an 8 GiB-RAM Mac with ~67 MiB free, dragging a 9.09 GiB
+      Attenborough.mkv via Finder: Finder's progress bar climbed
+      silently while webdavfs accepted bytes it had nowhere to buffer;
+      the bridge received zero body bytes for ~3 minutes; eventually
+      webdavfs flushed ~4.3 GiB in a burst (truncated by the writeseq
+      cap). Phase 2 auto-completion succeeded but the *journey* —
+      opaque memory starvation, intermittent EADDRNOTAVAIL on the
+      companion's URLSession, false-timeout in URLSession during the
+      MTP commit window — was unacceptable for non-developer users.
 
-      The constraint is structural to the WebDAV-via-NetFS path:
-      webdavfs needs RAM to buffer chunked PUT bodies, and macOS
-      decides on the cap from free memory. We do not control that
-      decision, and there is no exposed knob (we exhausted
-      MNT_SYNCHRONOUS — see MISTAKES.md option 1).
+      **What changed (commit 0c5a18e):** the bridge no longer buffers
+      PUT bodies in a `bytes.Buffer`; it streams every Write directly
+      to a staging file on disk, and opens that staging file with
+      `F_NOCACHE` when reading it back for the MTP send. Bridge
+      memory footprint dropped from "approximately the file size"
+      (10 GB physical footprint observed for a 9 GB file) to a
+      handful of MiB regardless of upload size.
 
-      Architectural options to weigh, none cheap:
+      **Re-test on the same 8 GiB Mac, same Attenborough:** webdavfs
+      delivered the *full* 9.09 GiB body in a single uninterrupted
+      PUT — no truncation, the writeseq cap stayed comfortably high
+      the whole time because the system had so much more free memory.
+      Mode A simply didn't fire. The companion code remains correct
+      and verified to handle Mode A invisibly when it does, but the
+      typical case on 8 GiB Macs is now "drag works, no funny
+      business."
 
-      1. **Sidebar-only Finder integration** (no mounted volume) —
-         like Image Capture. Comprador becomes a destination for drags
-         from Finder via a Service or sidebar entry, runs the upload
-         path itself, no webdavfs involved. Loses "browse the phone
-         from Finder" but eliminates the memory dependency entirely.
-         Probably the right answer for low-RAM machines specifically.
-      2. **File Provider extension** (Apple's first-party FS
-         extension API) — sandboxed, memory-managed by the system,
-         but USB device access from a File Provider extension is
-         deeply restricted. Investigated and rejected in
-         `CLAUDE.md` ("Why not File Provider API?"); worth re-examining
-         only if option 1 turns out to be unworkable.
-      3. **Hybrid**: keep webdavfs for browsing (read-only at low
-         memory), route writes through the sidebar/Service path. More
-         complex but preserves the current "phone is a Finder volume"
-         affordance while skipping webdavfs's buffer dependency on
-         the upload side. Implementation cost is roughly the sum of
-         options 1 and the existing path.
+      **What's still open:** files larger than the headroom we just
+      bought (call it ~12 GiB on an 8 GiB Mac, scaling roughly with
+      free memory) will still hit the cap. Phase 2 catches that case
+      automatically, but the user-visible journey reverts to the
+      pre-mitigation pattern: a -36 dialog while the companion
+      silently completes the upload over ~7 minutes. That's the
+      remaining bad UX cliff.
 
-      Decide before shipping a 1.0 to non-developer users. Until
-      then: document the requirement somewhere user-visible (Welcome
-      window? README?) — minimum 16 GiB RAM, recommended 32 GiB —
-      and move on.
+      Architectural options for closing the cliff entirely, in
+      decreasing order of preserving the current Finder-volume model:
+
+      1. **Drop webdavfs from the upload path** (read-only mount for
+         browsing; uploads via a Finder Service or sidebar entry that
+         hands the source path directly to the bridge, bypassing
+         chunked PUT entirely). Eliminates the writeseq cap. Hardest
+         architecture change, biggest UX win for very large files.
+      2. **Sidebar-only Finder integration** (no mounted volume at
+         all) — like Image Capture. Loses "browse the phone from
+         Finder" but eliminates webdavfs entirely.
+      3. **File Provider extension** — Apple's first-party FS
+         extension API. Sandboxed, memory-managed by the system, but
+         USB device access from a File Provider extension is deeply
+         restricted. Investigated and rejected in `CLAUDE.md` ("Why
+         not File Provider API?"); worth re-examining only if (1) and
+         (2) turn out unworkable.
+
+      Pre-1.0 for non-developer users: probably no longer urgent
+      after the streaming refactor — the 8 GiB Mac case is genuinely
+      shippable now. But "files >12 GiB on low-RAM Macs go through
+      Mode A with a -36 flash" is a known cliff worth deciding about
+      before any user-visible 1.0 marketing makes claims about
+      arbitrary file sizes.
 
 ## High impact (UX friction)
 
