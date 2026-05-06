@@ -243,16 +243,31 @@ const FilesAndFoldersRoot = 0xffffffff
 
 // GetFilesAndFolders returns all objects (files and folders) under a given parent.
 // Use FilesAndFoldersRoot for the root of a storage.
-func (d *Device) GetFilesAndFolders(storageID, parentID uint32) []FileMeta {
+//
+// libmtp signals enumeration failure two ways: (1) a NULL return AND a
+// non-empty error stack, or (2) a NULL return on an actually-empty directory.
+// We must distinguish them — caching a failed enumeration as "empty" means
+// the user sees an empty Finder window forever, even after the device
+// recovers, until the bridge restarts. The fix is to inspect the error stack
+// before returning: if it has entries, the listing is unreliable and we
+// surface that to the caller so it can avoid marking the directory populated.
+func (d *Device) GetFilesAndFolders(storageID, parentID uint32) ([]FileMeta, error) {
 	log.Printf("MTP GetFilesAndFolders(storage=%d, parent=0x%x)", storageID, parentID)
 	files := C.LIBMTP_Get_Files_And_Folders(d.dev, C.uint32_t(storageID), C.uint32_t(parentID))
 
-	// Check for MTP errors
-	errs := C.LIBMTP_Get_Errorstack(d.dev)
-	for e := errs; e != nil; e = e.next {
-		log.Printf("MTP error: %s", C.GoString(e.error_text))
+	// Check for MTP errors. The error stack is per-device, so we must drain
+	// and clear it whether the call succeeded or not.
+	var hadErr bool
+	var firstErrText string
+	for e := C.LIBMTP_Get_Errorstack(d.dev); e != nil; e = e.next {
+		txt := C.GoString(e.error_text)
+		log.Printf("MTP error: %s", txt)
+		if !hadErr {
+			firstErrText = txt
+		}
+		hadErr = true
 	}
-	if errs != nil {
+	if hadErr {
 		C.LIBMTP_Clear_Errorstack(d.dev)
 	}
 
@@ -273,7 +288,10 @@ func (d *Device) GetFilesAndFolders(storageID, parentID uint32) []FileMeta {
 		C.LIBMTP_destroy_file_t(f)
 		f = next
 	}
-	return result
+	if hadErr {
+		return result, fmt.Errorf("LIBMTP_Get_Files_And_Folders: %s", firstErrText)
+	}
+	return result, nil
 }
 
 // GetFileToWriter streams a file from the device to the given writer.

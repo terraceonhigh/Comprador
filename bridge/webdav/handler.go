@@ -3,6 +3,7 @@ package webdav
 import (
 	"bytes"
 	"context"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"io/fs"
@@ -328,6 +329,45 @@ func (d *mtpDir) Seek(_ int64, _ int) (int64, error)           { return 0, os.Er
 
 func (d *mtpDir) Stat() (os.FileInfo, error) {
 	return metaToFileInfo(d.meta), nil
+}
+
+// DeadProps satisfies webdav.DeadPropsHolder so we can advertise the device's
+// free/total capacity via DAV:quota-available-bytes and DAV:quota-used-bytes.
+// macOS webdavfs translates these into statfs(2) results, which Finder
+// preflight-checks before starting a copy. Without this, Finder reports
+// "(error code 100060)" and bails before sending a single byte — the bridge's
+// PUT path is never reached, so the upload fix below it is moot.
+//
+// Only the mount root ("/") returns quota; subdirectories return nil so the
+// webdav package falls back to file-level metadata. Reporting on the root is
+// what statfs hits, and what Finder uses for its preflight.
+func (d *mtpDir) DeadProps() (map[xml.Name]webdav.Property, error) {
+	if d.path != "/" {
+		return nil, nil
+	}
+	total := d.session.TotalBytes()
+	free := d.session.FreeBytes()
+	if total == 0 {
+		return nil, nil
+	}
+	used := total - free
+	return map[xml.Name]webdav.Property{
+		{Space: "DAV:", Local: "quota-available-bytes"}: {
+			XMLName:  xml.Name{Space: "DAV:", Local: "quota-available-bytes"},
+			InnerXML: []byte(strconv.FormatUint(free, 10)),
+		},
+		{Space: "DAV:", Local: "quota-used-bytes"}: {
+			XMLName:  xml.Name{Space: "DAV:", Local: "quota-used-bytes"},
+			InnerXML: []byte(strconv.FormatUint(used, 10)),
+		},
+	}, nil
+}
+
+// Patch is required by webdav.DeadPropsHolder. Quota is read-only — refuse
+// any attempt to mutate it (Finder shouldn't try, but the package needs the
+// method to exist).
+func (d *mtpDir) Patch(_ []webdav.Proppatch) ([]webdav.Propstat, error) {
+	return nil, webdav.ErrForbidden
 }
 
 func (d *mtpDir) Readdir(count int) ([]os.FileInfo, error) {
