@@ -3,12 +3,14 @@ package webdav
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"path"
+	"strconv"
 	"time"
 
 	"comprador/bridge/mtp"
@@ -16,10 +18,24 @@ import (
 	"golang.org/x/net/webdav"
 )
 
+// expectedLengthKey carries the X-Expected-Entity-Length value from the PUT
+// request handler down to the FileSystem. Apple's WebDAVFS client sends this
+// header on chunked uploads to advertise the full file size (Content-Length
+// is unknown when chunked encoding is used). The kernel can silently
+// truncate the chunked body at 32 or 64 MiB depending on memory pressure —
+// see WEBDAVIOC_WRITE_SEQUENTIAL in
+// https://github.com/apple-oss-distributions/webdavfs. The FileSystem
+// compares X-Expected-Entity-Length against the bytes actually received
+// and refuses to commit truncated uploads, so the existing file is
+// preserved and the user sees a clean error instead of a silent half-write.
+type contextKey string
+
+const expectedLengthKey contextKey = "x-expected-entity-length"
+
 // NewHandler creates an http.Handler that serves an MTP device over WebDAV.
 func NewHandler(session *mtp.Session) http.Handler {
 	filesystem := &mtpFS{session: session}
-	lockSystem := webdav.NewMemLS()
+	lockSystem := &noopLockSystem{}
 
 	h := &webdav.Handler{
 		FileSystem: filesystem,
@@ -46,6 +62,19 @@ func (fh *finderHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if isFinderProbe(reqPath) {
 		http.NotFound(w, r)
 		return
+	}
+
+	// Carry X-Expected-Entity-Length (Apple WebDAVFS proprietary header)
+	// down to the FileSystem layer so OpenFile/Close can detect when the
+	// kernel client truncated the chunked body and refuse to commit the
+	// partial upload. The header is sent with chunked PUTs from
+	// /System/Library/Extensions/webdav_fs.kext's userspace agent.
+	if r.Method == "PUT" {
+		if v := r.Header.Get("X-Expected-Entity-Length"); v != "" {
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+				r = r.WithContext(context.WithValue(r.Context(), expectedLengthKey, n))
+			}
+		}
 	}
 
 	fh.inner.ServeHTTP(w, r)
@@ -192,7 +221,7 @@ func (mfs *mtpFS) Rename(_ context.Context, oldName, newName string) error {
 	return nil
 }
 
-func (mfs *mtpFS) OpenFile(_ context.Context, name string, flag int, _ os.FileMode) (webdav.File, error) {
+func (mfs *mtpFS) OpenFile(ctx context.Context, name string, flag int, _ os.FileMode) (webdav.File, error) {
 	name = cleanPath(name)
 
 	// Root directory
@@ -217,20 +246,27 @@ func (mfs *mtpFS) OpenFile(_ context.Context, name string, flag int, _ os.FileMo
 
 	// Handle file creation or overwrite (PUT)
 	if flag&(os.O_WRONLY|os.O_RDWR|os.O_CREATE|os.O_TRUNC) != 0 {
-		if ok && !meta.IsDir {
-			// File exists — delete it first so we can replace it
-			mfs.session.Do(mtp.MTPRequest{
-				Op:       mtp.OpDelete,
-				ObjectID: meta.ID,
-			})
-			mfs.session.Objects.Remove(name)
-			mfs.session.Objects.InvalidateDir(path.Dir(name))
-		}
 		if !ok || !meta.IsDir {
-			return &mtpNewFile{
+			f := &mtpNewFile{
 				session: mfs.session,
 				path:    name,
-			}, nil
+			}
+			// Replace flow: remember the existing object so we can
+			// delete it on a successful upload. We deliberately don't
+			// delete here, because if the upload turns out to be
+			// truncated (Apple WebDAVFS writeseq cap), we want to
+			// preserve the existing file rather than replace it with
+			// a partial one.
+			if ok && !meta.IsDir {
+				existingID := meta.ID
+				f.existingID = &existingID
+			}
+			// Pull the expected size from context, if the request
+			// carried X-Expected-Entity-Length.
+			if v, ok := ctx.Value(expectedLengthKey).(int64); ok {
+				f.expectedSize = v
+			}
+			return f, nil
 		}
 	}
 
@@ -381,19 +417,56 @@ func (f *mtpFile) Readdir(_ int) ([]os.FileInfo, error) {
 }
 
 // mtpNewFile handles PUT (file creation/upload).
+//
+// expectedSize is non-zero when the PUT carried X-Expected-Entity-Length
+// (Apple WebDAVFS sends this with chunked uploads). If the body we receive
+// is shorter than expectedSize, the kernel client truncated the upload —
+// we refuse to commit and leave any existing file untouched.
+//
+// existingID is non-nil when this PUT is replacing an existing object. We
+// defer the delete to Close so that a failed (truncated) upload doesn't
+// destroy the previous file.
 type mtpNewFile struct {
-	session *mtp.Session
-	path    string
-	buf     bytes.Buffer
+	session      *mtp.Session
+	path         string
+	buf          bytes.Buffer
+	expectedSize int64
+	existingID   *uint32
 }
 
 func (f *mtpNewFile) Close() error {
+	// Truncation guard — Apple WebDAVFS writeseq mode silently caps
+	// chunked PUT bodies at 32 or 64 MiB depending on memory pressure.
+	// X-Expected-Entity-Length tells us what the body should have been;
+	// if we got less, refuse the upload rather than committing a
+	// partial file.
+	if f.expectedSize > 0 && int64(f.buf.Len()) < f.expectedSize {
+		log.Printf("REFUSING truncated upload of %s: got %d bytes, expected %d (Apple WebDAVFS chunked-upload cap; existing file preserved)",
+			f.path, f.buf.Len(), f.expectedSize)
+		return fmt.Errorf("upload truncated by client: %d/%d bytes", f.buf.Len(), f.expectedSize)
+	}
+
 	parent := path.Dir(f.path)
 	base := path.Base(f.path)
 
 	parentMeta, ok := f.session.Objects.GetByPath(parent)
 	if !ok {
 		return os.ErrNotExist
+	}
+
+	// Replace flow: delete the existing object now that the upload is
+	// known to be complete. Done before SendFile so we don't briefly
+	// have two objects with the same name in the same parent.
+	if f.existingID != nil {
+		delResp := f.session.Do(mtp.MTPRequest{
+			Op:       mtp.OpDelete,
+			ObjectID: *f.existingID,
+		})
+		if delResp.Err != nil {
+			return delResp.Err
+		}
+		f.session.Objects.Remove(f.path)
+		f.session.Objects.InvalidateDir(parent)
 	}
 
 	reader := bytes.NewReader(f.buf.Bytes())
