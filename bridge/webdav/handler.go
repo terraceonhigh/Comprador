@@ -79,15 +79,20 @@ func NewHandler(session *mtp.Session, store *resume.Store) http.Handler {
 		resumeH = &resumeEndpoint{store: store, session: session}
 	}
 
-	return &finderHandler{inner: h, resume: resumeH}
+	return &finderHandler{
+		inner:      h,
+		resume:     resumeH,
+		filesystem: filesystem,
+	}
 }
 
 // finderHandler wraps the standard WebDAV handler with Finder-specific
 // quirk handling and routes the /_comprador/* prefix to the resume
 // endpoint instead of the WebDAV layer.
 type finderHandler struct {
-	inner  http.Handler
-	resume http.Handler // nil if resumable uploads are disabled
+	inner      http.Handler
+	resume     http.Handler // nil if resumable uploads are disabled
+	filesystem *mtpFS       // direct ref for the keepalive PUT path
 }
 
 func (fh *finderHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -116,11 +121,147 @@ func (fh *finderHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if v := r.Header.Get("X-Expected-Entity-Length"); v != "" {
 			if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
 				r = r.WithContext(context.WithValue(r.Context(), expectedLengthKey, n))
+				// Body PUT with declared size — long MTP send to follow.
+				// Take over the connection and emit 102 Processing
+				// keepalives so webdavfs's PUT-response timeout (~60s)
+				// doesn't fire while libmtp is mid-SendFile (multi-min
+				// for multi-GiB files). Placeholder PUTs (no
+				// X-Expected-Entity-Length) are fast — the inner handler
+				// handles them.
+				fh.servePutWithKeepalive(w, r, n)
+				return
 			}
 		}
 	}
 
 	fh.inner.ServeHTTP(w, r)
+}
+
+// servePutWithKeepalive owns the slow chunked-PUT path. It does the
+// same work as `webdav.Handler.handlePut` minus features we don't
+// actually use (real LOCK confirmation, Content-Range, ETag matching),
+// then hijacks the underlying TCP connection and emits HTTP/1.1 102
+// Processing interim responses every 30s while libmtp's SendFile
+// works through the multi-minute USB transfer.
+//
+// Why this path exists: webdavfs's PUT-response timeout (~60s)
+// fires long before the MTP send for a multi-GiB file completes.
+// Without keepalives, Finder shows -36 even when the upload
+// successfully lands on the phone — the file appears, but the user
+// is told it failed. 102 Processing is the HTTP/1.1 server's way
+// of saying "still working, hold the line." Whether webdavfs's
+// CFNetwork stack actually treats it as a timeout reset is the
+// experiment we're running.
+//
+// We only take over PUTs with an X-Expected-Entity-Length header —
+// that's webdavfs's marker for the chunked body PUT (the slow one).
+// Placeholder PUTs (Content-Length: 0, no expected-length) are fast
+// and stay on the inner handler's path.
+func (fh *finderHandler) servePutWithKeepalive(w http.ResponseWriter, r *http.Request, expectedSize int64) {
+	name := cleanPath(r.URL.Path)
+
+	// Open the destination via the FileSystem. Same flags webdav.Handler
+	// uses for PUT.
+	ctx := r.Context()
+	openF, err := fh.filesystem.OpenFile(ctx, name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		log.Printf("keepalive PUT %s: OpenFile: %v", name, err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Stream the body into the FileSystem object. This is the fast part —
+	// loopback delivery + disk write. For a 9 GiB body it takes ~1 minute
+	// at observed Mac SSD throughput.
+	if _, err := io.Copy(openF, r.Body); err != nil {
+		_ = openF.Close()
+		log.Printf("keepalive PUT %s: body copy: %v", name, err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Past this point we need to call openF.Close(), which triggers the
+	// long MTP SendFile. Hijack the connection so we can write 102s
+	// while it runs. If the http.ResponseWriter doesn't support hijack
+	// (shouldn't happen for the default Go HTTP/1.1 server), fall back
+	// to the synchronous path — Finder will probably -36 but the data
+	// will land.
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		log.Printf("keepalive PUT %s: ResponseWriter not hijackable, falling back to sync close", name)
+		closeErr := openF.Close()
+		if closeErr != nil {
+			http.Error(w, closeErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		return
+	}
+	conn, bufrw, err := hj.Hijack()
+	if err != nil {
+		log.Printf("keepalive PUT %s: Hijack failed: %v", name, err)
+		closeErr := openF.Close()
+		if closeErr != nil {
+			http.Error(w, closeErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		return
+	}
+	defer conn.Close()
+
+	// Run openF.Close() (the MTP SendFile) in a goroutine; the main
+	// goroutine handles the keepalive ticker and the final response.
+	done := make(chan error, 1)
+	go func() {
+		done <- openF.Close()
+	}()
+
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	startedAt := time.Now()
+
+	for {
+		select {
+		case closeErr := <-done:
+			if closeErr != nil {
+				log.Printf("keepalive PUT %s: SendFile failed after %s: %v",
+					name, time.Since(startedAt).Round(time.Second), closeErr)
+				_, _ = bufrw.WriteString("HTTP/1.1 500 Internal Server Error\r\n" +
+					"Content-Length: 0\r\n" +
+					"Connection: close\r\n\r\n")
+				_ = bufrw.Flush()
+				return
+			}
+			log.Printf("keepalive PUT %s: SendFile complete after %s, %d 102s sent (expected %d bytes)",
+				name, time.Since(startedAt).Round(time.Second),
+				int(time.Since(startedAt)/(30*time.Second)), expectedSize)
+			_, _ = bufrw.WriteString("HTTP/1.1 201 Created\r\n" +
+				"Content-Length: 0\r\n" +
+				"Connection: close\r\n\r\n")
+			_ = bufrw.Flush()
+			return
+		case <-ticker.C:
+			// HTTP/1.1 102 Processing — interim response. Whether
+			// webdavfs treats this as a timeout reset is what we're
+			// finding out. RFC 7231 says intermediaries and clients
+			// MUST be prepared to receive one or more 1xx responses
+			// before the final response, so this is well-formed.
+			if _, err := bufrw.WriteString("HTTP/1.1 102 Processing\r\n\r\n"); err != nil {
+				log.Printf("keepalive PUT %s: write 102 failed (client disconnected?): %v",
+					name, err)
+				// Wait for SendFile to finish; without the conn we
+				// can't reply, but the file may still land on the phone.
+				<-done
+				return
+			}
+			if err := bufrw.Flush(); err != nil {
+				log.Printf("keepalive PUT %s: flush 102 failed: %v", name, err)
+				<-done
+				return
+			}
+		}
+	}
 }
 
 // mtpFS implements webdav.FileSystem backed by an MTP session.
