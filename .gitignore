@@ -21,3 +21,9 @@ DerivedData/
 
 # Environment / secrets
 .env*
+
+# Letters and test fixtures: stay on disk for the next agent to read,
+# never in git. Ignoring also keeps `git stash --include-untracked`
+# from sweeping them off disk during branch switches.
+correspondence/
+testfiles/
