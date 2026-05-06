@@ -450,31 +450,95 @@ func (d *mtpDir) Readdir(count int) ([]os.FileInfo, error) {
 }
 
 // mtpFile represents an open MTP file for reading.
+//
+// On first Read/Seek, the entire file is streamed from the device to a
+// staging file on disk (with F_NOCACHE on the read fd, see below) and
+// subsequent operations serve from that file. The fetch is pull-based
+// because libmtp's Get_File_To_Handler delivers the whole stream in
+// one call; we can't return partial reads to the WebDAV layer mid-MTP.
+//
+// The pre-staging implementation accumulated the entire file in a
+// `bytes.Buffer`, which on a multi-GiB phone file would peg the bridge
+// process at file-size physical footprint and push low-RAM Macs into
+// swap thrash — exactly the same anti-pattern the streaming-write
+// refactor (commit 0c5a18e) fixed for the upload (`mtpNewFile`) path.
+// Keeping the read path unchanged was an oversight; this commit closes
+// it. Symptom that surfaced the gap: Finder QuickLook on a leftover
+// 9 GiB Attenborough.mkv triggered a full Get → bridge buffered the
+// whole file in `mtpFile.ensureFetched()`'s `bytes.Buffer` → bridge
+// hit 10 GB physical footprint with 9.9 GB swapped, blocking every
+// other MTP op for ~15-20 minutes.
 type mtpFile struct {
 	session *mtp.Session
 	meta    *mtp.ObjectMeta
-	reader  *bytes.Reader
+
+	// Set on first Read/Seek by ensureFetched. The staging file is
+	// deleted in Close.
+	stagingPath string
+	stagingFile *os.File
 }
 
-func (f *mtpFile) Close() error { return nil }
+func (f *mtpFile) Close() error {
+	if f.stagingFile != nil {
+		_ = f.stagingFile.Close()
+		f.stagingFile = nil
+	}
+	if f.stagingPath != "" {
+		_ = os.Remove(f.stagingPath)
+		f.stagingPath = ""
+	}
+	return nil
+}
+
 func (f *mtpFile) Write(_ []byte) (int, error) {
 	return 0, os.ErrPermission
 }
 
 func (f *mtpFile) ensureFetched() error {
-	if f.reader != nil {
+	if f.stagingFile != nil {
 		return nil
 	}
-	var buf bytes.Buffer
+
+	// Create the staging tempfile. Use a dedicated subdir under
+	// $TMPDIR so the file is on local disk (not network FS) and
+	// gets cleaned by macOS's temp reaper if we crash before Close.
+	staging, err := os.CreateTemp("", "comprador-fetch-*.tmp")
+	if err != nil {
+		return fmt.Errorf("ensureFetched create staging: %w", err)
+	}
+	stagingPath := staging.Name()
+
+	// Stream the entire file from the device into the staging file.
+	// libmtp's Get_File_To_Handler doesn't support partial / range
+	// reads, so we have to materialize the whole thing before serving.
 	resp := f.session.Do(mtp.MTPRequest{
 		Op:       mtp.OpGetFile,
 		ObjectID: f.meta.ID,
-		Writer:   &buf,
+		Writer:   staging,
 	})
+	closeErr := staging.Close()
 	if resp.Err != nil {
+		os.Remove(stagingPath)
 		return resp.Err
 	}
-	f.reader = bytes.NewReader(buf.Bytes())
+	if closeErr != nil {
+		os.Remove(stagingPath)
+		return fmt.Errorf("ensureFetched close staging: %w", closeErr)
+	}
+
+	// Reopen for reading with F_NOCACHE so subsequent Reads bypass the
+	// unified buffer cache. Without this, every page we read would be
+	// retained as cache attributed to our process's physical footprint
+	// until kernel reclaim — the same trap the upload path hits.
+	body, err := os.Open(stagingPath)
+	if err != nil {
+		os.Remove(stagingPath)
+		return fmt.Errorf("ensureFetched reopen staging: %w", err)
+	}
+	fcntlNoCache(body)
+
+	f.stagingPath = stagingPath
+	f.stagingFile = body
 	return nil
 }
 
@@ -482,14 +546,14 @@ func (f *mtpFile) Read(p []byte) (int, error) {
 	if err := f.ensureFetched(); err != nil {
 		return 0, err
 	}
-	return f.reader.Read(p)
+	return f.stagingFile.Read(p)
 }
 
 func (f *mtpFile) Seek(offset int64, whence int) (int64, error) {
 	if err := f.ensureFetched(); err != nil {
 		return 0, err
 	}
-	return f.reader.Seek(offset, whence)
+	return f.stagingFile.Seek(offset, whence)
 }
 
 func (f *mtpFile) Stat() (os.FileInfo, error) {
