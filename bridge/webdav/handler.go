@@ -13,6 +13,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"comprador/bridge/mtp"
@@ -20,6 +21,24 @@ import (
 
 	"golang.org/x/net/webdav"
 )
+
+// fcntlNoCache turns off the unified buffer cache for reads from the
+// given file descriptor. macOS-specific (F_NOCACHE = 48). Used on
+// staging files we're about to stream to MTP — every page we'd
+// otherwise read into the cache stays attributed to our process's
+// physical footprint until the kernel reclaims it under pressure,
+// and on an 8 GiB Mac dragging a 9 GiB file that cache fill *is*
+// the memory pressure that triggers webdavfs's writeseq cap.
+//
+// Best-effort: a failure here is non-fatal (we just take the cache
+// hit). Logged once per open at debug-info level.
+func fcntlNoCache(f *os.File) {
+	const F_NOCACHE = 48
+	_, _, errno := syscall.Syscall(syscall.SYS_FCNTL, f.Fd(), F_NOCACHE, 1)
+	if errno != 0 {
+		log.Printf("F_NOCACHE on %s failed: %v (continuing with cached I/O)", f.Name(), errno)
+	}
+}
 
 // expectedLengthKey carries the X-Expected-Entity-Length value from the PUT
 // request handler down to the FileSystem. Apple's WebDAVFS client sends this
@@ -486,18 +505,64 @@ func (f *mtpFile) Readdir(_ int) ([]os.FileInfo, error) {
 // expectedSize is non-zero when the PUT carried X-Expected-Entity-Length
 // (Apple WebDAVFS sends this with chunked uploads). If the body we receive
 // is shorter than expectedSize, the kernel client truncated the upload —
-// we refuse to commit and leave any existing file untouched.
+// we either persist for resume (when companion is alive) or refuse with
+// the existing file preserved.
 //
 // existingID is non-nil when this PUT is replacing an existing object. We
 // defer the delete to Close so that a failed (truncated) upload doesn't
 // destroy the previous file.
+//
+// Body bytes are streamed directly to a staging file on disk via
+// `tempFile`, not accumulated in memory. The pre-streaming
+// implementation used a `bytes.Buffer` that grew to the full PUT body
+// size — for a multi-GiB chunked PUT on an 8 GiB Mac, that consumed
+// the very memory webdavfs needed for its own buffer, which made the
+// writeseq cap fire earlier and lengthened the PUT-response delay
+// (Close had to do a multi-second io.Copy to flush the buffer to
+// disk before returning). Streaming flips both: bridge memory
+// footprint stays at one write buffer's worth, and Close returns in
+// milliseconds because the data is already on disk.
 type mtpNewFile struct {
 	session      *mtp.Session
 	store        *resume.Store // nil = legacy "refuse on truncation" behavior
 	path         string
-	buf          bytes.Buffer
 	expectedSize int64
 	existingID   *uint32
+
+	// Lazily created on first Write(). On Close, the path either
+	// becomes the partial of a resume.Store session (truncation) or
+	// is opened-and-streamed into MTP (success), then removed.
+	tempPath     string
+	tempFile     *os.File
+	bytesWritten int64
+}
+
+func (f *mtpNewFile) ensureStaging() error {
+	if f.tempFile != nil {
+		return nil
+	}
+	var (
+		path string
+		file *os.File
+		err  error
+	)
+	if f.store != nil {
+		path, file, err = f.store.MakeStagingFile()
+	} else {
+		// Bare `make dev` mode (no resume store). Use system /tmp;
+		// non-truncated commits will read+stream from here, then
+		// delete on success.
+		file, err = os.CreateTemp("", "comprador-staging-*.tmp")
+		if err == nil {
+			path = file.Name()
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("create staging: %w", err)
+	}
+	f.tempPath = path
+	f.tempFile = file
+	return nil
 }
 
 // companionRegistered reports whether the Comprador menu-bar app is
@@ -515,63 +580,74 @@ func (f *mtpNewFile) companionRegistered() bool {
 }
 
 func (f *mtpNewFile) Close() error {
+	// Flush the staging file's buffered writes to disk so subsequent
+	// reads (either MTP commit, or the companion via /append) see a
+	// stable view. tempFile may be nil if no Write ever fired (zero-byte
+	// placeholder PUT), in which case there's nothing to close and the
+	// commit path falls through to a zero-byte SendFile.
+	if f.tempFile != nil {
+		if err := f.tempFile.Close(); err != nil {
+			os.Remove(f.tempPath)
+			f.tempFile = nil
+			f.tempPath = ""
+			return fmt.Errorf("close staging: %w", err)
+		}
+		f.tempFile = nil
+	}
+
 	// Truncation handling — Apple WebDAVFS writeseq mode silently caps
 	// chunked PUT bodies at a memory-pressure-dependent threshold (32
 	// MiB to several GiB observed). X-Expected-Entity-Length tells us
 	// what the body should have been.
 	//
 	// With a resume.Store wired in (the default in production), we
-	// persist the partial body to disk and return 200 OK, so Finder
-	// doesn't show the user a -36 error. The Comprador menu-bar app
-	// then drives a side-channel completion via /_comprador/sessions/*.
-	// See docs/RESUMABLE-UPLOADS.md.
+	// hand the already-streamed staging file to the store as a session
+	// (constant-time rename + JSON sidecar write — no io.Copy of the
+	// body) and return 200 OK so webdavfs sees the PUT succeed quickly.
+	// The Comprador menu-bar app then drives a side-channel completion
+	// via /_comprador/sessions/*. See docs/RESUMABLE-UPLOADS.md.
 	//
-	// Without a store (e.g., bridge run as a bare `make dev` for
-	// testing the WebDAV layer in isolation), we fall back to the
-	// pre-resume behavior: refuse the upload, leave any existing file
-	// untouched, surface a -36.
-	if f.expectedSize > 0 && int64(f.buf.Len()) < f.expectedSize {
-		// Persist the partial, regardless of whether we'll return error
-		// or 201. Persistence is the prep work — the Swift companion
-		// reads pending sessions from disk to drive resumes. Failure to
-		// persist falls through to the refuse path (existing file
-		// preserved, no data loss).
+	// Without a store (bare `make dev`) or without an active companion,
+	// we fall back to refusing the upload — the existing file is
+	// preserved, the user sees a -36, no data loss.
+	if f.expectedSize > 0 && f.bytesWritten < f.expectedSize {
 		var stored *resume.SessionMeta
-		if f.store != nil {
-			meta, err := f.store.CreateFromPartial(f.path, f.expectedSize, &f.buf, int64(f.buf.Len()))
+		if f.store != nil && f.tempPath != "" {
+			meta, err := f.store.AdoptPartial(f.path, f.expectedSize, f.tempPath, f.bytesWritten)
 			if err != nil {
-				log.Printf("PERSIST FAILED for truncated %s (%d/%d): %v",
-					f.path, f.buf.Len(), f.expectedSize, err)
+				log.Printf("ADOPT FAILED for truncated %s (%d/%d): %v",
+					f.path, f.bytesWritten, f.expectedSize, err)
+				os.Remove(f.tempPath)
 			} else {
 				stored = meta
+				f.tempPath = "" // ownership transferred to the store
 				log.Printf("STRANDED %s: persisted %d/%d bytes as session %s",
 					f.path, meta.ReceivedSize, meta.ExpectedSize, meta.ID)
 			}
+		} else if f.tempPath != "" {
+			os.Remove(f.tempPath)
+			f.tempPath = ""
 		}
 
-		// Behavior switch: if the Swift companion has registered itself
-		// (phase 2, not yet implemented), the persistence above is its
-		// pickup point — we return 201 so Finder doesn't show -36, and
-		// trust the companion to drive the resume to completion. Without
-		// a registered companion, returning 201 would create silent
-		// stranded uploads that look successful but never appear on the
-		// phone — strictly worse than the merged PR's -36 + existing-file
-		// preserved. So default to the honest -36 path until phase 2
-		// lands. The companion-registration mechanism doesn't exist yet;
-		// this gate is the seam where it'll plug in.
 		if stored != nil && f.companionRegistered() {
 			return nil
 		}
 		log.Printf("REFUSING truncated upload of %s: got %d bytes, expected %d (Apple WebDAVFS chunked-upload cap; existing file preserved)",
-			f.path, f.buf.Len(), f.expectedSize)
-		return fmt.Errorf("upload truncated by client: %d/%d bytes", f.buf.Len(), f.expectedSize)
+			f.path, f.bytesWritten, f.expectedSize)
+		return fmt.Errorf("upload truncated by client: %d/%d bytes", f.bytesWritten, f.expectedSize)
 	}
 
+	// Non-truncated commit. The body is on disk at f.tempPath; open it
+	// and stream into MTP.
 	parent := path.Dir(f.path)
 	base := path.Base(f.path)
 
 	parentMeta, ok := f.session.Objects.GetByPath(parent)
 	if !ok {
+		if f.tempPath != "" {
+			os.Remove(f.tempPath)
+			f.tempPath = ""
+		}
 		return os.ErrNotExist
 	}
 
@@ -584,20 +660,37 @@ func (f *mtpNewFile) Close() error {
 			ObjectID: *f.existingID,
 		})
 		if delResp.Err != nil {
+			if f.tempPath != "" {
+				os.Remove(f.tempPath)
+				f.tempPath = ""
+			}
 			return delResp.Err
 		}
 		f.session.Objects.Remove(f.path)
 		f.session.Objects.InvalidateDir(parent)
 	}
 
-	reader := bytes.NewReader(f.buf.Bytes())
+	var bodyReader io.Reader = bytes.NewReader(nil)
+	if f.tempPath != "" {
+		body, err := os.Open(f.tempPath)
+		if err != nil {
+			return fmt.Errorf("open staging for MTP send: %w", err)
+		}
+		fcntlNoCache(body)
+		defer func() {
+			body.Close()
+			os.Remove(f.tempPath)
+		}()
+		bodyReader = body
+	}
+
 	resp := f.session.Do(mtp.MTPRequest{
 		Op:        mtp.OpSendFile,
 		ParentID:  parentMeta.ID,
 		StorageID: parentMeta.StorageID,
 		Name:      base,
-		Size:      uint64(f.buf.Len()),
-		Reader:    reader,
+		Size:      uint64(f.bytesWritten),
+		Reader:    bodyReader,
 	})
 	if resp.Err != nil {
 		return resp.Err
@@ -609,7 +702,7 @@ func (f *mtpNewFile) Close() error {
 		StorageID: parentMeta.StorageID,
 		Name:      base,
 		Path:      f.path,
-		Size:      uint64(f.buf.Len()),
+		Size:      uint64(f.bytesWritten),
 		ModTime:   time.Now(),
 		IsDir:     false,
 	})
@@ -622,13 +715,20 @@ func (f *mtpNewFile) Seek(_ int64, _ int) (int64, error)  { return 0, nil }
 func (f *mtpNewFile) Stat() (os.FileInfo, error) {
 	return &mtpFileInfo{
 		name:    path.Base(f.path),
-		size:    int64(f.buf.Len()),
+		size:    f.bytesWritten,
 		modTime: time.Now(),
 		isDir:   false,
 	}, nil
 }
 func (f *mtpNewFile) Readdir(_ int) ([]os.FileInfo, error) { return nil, os.ErrInvalid }
-func (f *mtpNewFile) Write(p []byte) (int, error)          { return f.buf.Write(p) }
+func (f *mtpNewFile) Write(p []byte) (int, error) {
+	if err := f.ensureStaging(); err != nil {
+		return 0, err
+	}
+	n, err := f.tempFile.Write(p)
+	f.bytesWritten += int64(n)
+	return n, err
+}
 
 // mtpFileInfo implements os.FileInfo.
 type mtpFileInfo struct {

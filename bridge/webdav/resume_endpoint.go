@@ -213,6 +213,7 @@ func (re *resumeEndpoint) commit(meta *resume.SessionMeta) error {
 	if err != nil {
 		return fmt.Errorf("commit: open partial: %w", err)
 	}
+	fcntlNoCache(body)
 	defer body.Close()
 
 	if digest != "" {
