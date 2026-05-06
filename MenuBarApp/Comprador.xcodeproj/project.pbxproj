@@ -16,6 +16,7 @@
 		A1000008 /* HelperClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000010 /* HelperClient.swift */; };
 		A1000020 /* USBSeizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000020 /* USBSeizer.swift */; };
 		A1000021 /* WelcomeWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000021 /* WelcomeWindow.swift */; };
+		A1000022 /* ResumeCompanion.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000022 /* ResumeCompanion.swift */; };
 		A1000003 /* VendorIDs.plist in Resources */ = {isa = PBXBuildFile; fileRef = A2000003 /* VendorIDs.plist */; };
 		A1000010 /* IOKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000030 /* IOKit.framework */; };
 		A1000011 /* DiskArbitration.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000011 /* DiskArbitration.framework */; };
@@ -31,6 +32,7 @@
 		A2000010 /* HelperClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelperClient.swift; sourceTree = "<group>"; };
 		A2000020 /* USBSeizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = USBSeizer.swift; sourceTree = "<group>"; };
 		A2000021 /* WelcomeWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeWindow.swift; sourceTree = "<group>"; };
+		A2000022 /* ResumeCompanion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResumeCompanion.swift; sourceTree = "<group>"; };
 		A2000003 /* VendorIDs.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = VendorIDs.plist; sourceTree = "<group>"; };
 		A2000004 /* Comprador.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Comprador.entitlements; sourceTree = "<group>"; };
 		A2000005 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -76,6 +78,7 @@
 				A2000010 /* HelperClient.swift */,
 				A2000020 /* USBSeizer.swift */,
 				A2000021 /* WelcomeWindow.swift */,
+				A2000022 /* ResumeCompanion.swift */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -178,6 +181,7 @@
 				A1000008 /* HelperClient.swift in Sources */,
 				A1000020 /* USBSeizer.swift in Sources */,
 				A1000021 /* WelcomeWindow.swift in Sources */,
+				A1000022 /* ResumeCompanion.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -61,10 +61,19 @@ type SessionMeta struct {
 // uploads max). The disk I/O for body bytes is unlocked — append goes
 // directly to the .partial file via os.OpenFile/O_APPEND.
 type Store struct {
-	dir      string
-	mu       sync.Mutex
-	sessions map[string]*SessionMeta // keyed by session ID
+	dir              string
+	mu               sync.Mutex
+	sessions         map[string]*SessionMeta // keyed by session ID
+	lastCompanionAt  time.Time               // updated on every companion poll/ping
 }
+
+// CompanionWindow is how long after the last companion ping we still
+// consider the menu-bar app "alive and able to drive resumes." A poll
+// every few seconds keeps this fresh; after one missed window we
+// assume the companion has died or quit and fall back to surfacing
+// truncations as -36. Picked larger than typical poll intervals so a
+// brief network blip doesn't flip the gate.
+const CompanionWindow = 30 * time.Second
 
 // NewStore creates the pending-uploads directory under the user's
 // Application Support folder and loads any pre-existing sessions left
@@ -205,6 +214,31 @@ func (s *Store) List() []SessionMeta {
 		out = append(out, *m)
 	}
 	return out
+}
+
+// RecordCompanionPing notes that the menu-bar app is alive and polling.
+// Call from any HTTP handler under /_comprador/* — every poll counts as
+// proof of life. The `mtpNewFile` truncation path consults
+// `IsCompanionActive` to decide between returning 200 OK (companion
+// will drive the resume) or -36 (let Finder show the error so the user
+// knows the upload didn't land).
+func (s *Store) RecordCompanionPing() {
+	s.mu.Lock()
+	s.lastCompanionAt = time.Now()
+	s.mu.Unlock()
+}
+
+// IsCompanionActive reports whether the menu-bar app has pinged within
+// `CompanionWindow`. The truncation path uses this to gate the
+// white-lie 200 OK response: lying without an active companion to
+// complete the upload would silently strand the file.
+func (s *Store) IsCompanionActive() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.lastCompanionAt.IsZero() {
+		return false
+	}
+	return time.Since(s.lastCompanionAt) < CompanionWindow
 }
 
 // IsComplete reports whether a session has received all its expected

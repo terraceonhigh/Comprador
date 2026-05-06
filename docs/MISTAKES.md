@@ -432,6 +432,55 @@ handling during connection. Initial 5-second delay before first bridge
 attempt. Retry logic with increasing delays. The phone needs time to
 settle into MTP mode.
 
+### 19a. Detach+reattach storm AFTER mount loses the device entirely
+
+**What happened:** Mount succeeds cleanly. ~5 seconds later — typically
+when the phone screen goes to sleep, or some other phone-side event
+flutters the MTP interface — IOKit fires a detach immediately followed
+by an attach (3-5 ms apart). Comprador's detach handler initiates an
+unmount + bridge stop, which is asynchronous; meanwhile the *re*attach
+handler fires and sees `isMounted == true` (the unmount hasn't
+completed yet) and logs `Ignoring attach — already mounted`. The unmount
+then finishes, the bridge is gone, and there is **no further attach
+event to trigger a fresh bridge spawn** — the phone stays plugged in
+but Finder shows nothing, and the menu bar app sits in a "detached, no
+bridge, no mount" terminal state until the user physically replugs.
+
+Reproduced 2026-05-06 from the bridge log:
+
+```
+13:51:51  Mounted at /Volumes/XQ-BT52.local
+13:51:56.108  USB detached — XQ-BT52
+13:51:56.113  USB attached — XQ-BT52
+13:51:56.113  Device detached — XQ-BT52
+13:51:56.113  Device attached — XQ-BT52
+13:51:56.113  Ignoring attach — already mounted   ← bug surfaces here
+13:51:56.113  Unmounting /Volumes/XQ-BT52.local
+13:51:56.115  Stopping bridge (PID 1743)
+[silence forever; user must unplug+replug]
+```
+
+**Why it's not just the existing `isConnecting` lockout from #19:** that
+flag only fires *during the initial mount sequence*. Once the mount
+succeeds it's cleared, leaving the post-mount state machine without a
+reattach-during-pending-unmount guard.
+
+**Fix (not yet written):** Two complementary changes are probably needed.
+
+1. The reattach handler should track a `pendingUnmount` flag (or
+   equivalent) — if a reattach arrives while an unmount is in flight,
+   queue the device-attach work for after the unmount completes rather
+   than discarding it.
+2. Even simpler: at the end of every successful unmount, check whether
+   IOKit currently sees a matching device. If yes, synthesise an attach
+   event ourselves to kick the connect path. That handles both this
+   race and the broader "reattach while we're busy" case.
+
+Workaround: physical unplug + replug fires a fresh attach event, which
+breaks the deadlock. Tracked in TODO.md under "Handle detach during
+file transfer gracefully (don't hang Finder)" — that entry was filed
+before we'd reproduced this exact race, but the fix is the same shape.
+
 ### 20. `mount_webdav` silently fails with custom mount point
 
 **What happened:** Tried calling `/sbin/mount_webdav` directly to control
