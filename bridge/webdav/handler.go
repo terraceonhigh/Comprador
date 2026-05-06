@@ -12,9 +12,11 @@ import (
 	"os"
 	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	"comprador/bridge/mtp"
+	"comprador/bridge/resume"
 
 	"golang.org/x/net/webdav"
 )
@@ -34,8 +36,13 @@ type contextKey string
 const expectedLengthKey contextKey = "x-expected-entity-length"
 
 // NewHandler creates an http.Handler that serves an MTP device over WebDAV.
-func NewHandler(session *mtp.Session) http.Handler {
-	filesystem := &mtpFS{session: session}
+//
+// `store` is optional — pass nil to disable resumable-upload support.
+// When provided, truncated chunked PUTs (Apple WebDAVFS writeseq cap)
+// are persisted into the store and made resumable via the
+// /_comprador/sessions/* endpoints. See docs/RESUMABLE-UPLOADS.md.
+func NewHandler(session *mtp.Session, store *resume.Store) http.Handler {
+	filesystem := &mtpFS{session: session, store: store}
 	lockSystem := &noopLockSystem{}
 
 	h := &webdav.Handler{
@@ -48,15 +55,31 @@ func NewHandler(session *mtp.Session) http.Handler {
 		},
 	}
 
-	return &finderHandler{inner: h}
+	var resumeH http.Handler
+	if store != nil {
+		resumeH = &resumeEndpoint{store: store, session: session}
+	}
+
+	return &finderHandler{inner: h, resume: resumeH}
 }
 
-// finderHandler wraps the standard WebDAV handler with Finder-specific quirk handling.
+// finderHandler wraps the standard WebDAV handler with Finder-specific
+// quirk handling and routes the /_comprador/* prefix to the resume
+// endpoint instead of the WebDAV layer.
 type finderHandler struct {
-	inner http.Handler
+	inner  http.Handler
+	resume http.Handler // nil if resumable uploads are disabled
 }
 
 func (fh *finderHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Internal Comprador-only prefix — not part of the WebDAV namespace,
+	// invisible to webdavfs. Used by the menu-bar app to drive resumable
+	// uploads.
+	if fh.resume != nil && strings.HasPrefix(r.URL.Path, "/_comprador/") {
+		fh.resume.ServeHTTP(w, r)
+		return
+	}
+
 	reqPath := cleanPath(r.URL.Path)
 
 	// Intercept Finder probe files — return 404 without touching MTP
@@ -84,6 +107,7 @@ func (fh *finderHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // mtpFS implements webdav.FileSystem backed by an MTP session.
 type mtpFS struct {
 	session *mtp.Session
+	store   *resume.Store // nil disables resumable-upload persistence
 }
 
 func (mfs *mtpFS) Mkdir(_ context.Context, name string, _ os.FileMode) error {
@@ -250,6 +274,7 @@ func (mfs *mtpFS) OpenFile(ctx context.Context, name string, flag int, _ os.File
 		if !ok || !meta.IsDir {
 			f := &mtpNewFile{
 				session: mfs.session,
+				store:   mfs.store,
 				path:    name,
 			}
 			// Replace flow: remember the existing object so we can
@@ -468,19 +493,72 @@ func (f *mtpFile) Readdir(_ int) ([]os.FileInfo, error) {
 // destroy the previous file.
 type mtpNewFile struct {
 	session      *mtp.Session
+	store        *resume.Store // nil = legacy "refuse on truncation" behavior
 	path         string
 	buf          bytes.Buffer
 	expectedSize int64
 	existingID   *uint32
 }
 
+// companionRegistered reports whether the Comprador menu-bar app has
+// registered itself as a resume driver. Until phase 2 lands (Swift
+// XPC/socket handshake), this returns false — the bridge persists
+// truncated bodies for future use but doesn't rely on a companion to
+// drive completion, so Finder still sees -36 and the user knows the
+// upload didn't land. Phase 2 will replace this stub with a real
+// liveness check (e.g., recent ping over a Unix socket).
+func (f *mtpNewFile) companionRegistered() bool {
+	return false
+}
+
 func (f *mtpNewFile) Close() error {
-	// Truncation guard — Apple WebDAVFS writeseq mode silently caps
-	// chunked PUT bodies at 32 or 64 MiB depending on memory pressure.
-	// X-Expected-Entity-Length tells us what the body should have been;
-	// if we got less, refuse the upload rather than committing a
-	// partial file.
+	// Truncation handling — Apple WebDAVFS writeseq mode silently caps
+	// chunked PUT bodies at a memory-pressure-dependent threshold (32
+	// MiB to several GiB observed). X-Expected-Entity-Length tells us
+	// what the body should have been.
+	//
+	// With a resume.Store wired in (the default in production), we
+	// persist the partial body to disk and return 200 OK, so Finder
+	// doesn't show the user a -36 error. The Comprador menu-bar app
+	// then drives a side-channel completion via /_comprador/sessions/*.
+	// See docs/RESUMABLE-UPLOADS.md.
+	//
+	// Without a store (e.g., bridge run as a bare `make dev` for
+	// testing the WebDAV layer in isolation), we fall back to the
+	// pre-resume behavior: refuse the upload, leave any existing file
+	// untouched, surface a -36.
 	if f.expectedSize > 0 && int64(f.buf.Len()) < f.expectedSize {
+		// Persist the partial, regardless of whether we'll return error
+		// or 201. Persistence is the prep work — the Swift companion
+		// reads pending sessions from disk to drive resumes. Failure to
+		// persist falls through to the refuse path (existing file
+		// preserved, no data loss).
+		var stored *resume.SessionMeta
+		if f.store != nil {
+			meta, err := f.store.CreateFromPartial(f.path, f.expectedSize, &f.buf, int64(f.buf.Len()))
+			if err != nil {
+				log.Printf("PERSIST FAILED for truncated %s (%d/%d): %v",
+					f.path, f.buf.Len(), f.expectedSize, err)
+			} else {
+				stored = meta
+				log.Printf("STRANDED %s: persisted %d/%d bytes as session %s",
+					f.path, meta.ReceivedSize, meta.ExpectedSize, meta.ID)
+			}
+		}
+
+		// Behavior switch: if the Swift companion has registered itself
+		// (phase 2, not yet implemented), the persistence above is its
+		// pickup point — we return 201 so Finder doesn't show -36, and
+		// trust the companion to drive the resume to completion. Without
+		// a registered companion, returning 201 would create silent
+		// stranded uploads that look successful but never appear on the
+		// phone — strictly worse than the merged PR's -36 + existing-file
+		// preserved. So default to the honest -36 path until phase 2
+		// lands. The companion-registration mechanism doesn't exist yet;
+		// this gate is the seam where it'll plug in.
+		if stored != nil && f.companionRegistered() {
+			return nil
+		}
 		log.Printf("REFUSING truncated upload of %s: got %d bytes, expected %d (Apple WebDAVFS chunked-upload cap; existing file preserved)",
 			f.path, f.buf.Len(), f.expectedSize)
 		return fmt.Errorf("upload truncated by client: %d/%d bytes", f.buf.Len(), f.expectedSize)
