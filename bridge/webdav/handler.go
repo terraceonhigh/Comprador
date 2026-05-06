@@ -686,6 +686,25 @@ func (f *mtpNewFile) Close() error {
 	// we fall back to refusing the upload — the existing file is
 	// preserved, the user sees a -36, no data loss.
 	if f.expectedSize > 0 && f.bytesWritten < f.expectedSize {
+		// Mode B handling: the body PUT can fail before delivering a
+		// single byte (webdavfs's writeseq path can hit EADDRNOTAVAIL
+		// on connectx — see MISTAKES.md 11d-bis). When that happens
+		// `bytesWritten == 0` and `tempPath == ""` because Write
+		// never fired. We still want to hand the companion something
+		// to resume from — empty partial, full source upload from
+		// offset 0. Create the staging file now so AdoptPartial has
+		// a real path to rename.
+		if f.bytesWritten == 0 && f.tempPath == "" && f.store != nil {
+			if err := f.ensureStaging(); err != nil {
+				log.Printf("Mode B persist: ensureStaging failed for %s: %v", f.path, err)
+			} else {
+				if err := f.tempFile.Close(); err != nil {
+					log.Printf("Mode B persist: close empty staging for %s: %v", f.path, err)
+				}
+				f.tempFile = nil
+			}
+		}
+
 		var stored *resume.SessionMeta
 		if f.store != nil && f.tempPath != "" {
 			meta, err := f.store.AdoptPartial(f.path, f.expectedSize, f.tempPath, f.bytesWritten)
