@@ -106,6 +106,54 @@ if err != nil && err != io.EOF && n == 0 {
 }
 ```
 
+### 8a. cgo MTP callback allocates a fresh slice per call → multi-GiB Go heap retention
+
+**What happened:** After the streaming-write refactor (commit
+`0c5a18e`) eliminated bridge-side `bytes.Buffer` accumulation,
+mid-Send memory profiling on the same Mac showed the bridge process
+hitting **10 GB physical footprint** for a 9 GiB Attenborough send.
+`vmmap -summary` attributed almost all of it to **`VM_ALLOCATE`:
+11.3 GB across 409 regions, 9.9 GB swapped out, only 128 MiB
+resident** — the kernel was actively paging it to swap, but the
+allocations themselves were retained.
+
+The pattern: `bridge/mtp/binding_callbacks.go`'s `goDataGetFunc`
+(invoked by libmtp via cgo to pull the next chunk of upload data)
+calls `make([]byte, int(wantlen))` on every invocation. For a 9 GiB
+file with libmtp's typical chunk size of ~22 MiB, that's ~400
+allocations totalling 9 GiB of garbage. Go's GC eventually frees
+them, but macOS's default `MADV_FREE` policy means the pages stay
+in the process's address space (and count against physical
+footprint) until the kernel reclaims under pressure. The 409 regions
+in `vmmap` roughly matched the 400 chunk count — strong evidence
+that each callback's slice became its own arena segment that never
+returned to the OS.
+
+The same pattern affects `goDataPutFunc` (the GET path). When the
+user accidentally clicks a multi-GiB file on the mounted volume,
+Finder QuickLook fires `LIBMTP_Get_File_To_Handler`, the callback
+allocates per-chunk slices for the entire file, and the bridge's
+footprint balloons by another file-size's worth of `VM_ALLOCATE`
+regions on top of any from prior sends. The 409-region observation
+came mid-GET and was still climbing (10.0 → 10.1 GB) when we killed
+the process.
+
+**Fix (sketched, not yet implemented):** reuse a single buffer per
+session instead of allocating per call. The buffer lives in the
+callback registry alongside the io.Reader/io.Writer; on the first
+call it's `make([]byte, max(wantlen, defaultChunk))`, subsequent
+calls reuse it (with a one-time grow if `wantlen` exceeds the
+current buffer). Caps Go-side memory at one chunk (~22 MiB) instead
+of file-size. Same fix for both Get and Send paths.
+
+**What this leaves uncovered:** there may be additional C-side
+allocations inside libmtp itself (PTP transaction buffers, etc.)
+that we don't control. After the Go-side fix, profile again. If a
+real C-side leak remains, options narrow to (a) patching libmtp,
+(b) calling some libmtp release/reset API between transfers, or
+(c) restarting the bridge process between large transfers as a
+caretaker workaround.
+
 ## WebDAV / Finder
 
 ### 9. `Seek` always returned `(0, nil)`
@@ -314,6 +362,42 @@ turns out to be common, option C alone won't be sufficient and we
 need a separate path that detects "writeseq never started" and recovers
 via different means (full source read from the Mac, kicked off by the
 Swift companion based on an absent-PUT-body timeout).
+
+### 11d-tris. Finder QuickLook on a multi-GiB phone file pulls the whole thing
+
+**What happened:** User accidentally clicked the Attenborough.mkv on
+the mounted phone volume. Finder QuickLook's preview generator fires
+a stat → opens the file → reads enough to render a thumbnail. For
+video, "enough" means several MiB at minimum, often the whole file
+if the AVKit decoder needs to scan moov atoms scattered through the
+container. macOS sometimes also speculatively pre-fetches the
+*entire* file when QuickLook is invoked.
+
+In our case, that triggered `LIBMTP_Get_File_To_Handler` on a 9.09
+GiB file. The bridge's session goroutine pegged in
+`ptp_read_func` → blocked every other MTP operation → bridge memory
+ballooned by another file-size's worth of `VM_ALLOCATE` regions
+(see 8a) → system load spiked from ~3 to ~41 → Finder beach-balled
+on every interaction → mouseover-rainbow-throbber across the whole
+desktop. ETA to GET completion at MTP read throughput: ~15-20 min.
+
+**Workaround:** force-quit Comprador to abort the GET, releases
+both the libmtp session and the leaked allocations. Lose the mount;
+have to replug.
+
+**Defenses worth considering:**
+1. Bridge-side: rate-limit GETs to mounted-volume files larger than
+   some threshold (e.g., refuse with 416 if size > 100 MiB and the
+   request looks like a thumbnailer probe — `User-Agent: */
+   QuickLook*` or similar).
+2. Mount-side: add `nobrowse` mount flag so the volume doesn't
+   appear in Finder sidebar's left pane (less drag-temptation, but
+   user can still navigate manually).
+3. mdutil: explicitly disable Spotlight indexing on this mount path
+   so the indexer doesn't make the same mistake.
+4. Best long-term answer: make GETs cancellable (the longstanding
+   TODO from #11d) so a click that triggers a 9 GiB read can be
+   killed when the user closes the QuickLook preview.
 
 ### 11e. Eject-mid-buffer leaves an orphan webdavfs cache
 

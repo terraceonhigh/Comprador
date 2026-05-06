@@ -18,25 +18,41 @@
       **What changed (commit 0c5a18e):** the bridge no longer buffers
       PUT bodies in a `bytes.Buffer`; it streams every Write directly
       to a staging file on disk, and opens that staging file with
-      `F_NOCACHE` when reading it back for the MTP send. Bridge
-      memory footprint dropped from "approximately the file size"
-      (10 GB physical footprint observed for a 9 GB file) to a
-      handful of MiB regardless of upload size.
+      `F_NOCACHE` when reading it back for the MTP send. Go-side heap
+      for the WebDAV layer dropped from "approximately the file size"
+      to a handful of MiB regardless of upload size. webdavfs's
+      writeseq cap stayed comfortably high on a fresh-boot 8 GiB Mac;
+      the same 9.09 GiB Attenborough.mkv that previously hit Mode A
+      went through in a single uninterrupted PUT.
 
-      **Re-test on the same 8 GiB Mac, same Attenborough:** webdavfs
-      delivered the *full* 9.09 GiB body in a single uninterrupted
-      PUT — no truncation, the writeseq cap stayed comfortably high
-      the whole time because the system had so much more free memory.
-      Mode A simply didn't fire. The companion code remains correct
-      and verified to handle Mode A invisibly when it does, but the
-      typical case on 8 GiB Macs is now "drag works, no funny
-      business."
+      **What we then learned (re-verification 2026-05-06):** during
+      the MTP `SendFile` *after* the PUT body has fully arrived, the
+      bridge process still hits ~10 GB physical footprint. The hog
+      isn't the page cache (F_NOCACHE worked) and isn't the WebDAV
+      buffer (streaming worked) — it's the **cgo callback path**:
+      `goDataGetFunc` (and `goDataPutFunc` on the GET side) calls
+      `make([]byte, int(wantlen))` per invocation, generating roughly
+      one Go heap allocation per libmtp chunk (~22 MiB each, ~400
+      for a 9 GiB file). macOS's `MADV_FREE` policy keeps those
+      allocations in the process's address space until kernel
+      reclaim. Vmmap shows them as 409 `VM_ALLOCATE` regions. See
+      MISTAKES.md entry 8a — the fix is reusing one buffer per
+      session via the registry, ~30 lines of code, listed in High
+      impact below.
 
-      **What's still open:** files larger than the headroom we just
-      bought (call it ~12 GiB on an 8 GiB Mac, scaling roughly with
-      free memory) will still hit the cap. Phase 2 catches that case
-      automatically, but the user-visible journey reverts to the
-      pre-mitigation pattern: a -36 dialog while the companion
+      **Until that fix lands:** Mode A on 8 GiB Macs is no longer
+      common because webdavfs now stays well-fed during the PUT;
+      but every multi-GiB transfer still leaks ~9 GiB of process
+      memory into swap until the bridge dies. The system thrashes
+      but doesn't crash. **Don't click multi-GiB phone files in
+      Finder while a transfer is recent** — see MISTAKES.md
+      entry 11d-tris for why QuickLook is an attractive nuisance.
+
+      **What's still open even after the cgo fix:** files larger
+      than the headroom we'd then have (probably "most of available
+      RAM") will still hit the writeseq cap. Phase 2 catches that
+      case automatically, but the user-visible journey reverts to
+      the pre-mitigation pattern: a -36 dialog while the companion
       silently completes the upload over ~7 minutes. That's the
       remaining bad UX cliff.
 
@@ -64,6 +80,37 @@
       Mode A with a -36 flash" is a known cliff worth deciding about
       before any user-visible 1.0 marketing makes claims about
       arbitrary file sizes.
+
+## High impact (correctness / UX friction)
+
+- [ ] **cgo MTP callback: reuse buffer per session instead of
+      allocating per call.** `bridge/mtp/binding_callbacks.go`'s
+      `goDataGetFunc` and `goDataPutFunc` each call
+      `make([]byte, int(wantlen))` on every invocation. For a 9 GiB
+      transfer that's ~400 allocations of ~22 MiB each, all 9 GiB
+      of which Go's runtime hands back to the OS via `MADV_FREE`
+      but stays attributed to the process (visible as 409
+      `VM_ALLOCATE` regions in `vmmap`) until kernel reclaim.
+      On low-RAM Macs the OS pages it to swap and the system
+      thrashes. Fix: hold a single `[]byte` buffer in the registry
+      entry alongside the io.Reader/io.Writer; reuse across
+      callbacks, grow once if a wantlen exceeds current capacity.
+      Caps Go-side memory at one chunk (~22 MiB) per concurrent
+      MTP operation. Receipt + analysis in MISTAKES.md entry 8a.
+      After the fix, profile to confirm and to surface any
+      remaining C-side libmtp allocations.
+
+- [ ] **Make GETs cancellable (revisit longstanding TODO).** Tied
+      to MISTAKES.md entries 11d (deadlock under read pressure)
+      and 11d-tris (QuickLook hazard). When a Finder click on a
+      large phone file triggers a multi-minute MTP read, dismissing
+      the QuickLook should kill the in-flight read, not let it run
+      to completion blocking every other operation. Implementation
+      hooks: pass a `context.Context` from the HTTP handler down
+      through the session goroutine; on context cancel, call
+      `LIBMTP_Cancel_Operation` (if libmtp supports it for the
+      relevant transaction type) or close the device-side USB
+      transfer to make libmtp's read return.
 
 ## High impact (UX friction)
 
