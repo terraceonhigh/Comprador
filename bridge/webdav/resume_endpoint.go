@@ -193,7 +193,9 @@ func (re *resumeEndpoint) commit(meta *resume.SessionMeta) error {
 			return fmt.Errorf("commit: delete existing %s: %w", meta.Path, delResp.Err)
 		}
 		re.session.Objects.Remove(meta.Path)
-		re.session.Objects.InvalidateDir(parent)
+		// No InvalidateDir(parent): same rationale as handler.go's
+		// mtpFS write paths. The Put below refreshes this entry, the
+		// parent's other children remain valid in the cache.
 	}
 
 	// Hash the assembled partial before MTP sees it. Logged for diagnostic
@@ -242,7 +244,10 @@ func (re *resumeEndpoint) commit(meta *resume.SessionMeta) error {
 		ModTime:   time.Now(),
 		IsDir:     false,
 	})
-	re.session.Objects.InvalidateDir(parent)
+	// No InvalidateDir; see handler.go mtpNewFile.Close for the
+	// rationale. Crucially, on the resume path the original PUT
+	// already called EnsurePopulated(parent) via OpenFile, so the
+	// parent's children list is complete + the new entry we Put'd.
 
 	if err := re.store.Cleanup(meta.ID); err != nil {
 		log.Printf("resume: cleanup %s: %v", meta.ID, err)

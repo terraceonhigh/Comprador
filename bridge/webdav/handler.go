@@ -158,7 +158,15 @@ func (mfs *mtpFS) Mkdir(_ context.Context, name string, _ os.FileMode) error {
 		IsDir:     true,
 		ModTime:   time.Now(),
 	})
-	mfs.session.Objects.InvalidateDir(parent)
+	// Deliberately no InvalidateDir(parent) here. The Put above keeps
+	// the object map correct, and OpenFile already called
+	// EnsurePopulated(parent) before this Mkdir, so the parent's
+	// children list is already complete + the new dir we just added.
+	// Invalidating would force a session-goroutine round-trip on the
+	// next PROPFIND, which queues behind any in-flight GET — exactly
+	// the race that gave us the "Finder shows 0 items after upload"
+	// glitch. See the milestone/2026-05-06-memory-verified
+	// commit-after notes.
 	return nil
 }
 
@@ -187,9 +195,11 @@ func (mfs *mtpFS) RemoveAll(_ context.Context, name string) error {
 	if resp.Err != nil {
 		return resp.Err
 	}
-	parent := path.Dir(name)
 	mfs.session.Objects.Remove(name)
-	mfs.session.Objects.InvalidateDir(parent)
+	// Same rationale as Mkdir: Remove keeps the object map correct;
+	// the parent's populated state still describes a valid (smaller)
+	// listing. Skip InvalidateDir to avoid the post-write
+	// re-enumeration round-trip.
 	return nil
 }
 
@@ -260,8 +270,9 @@ func (mfs *mtpFS) Rename(_ context.Context, oldName, newName string) error {
 		return delResp.Err
 	}
 	mfs.session.Objects.Remove(oldName)
-	mfs.session.Objects.InvalidateDir(path.Dir(oldName))
-	mfs.session.Objects.InvalidateDir(path.Dir(newName))
+	// Same rationale as Mkdir / RemoveAll: the Put + Remove above
+	// keep both source and destination parents' object maps correct.
+	// No InvalidateDir.
 	return nil
 }
 
@@ -731,7 +742,8 @@ func (f *mtpNewFile) Close() error {
 			return delResp.Err
 		}
 		f.session.Objects.Remove(f.path)
-		f.session.Objects.InvalidateDir(parent)
+		// Don't InvalidateDir; the Put below will refresh this entry,
+		// and the parent's other children remain valid in the cache.
 	}
 
 	var bodyReader io.Reader = bytes.NewReader(nil)
@@ -770,7 +782,15 @@ func (f *mtpNewFile) Close() error {
 		ModTime:   time.Now(),
 		IsDir:     false,
 	})
-	f.session.Objects.InvalidateDir(parent)
+	// Skip InvalidateDir(parent). The Put above is sufficient to keep
+	// the cache correct: OpenFile called EnsurePopulated(parent) before
+	// this upload started, so the parent's children list was already
+	// complete; the new entry slots into that view. Invalidating here
+	// would force the next PROPFIND to re-enumerate through the
+	// session goroutine, which queues behind any in-flight GET (e.g.,
+	// Finder QuickLook on the file we just uploaded). With the Put-
+	// only path, PROPFIND serves from the cache and Finder sees the
+	// fresh file immediately.
 	return nil
 }
 
