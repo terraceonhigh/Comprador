@@ -101,12 +101,68 @@ func NewStore() (*Store, error) {
 	return s, nil
 }
 
+// MakeStagingFile creates a fresh tempfile inside the pending directory
+// for the WebDAV layer to stream PUT body bytes into. Caller is
+// responsible for closing the file and either:
+//   - calling AdoptPartial(...) to convert it into a session on truncation, or
+//   - deleting the file via os.Remove if the upload completed normally.
+//
+// The tempfile sits in the same filesystem as the eventual session
+// .partial file, so AdoptPartial's rename is a metadata-only operation
+// (no copy).
+func (s *Store) MakeStagingFile() (path string, f *os.File, err error) {
+	f, err = os.CreateTemp(s.dir, "*.partial.tmp")
+	if err != nil {
+		return "", nil, fmt.Errorf("resume.MakeStagingFile: %w", err)
+	}
+	return f.Name(), f, nil
+}
+
+// AdoptPartial converts an already-streamed staging file into a tracked
+// session. Renames the file to <id>.partial, writes the JSON sidecar,
+// and registers the session in the in-memory map. Used when the WebDAV
+// layer's streaming write to disk hits truncation: the bytes are
+// already on disk, we just need to record the metadata and start
+// tracking. Constant-time vs CreateFromPartial's O(bytes) io.Copy.
+func (s *Store) AdoptPartial(uploadPath string, expectedSize int64, sourcePath string, bodyLen int64) (*SessionMeta, error) {
+	id := newID()
+	now := time.Now()
+	meta := &SessionMeta{
+		ID:            id,
+		Path:          uploadPath,
+		BaseName:      filepath.Base(uploadPath),
+		ExpectedSize:  expectedSize,
+		ReceivedSize:  bodyLen,
+		StartedAt:     now,
+		LastUpdatedAt: now,
+	}
+
+	targetPath := s.partialFile(id)
+	if err := os.Rename(sourcePath, targetPath); err != nil {
+		return nil, fmt.Errorf("resume.AdoptPartial rename: %w", err)
+	}
+	if err := s.writeMeta(meta); err != nil {
+		os.Remove(targetPath)
+		return nil, err
+	}
+
+	s.mu.Lock()
+	s.sessions[id] = meta
+	s.mu.Unlock()
+	return meta, nil
+}
+
 // CreateFromPartial registers a new session for a truncated upload and
 // writes the partial body to disk. Returns the session ID, which is also
 // embedded in the on-disk filename pair (<id>.partial + <id>.json).
 //
 // `body` is the bytes the WebDAV PUT actually delivered before
 // webdavfs gave up. They become the prefix of the eventual full file.
+//
+// Deprecated: kept for the in-memory-buffer code path. New uploads
+// should stream to a staging file via MakeStagingFile + AdoptPartial,
+// which avoids the multi-GiB in-memory bytes.Buffer that exacerbates
+// the very memory pressure causing the truncation.
 func (s *Store) CreateFromPartial(uploadPath string, expectedSize int64, body io.Reader, bodyLen int64) (*SessionMeta, error) {
 	id := newID()
 	now := time.Now()
