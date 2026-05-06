@@ -37,6 +37,25 @@ final class ResumeCompanion {
 
     private let pollInterval: TimeInterval = 5.0
 
+    /// Dedicated URLSession for the upload POST. The default
+    /// `URLSession.shared` uses a 60-second `timeoutIntervalForRequest`,
+    /// which is the time the connection can sit idle waiting for data.
+    /// Our `POST /append` returns nothing until the bridge has finished
+    /// committing the assembled file to MTP — a multi-minute SendFile
+    /// over USB. With the default timeout, URLSession reports
+    /// `NSURLErrorTimedOut` long before the bridge replies, the
+    /// companion thinks the upload failed, and the next poll launches
+    /// a duplicate (which the bridge correctly rejects with offset
+    /// mismatch — no corruption, just wasted work and confusing logs).
+    /// 30 minutes covers a 9 GiB MTP send at observed throughput
+    /// (~22 MiB/s) with comfortable margin.
+    private lazy var uploadSession: URLSession = {
+        let cfg = URLSessionConfiguration.default
+        cfg.timeoutIntervalForRequest = 1800   // 30 min idle
+        cfg.timeoutIntervalForResource = 7200  // 2 h total cap
+        return URLSession(configuration: cfg)
+    }()
+
     init(bridgeURL: URL) {
         self.baseURL = bridgeURL
     }
@@ -163,7 +182,7 @@ final class ResumeCompanion {
         )
         request.httpBodyStream = stream
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await uploadSession.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             let body = String(data: data, encoding: .utf8) ?? ""
             throw CompanionError.badResponse(
