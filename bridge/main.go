@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"comprador/bridge/mtp"
+	"comprador/bridge/resume"
 	"comprador/bridge/webdav"
 )
 
@@ -35,7 +36,22 @@ func main() {
 	deviceName := session.DeviceName()
 	log.Printf("Connected to: %s", deviceName)
 
-	handler := webdav.NewHandler(session)
+	// Resumable-upload store. Persists truncated chunked-PUT bodies
+	// (Apple WebDAVFS writeseq cap) under
+	// $HOME/Library/Application Support/Comprador/pending/, so the
+	// Comprador menu-bar app can drive a side-channel completion. If
+	// the store can't be initialised (rare — only fails on permission
+	// or disk issues), we log and continue with resumable uploads
+	// disabled; the bridge falls back to refusing truncated uploads.
+	store, err := resume.NewStore()
+	if err != nil {
+		log.Printf("Resumable-upload store init failed: %v (truncated uploads will surface as -36)", err)
+		store = nil
+	} else {
+		log.Printf("Resumable-upload store ready (%d pending session(s) recovered)", len(store.List()))
+	}
+
+	handler := webdav.NewHandler(session, store)
 
 	// Hostname for the WebDAV URL. NetFS auto-names volumes from the URL
 	// host, so a clean, single-label hostname → clean Finder volume name.
