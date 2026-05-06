@@ -1,5 +1,59 @@
 # Comprador — TODO
 
+## Architecture risk — open
+
+- [ ] **Reconsider the architecture if RAM is a binding constraint.**
+      Observed 2026-05-06 on an 8 GiB-RAM Mac: dragging a 9.09 GiB
+      Attenborough.mkv in Finder, with ~67 MiB free system memory:
+      Finder's progress bar climbed silently while webdavfs accepted
+      bytes it had nowhere to buffer; the bridge received zero body
+      bytes for the first ~3 minutes; eventually webdavfs flushed
+      ~4.3 GiB in a burst (truncated by the writeseq cap). Phase 2
+      auto-completion then worked end-to-end (companion picked up
+      the partial, found source via `NSMetadataQuery`, streamed the
+      remainder, bridge committed with matching md5).
+
+      But the *journey* was unacceptable for an end user: minutes of
+      Finder progress with no actual transfer, opaque memory
+      starvation, intermittent EADDRNOTAVAIL on the companion's own
+      URLSession because new TCP connections couldn't allocate
+      ephemeral source ports, and a long URLSession timeout window
+      where the upload looked failed but was actually being committed
+      to MTP. We can't ship something that behaves this way on a
+      machine the user is realistically going to own.
+
+      The constraint is structural to the WebDAV-via-NetFS path:
+      webdavfs needs RAM to buffer chunked PUT bodies, and macOS
+      decides on the cap from free memory. We do not control that
+      decision, and there is no exposed knob (we exhausted
+      MNT_SYNCHRONOUS — see MISTAKES.md option 1).
+
+      Architectural options to weigh, none cheap:
+
+      1. **Sidebar-only Finder integration** (no mounted volume) —
+         like Image Capture. Comprador becomes a destination for drags
+         from Finder via a Service or sidebar entry, runs the upload
+         path itself, no webdavfs involved. Loses "browse the phone
+         from Finder" but eliminates the memory dependency entirely.
+         Probably the right answer for low-RAM machines specifically.
+      2. **File Provider extension** (Apple's first-party FS
+         extension API) — sandboxed, memory-managed by the system,
+         but USB device access from a File Provider extension is
+         deeply restricted. Investigated and rejected in
+         `CLAUDE.md` ("Why not File Provider API?"); worth re-examining
+         only if option 1 turns out to be unworkable.
+      3. **Hybrid**: keep webdavfs for browsing (read-only at low
+         memory), route writes through the sidebar/Service path. More
+         complex but preserves the current "phone is a Finder volume"
+         affordance while skipping webdavfs's buffer dependency on
+         the upload side. Implementation cost is roughly the sum of
+         options 1 and the existing path.
+
+      Decide before shipping a 1.0 to non-developer users. Until
+      then: document the requirement somewhere user-visible (Welcome
+      window? README?) — minimum 16 GiB RAM, recommended 32 GiB —
+      and move on.
+
 ## High impact (UX friction)
 
 - [x] Volume shows as "127.0.0.1" in Finder sidebar — should show device name (e.g. "Pixel 6")
@@ -22,6 +76,22 @@
 
 - [ ] Error recovery — detect bridge crash mid-session, auto-restart
 - [ ] Handle detach during file transfer gracefully (don't hang Finder)
+- [ ] **Reattach-during-unmount race leaves Comprador in dead state.**
+      Reproduced 2026-05-06: after a successful mount, a USB
+      detach+reattach storm fires within milliseconds (typically
+      phone-side: screen sleep, MTP layer flutter). The reattach
+      handler runs while the corresponding unmount is still in flight,
+      sees `isMounted == true`, logs `Ignoring attach — already
+      mounted`, and discards the event. Unmount then completes, the
+      bridge is gone, no further attach event ever arrives, and the
+      menu bar app is stuck in detached-no-bridge state until the user
+      physically replugs. Two-line fix sketched in
+      [docs/MISTAKES.md](docs/MISTAKES.md) entry 19a: track
+      `pendingUnmount` and queue the reattach for after, OR
+      synthesise an attach at the end of every successful unmount if
+      IOKit still sees the device. Latter is cleaner — it's a one-shot
+      "did the bus settle in a state that needs us?" check at unmount
+      completion.
 - [ ] Session recovery — reopen MTP session on corruption without full bridge restart
 - [ ] **Make Finder error -36 disappear for very large files.**
       **Decision 2026-05-06**: pursuing option C (bridge ↔ Swift companion

@@ -37,6 +37,13 @@ type resumeEndpoint struct {
 }
 
 func (re *resumeEndpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Any traffic on /_comprador/* is proof the menu-bar app is alive
+	// and polling, which gates the truncation 200-OK behavior. The
+	// listing endpoint is the one the companion polls every few
+	// seconds, but ping all of them so single-shot calls (manual curl,
+	// debug endpoints) keep the gate open too.
+	re.store.RecordCompanionPing()
+
 	p := r.URL.Path
 	switch {
 	case p == "/_comprador/sessions" && r.Method == http.MethodGet:

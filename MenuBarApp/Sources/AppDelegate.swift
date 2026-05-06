@@ -6,6 +6,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var deviceWatcher: DeviceWatcher!
     private var bridge: BridgeProcess?
     private var mountManager = MountManager()
+    private var resumeCompanion: ResumeCompanion?
 
     // Current state
     private var connectedDevice: USBDevice?
@@ -372,6 +373,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
                 let mountedURL = try await mountManager.mount(host: mountHost, port: port, displayName: displayName)
 
+                // Start the resumable-upload companion. It polls the bridge's
+                // /_comprador/sessions endpoint and, when the bridge reports
+                // a chunked-PUT truncation, finds the source file via
+                // NSMetadataQuery and streams the missing tail back through
+                // /_comprador/sessions/<id>/append. The polling itself keeps
+                // the bridge's `companionRegistered` gate open, which is
+                // what allows the bridge to return 200 OK on truncation
+                // (so Finder doesn't show -36) instead of falling back to
+                // the honest error.
+                let bridgeURL = URL(string: "http://\(bp.host):\(port)/")!
+                let companion = ResumeCompanion(bridgeURL: bridgeURL)
+                companion.start()
+                self.resumeCompanion = companion
+
                 await MainActor.run {
                     NSLog("Comprador: Device mounted as volume")
                     isConnecting = false
@@ -414,6 +429,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func teardown() async {
+        resumeCompanion?.stop()
+        resumeCompanion = nil
         if mountManager.isMounted {
             await mountManager.unmount()
         }

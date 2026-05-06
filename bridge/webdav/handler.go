@@ -500,15 +500,18 @@ type mtpNewFile struct {
 	existingID   *uint32
 }
 
-// companionRegistered reports whether the Comprador menu-bar app has
-// registered itself as a resume driver. Until phase 2 lands (Swift
-// XPC/socket handshake), this returns false — the bridge persists
-// truncated bodies for future use but doesn't rely on a companion to
-// drive completion, so Finder still sees -36 and the user knows the
-// upload didn't land. Phase 2 will replace this stub with a real
-// liveness check (e.g., recent ping over a Unix socket).
+// companionRegistered reports whether the Comprador menu-bar app is
+// alive and polling. The store records a "last seen" timestamp on
+// every /_comprador/* HTTP hit; we consider the companion present if
+// that timestamp is within store.CompanionWindow. Without a present
+// companion, the truncation path returns -36 (honest, matches the
+// merged PR behavior) — lying with 200 OK would silently strand the
+// file with no one to complete it.
 func (f *mtpNewFile) companionRegistered() bool {
-	return false
+	if f.store == nil {
+		return false
+	}
+	return f.store.IsCompanionActive()
 }
 
 func (f *mtpNewFile) Close() error {
