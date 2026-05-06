@@ -149,8 +149,34 @@ type MTPResponse struct {
 type Session struct {
 	device   *Device
 	Objects  *ObjectMap
+	storages []Storage // cached at session init; capacity/free reported via WebDAV quota
 	requests chan MTPRequest
 	done     chan struct{}
+}
+
+// TotalBytes returns the sum of MaxCapacity across all storages on the device.
+// Used to populate DAV:quota-used-bytes / quota-available-bytes so Finder's
+// preflight free-space check (statfs(2)) sees a real number. Without this,
+// webdavfs reports zero bytes and Finder refuses copies > a small threshold
+// with "(error code 100060)" — having never sent a single byte to the bridge.
+func (s *Session) TotalBytes() uint64 {
+	var n uint64
+	for _, st := range s.storages {
+		n += st.MaxBytes
+	}
+	return n
+}
+
+// FreeBytes returns the sum of FreeSpaceInBytes across all storages.
+// Snapshotted at session open; not refreshed mid-session — the cost of a
+// re-query through the libmtp PTP transport (~hundreds of ms) is not worth
+// the precision for a number Finder uses purely as a sanity check.
+func (s *Session) FreeBytes() uint64 {
+	var n uint64
+	for _, st := range s.storages {
+		n += st.FreeBytes
+	}
+	return n
 }
 
 // NewSession opens a device and populates the root-level storage entries.
@@ -242,6 +268,7 @@ func (s *Session) initStorages() error {
 	if err != nil {
 		return err
 	}
+	s.storages = storages
 
 	log.Printf("Found %d storage(s)", len(storages))
 	for _, st := range storages {
@@ -289,7 +316,16 @@ func (s *Session) populateDir(dirPath string) []*ObjectMeta {
 		mtpParentID = FilesAndFoldersRoot
 	}
 
-	entries := s.device.GetFilesAndFolders(storageID, mtpParentID)
+	entries, err := s.device.GetFilesAndFolders(storageID, mtpParentID)
+	if err != nil {
+		// Don't mark populated — a transient PTP I/O error (phone screen
+		// asleep, USB renumeration mid-flight, kernel-driver collision)
+		// would otherwise lock the cache to "empty directory" until the
+		// bridge process restarts. By leaving the path unpopulated, the
+		// next access retries the enumeration once the device recovers.
+		log.Printf("Lazy enumerate %s: error, leaving unpopulated: %v", dirPath, err)
+		return nil
+	}
 	log.Printf("Lazy enumerate %s: %d entries", dirPath, len(entries))
 
 	var result []*ObjectMeta

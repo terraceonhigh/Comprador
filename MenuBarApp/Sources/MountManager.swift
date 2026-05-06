@@ -41,6 +41,16 @@ class MountManager {
             let openOptions: NSMutableDictionary = [
                 kNAUIOptionKey: kNAUIOptionNoUI,
             ]
+
+            // Empty mountOptions on purpose. We tried passing
+            // `kNetFSMountFlagsKey: MNT_SYNCHRONOUS` to suppress webdavfs's
+            // writeseq path (the source of -36 truncation on large Finder
+            // drags); statfs(2) on the resulting mount confirmed the flag
+            // is silently filtered out by webdavfs's mnt_flag handling.
+            // Don't try this again — webdavfs has no exposed knob to
+            // disable writeseq. See TODO.md "Make Finder error -36
+            // disappear for very large files" → option 2 for the path
+            // forward.
             let mountOptions = NSMutableDictionary()
 
             let rc = NetFSMountURLSync(
