@@ -69,17 +69,45 @@ type Device struct {
 	dev *C.LIBMTP_mtpdevice_t
 }
 
-// callbackRegistry maps integer IDs to io.Writer/io.Reader for streaming.
+// initialCallbackBuf is the size of the per-session reusable buffer
+// allocated when a reader/writer registers. Sized to match libmtp's
+// typical PTP transfer chunk (~22 MiB observed; 4 MiB is a safe
+// default that grows if a single callback wants more). The whole point
+// of holding the buffer in the registry is so we allocate ONCE per
+// MTP transfer instead of ONCE per callback invocation — see
+// docs/DECISIONS.md "Vanquishing the per-callback VM_ALLOCATE leak".
+const initialCallbackBuf = 4 * 1024 * 1024
+
+// readerEntry / writerEntry pair an io.Reader (or io.Writer) with a
+// reusable byte buffer for the cgo callback to scratch in. Without
+// the buffer, every libmtp callback would `make([]byte, wantlen)`,
+// generating ~one allocation per chunk of the transfer (hundreds for
+// a multi-GiB file). Go's GC frees those eventually, but macOS's
+// MADV_FREE leaves them attributed to the process until kernel
+// reclaim — they show as VM_ALLOCATE in vmmap and push small-RAM
+// Macs into swap. Reusing one buffer per session caps Go-side memory
+// at one chunk, regardless of transfer size.
+type readerEntry struct {
+	r   io.Reader
+	buf []byte
+}
+
+type writerEntry struct {
+	w   io.Writer
+	buf []byte
+}
+
+// callbackRegistry maps integer IDs to reader/writer entries for streaming.
 var callbackRegistry struct {
 	mu      sync.Mutex
 	nextID  int
-	writers map[int]io.Writer
-	readers map[int]io.Reader
+	writers map[int]*writerEntry
+	readers map[int]*readerEntry
 }
 
 func init() {
-	callbackRegistry.writers = make(map[int]io.Writer)
-	callbackRegistry.readers = make(map[int]io.Reader)
+	callbackRegistry.writers = make(map[int]*writerEntry)
+	callbackRegistry.readers = make(map[int]*readerEntry)
 	C.LIBMTP_Init()
 }
 
@@ -88,7 +116,7 @@ func registerWriter(w io.Writer) int {
 	defer callbackRegistry.mu.Unlock()
 	id := callbackRegistry.nextID
 	callbackRegistry.nextID++
-	callbackRegistry.writers[id] = w
+	callbackRegistry.writers[id] = &writerEntry{w: w, buf: make([]byte, initialCallbackBuf)}
 	return id
 }
 
@@ -103,7 +131,7 @@ func registerReader(r io.Reader) int {
 	defer callbackRegistry.mu.Unlock()
 	id := callbackRegistry.nextID
 	callbackRegistry.nextID++
-	callbackRegistry.readers[id] = r
+	callbackRegistry.readers[id] = &readerEntry{r: r, buf: make([]byte, initialCallbackBuf)}
 	return id
 }
 
@@ -243,16 +271,31 @@ const FilesAndFoldersRoot = 0xffffffff
 
 // GetFilesAndFolders returns all objects (files and folders) under a given parent.
 // Use FilesAndFoldersRoot for the root of a storage.
-func (d *Device) GetFilesAndFolders(storageID, parentID uint32) []FileMeta {
+//
+// libmtp signals enumeration failure two ways: (1) a NULL return AND a
+// non-empty error stack, or (2) a NULL return on an actually-empty directory.
+// We must distinguish them — caching a failed enumeration as "empty" means
+// the user sees an empty Finder window forever, even after the device
+// recovers, until the bridge restarts. The fix is to inspect the error stack
+// before returning: if it has entries, the listing is unreliable and we
+// surface that to the caller so it can avoid marking the directory populated.
+func (d *Device) GetFilesAndFolders(storageID, parentID uint32) ([]FileMeta, error) {
 	log.Printf("MTP GetFilesAndFolders(storage=%d, parent=0x%x)", storageID, parentID)
 	files := C.LIBMTP_Get_Files_And_Folders(d.dev, C.uint32_t(storageID), C.uint32_t(parentID))
 
-	// Check for MTP errors
-	errs := C.LIBMTP_Get_Errorstack(d.dev)
-	for e := errs; e != nil; e = e.next {
-		log.Printf("MTP error: %s", C.GoString(e.error_text))
+	// Check for MTP errors. The error stack is per-device, so we must drain
+	// and clear it whether the call succeeded or not.
+	var hadErr bool
+	var firstErrText string
+	for e := C.LIBMTP_Get_Errorstack(d.dev); e != nil; e = e.next {
+		txt := C.GoString(e.error_text)
+		log.Printf("MTP error: %s", txt)
+		if !hadErr {
+			firstErrText = txt
+		}
+		hadErr = true
 	}
-	if errs != nil {
+	if hadErr {
 		C.LIBMTP_Clear_Errorstack(d.dev)
 	}
 
@@ -273,7 +316,10 @@ func (d *Device) GetFilesAndFolders(storageID, parentID uint32) []FileMeta {
 		C.LIBMTP_destroy_file_t(f)
 		f = next
 	}
-	return result
+	if hadErr {
+		return result, fmt.Errorf("LIBMTP_Get_Files_And_Folders: %s", firstErrText)
+	}
+	return result, nil
 }
 
 // GetFileToWriter streams a file from the device to the given writer.
