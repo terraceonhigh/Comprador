@@ -26,4 +26,5 @@ DerivedData/
 # never in git. Ignoring also keeps `git stash --include-untracked`
 # from sweeping them off disk during branch switches.
 correspondence/
+Correspondance/
 testfiles/
