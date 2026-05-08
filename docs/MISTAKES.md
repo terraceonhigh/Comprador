@@ -695,3 +695,34 @@ sudo xcode-select -s /Applications/Xcode.app
 sudo xcodebuild -license accept
 sudo xcodebuild -runFirstLaunch
 ```
+
+## NFS pivot (go-nfs)
+
+### 1. go-nfs does not support `exclusive` create mode
+
+**What happened (anticipated):** `nfs_oncreate.go` in `willscott/go-nfs`
+explicitly returns `NFSStatusNotSupp` for `createModeExclusive`
+(see comment: "TODO: support 'exclusive' mode"). The macOS NFS client
+uses exclusive mode for new-file creation from Finder (to prevent
+duplicates). This means Finder writes will fail with ENOTSUP.
+
+**Status (2026-05-08):** Not yet hit — Phase 1 stub is read-only.
+Investigate before Phase 2. Options:
+- Implement exclusive create in go-nfs (requires forking or upstream PR)
+- Map exclusive create to guarded create (accept the race, acceptable
+  for a single-client USB device)
+- Check whether macOS falls back to unchecked create after ENOTSUP
+
+**Reference:** `~/Labs/go-nfs/nfs_oncreate.go:43`
+
+### 2. In-tree `helpers/memfs` root acknowledgement
+
+**What happened:** The go-nfs test suite has a comment:
+`// File needs to exist in the root for memfs to acknowledge the root exists.`
+Without a file in the root directory, `fs.Stat("/")` may return an error
+and the NFS GETATTR on the root handle fails, causing the mount to appear
+empty or fail.
+
+**Fix:** Always create at least one file at the root level before serving.
+Our stub does this (`hello.txt`). The MTP adapter will naturally satisfy
+this because storage roots always contain at least one child.
