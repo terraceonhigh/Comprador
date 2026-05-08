@@ -706,12 +706,11 @@ explicitly returns `NFSStatusNotSupp` for `createModeExclusive`
 uses exclusive mode for new-file creation from Finder (to prevent
 duplicates). This means Finder writes will fail with ENOTSUP.
 
-**Status (2026-05-08):** Not yet hit — Phase 1 stub is read-only.
-Investigate before Phase 2. Options:
-- Implement exclusive create in go-nfs (requires forking or upstream PR)
-- Map exclusive create to guarded create (accept the race, acceptable
-  for a single-client USB device)
-- Check whether macOS falls back to unchecked create after ENOTSUP
+**Status (2026-05-08):** Phase 2a (read-only MTPFileSystem) verified — Finder
+browses phone tree and file downloads work over NFS. Exclusive create is
+unresolved for Phase 2b writes. Resolution chosen: map exclusive→guarded in
+the go-nfs fork (acceptable on a single-client USB device), plus add a
+Commit() hook to the Handler interface so write completion triggers MTP upload.
 
 **Reference:** `~/Labs/go-nfs/nfs_oncreate.go:43`
 
