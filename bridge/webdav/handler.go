@@ -527,16 +527,25 @@ func (d *mtpDir) Stat() (os.FileInfo, error) {
 	return metaToFileInfo(d.meta), nil
 }
 
-// DeadProps satisfies webdav.DeadPropsHolder so we can advertise the device's
-// free/total capacity via DAV:quota-available-bytes and DAV:quota-used-bytes.
-// macOS webdavfs translates these into statfs(2) results, which Finder
-// preflight-checks before starting a copy. Without this, Finder reports
-// "(error code 100060)" and bails before sending a single byte — the bridge's
-// PUT path is never reached, so the upload fix below it is moot.
+// DeadProps advertises device capacity to populate Finder's statfs(2) view —
+// which Finder's upload preflight checks before any PUT (zero free bytes →
+// error 100060 / ENOSPC, the file refuses to start copying at all).
 //
-// Only the mount root ("/") returns quota; subdirectories return nil so the
-// webdav package falls back to file-level metadata. Reporting on the root is
-// what statfs hits, and what Finder uses for its preflight.
+// Returning these properties trips a ~90 second client-side wait inside
+// NetFSMountURLSync on macOS 15.4+. The wait is unavoidable today: any
+// quota response — modern (`quota-available-bytes`/`quota-used-bytes`) or
+// deprecated (`quota`/`quotaused`) — triggers it (verified empirically
+// 2026-05-07 against XQ-BT52 on macOS 15.4); omitting quota dodges the
+// wait but breaks Finder drag-and-drop with 100060. copyparty's #1242 fix
+// suppresses quota entirely, which works for them because their users
+// upload over HTTP rather than Finder. We can't make that tradeoff.
+//
+// The progress UI in MenuBarApp/Sources/AppDelegate.swift exists because
+// of this — see correspondence/05-on-the-quota-impasse for the history.
+//
+// Only the mount root ("/") returns quota; subdirectories return nil so
+// the webdav package falls back to file-level metadata. Reporting on the
+// root is what statfs hits, and what Finder uses for its preflight.
 func (d *mtpDir) DeadProps() (map[xml.Name]webdav.Property, error) {
 	if d.path != "/" {
 		return nil, nil
