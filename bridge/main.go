@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"syscall"
 
 	"comprador/bridge/mtp"
+	nfsbridge "comprador/bridge/nfs"
 	"comprador/bridge/resume"
 	"comprador/bridge/webdav"
 )
@@ -19,6 +21,9 @@ import (
 var BuildID = "dev"
 
 func main() {
+	useNFS := flag.Bool("nfs", false, "serve NFSv3 instead of WebDAV")
+	flag.Parse()
+
 	log.SetOutput(os.Stderr)
 	log.SetFlags(log.Ltime | log.Lmicroseconds)
 	log.Printf("bridge build: %s", BuildID)
@@ -40,6 +45,35 @@ func main() {
 
 	deviceName := session.DeviceName()
 	log.Printf("Connected to: %s", deviceName)
+
+	// Catch SIGINT/SIGTERM so we run our cleanup defers instead of dying instantly.
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		s := <-sigs
+		log.Printf("Received %s, shutting down", s)
+		listener.Close()
+	}()
+
+	if *useNFS {
+		fmt.Fprintf(os.Stdout, "PORT=%d\n", port)
+		fmt.Fprintf(os.Stdout, "PROTO=nfs\n")
+		fmt.Fprintf(os.Stdout, "DEVICE=%s\n", deviceName)
+		os.Stdout.Sync()
+
+		log.Printf("NFSv3 server listening on 127.0.0.1:%d", port)
+		log.Printf("Mount command:")
+		log.Printf("  mkdir -p /tmp/comprador")
+		log.Printf("  sudo mount -o port=%d,mountport=%d,nfsvers=3,nolocks,tcp -t nfs localhost:/ /tmp/comprador", port, port)
+		log.Printf("Unmount: sudo umount /tmp/comprador")
+
+		if err := nfsbridge.Serve(listener, session); err != nil {
+			log.Printf("NFS server stopped: %v", err)
+		}
+		return
+	}
+
+	// WebDAV path (default).
 
 	// Resumable-upload store. Persists truncated chunked-PUT bodies
 	// (Apple WebDAVFS writeseq cap) under
@@ -87,17 +121,6 @@ func main() {
 
 	log.Printf("WebDAV server listening on http://%s:%d/", host, port)
 	log.Printf("Mount with: Finder → Go → Connect to Server → dav://%s:%d/", host, port)
-
-	// Catch SIGINT/SIGTERM so we run our cleanup defers (dns-sd subprocess,
-	// MTP session) instead of dying instantly. Go's runtime skips defers
-	// on default signal handling.
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		s := <-sigs
-		log.Printf("Received %s, shutting down", s)
-		listener.Close()
-	}()
 
 	if err := http.Serve(listener, handler); err != nil {
 		log.Printf("HTTP server stopped: %v", err)
