@@ -11,6 +11,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // Current state
     private var connectedDevice: USBDevice?
     private var isConnecting = false  // lock out spurious events during connection
+    private var pendingAttach: USBDevice?  // reattach queued while unmount was in flight (entry 19a)
     private var registeredHostname: String?  // hostname currently in /etc/hosts via helper
     private var welcomeController: WelcomeWindowController?
 
@@ -251,7 +252,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         if mountManager.isMounted {
-            NSLog("Comprador: Ignoring attach — already mounted")
+            NSLog("Comprador: Reattach while unmount in flight — queuing (entry 19a)")
+            pendingAttach = device
             return
         }
 
@@ -290,6 +292,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 connectedDevice = nil
                 updateIcon(state: .idle)
                 rebuildMenu()
+                if let queued = pendingAttach {
+                    pendingAttach = nil
+                    handleDeviceAttached(queued)
+                }
             }
         }
     }
@@ -302,6 +308,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func ejectDevice() {
         NSLog("Comprador: Eject requested")
         isConnecting = false
+        pendingAttach = nil
         Task {
             await teardown()
             await MainActor.run {
