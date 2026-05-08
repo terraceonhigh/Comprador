@@ -12,10 +12,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var connectedDevice: USBDevice?
     private var isConnecting = false  // lock out spurious events during connection
     private var pendingAttach: USBDevice?  // reattach queued while unmount was in flight (entry 19a)
+    private var connectStatus: String = ""  // human-readable phase shown in menu while connecting
+    private var connectStartedAt: Date?     // anchor for elapsed-time display; nil means timer is idle
+    private var connectTimer: Timer?         // 1s tick that re-renders the menu while isConnecting
+    private weak var connectingStatusItem: NSMenuItem?  // mutated in place so the elapsed counter updates while menu is open
     private var registeredHostname: String?  // hostname currently in /etc/hosts via helper
     private var welcomeController: WelcomeWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSLog("Comprador build: %@", BuildInfo.id)
+
         // Clear out any leftover webdav mounts from a prior session — otherwise
         // NetFS auto-suffixes today's mount as /Volumes/Pixel-6-1 and Finder
         // ends up showing duplicates.
@@ -62,9 +68,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                                         keyEquivalent: ""))
 #endif
             } else if isConnecting {
-                let connecting = NSMenuItem(title: "Connecting…", action: nil, keyEquivalent: "")
-                connecting.isEnabled = false
-                menu.addItem(connecting)
+                let statusLine = NSMenuItem(title: connectingStatusTitle(),
+                                            action: nil, keyEquivalent: "")
+                statusLine.isEnabled = false
+                menu.addItem(statusLine)
+                connectingStatusItem = statusLine
+
+                // Hint always present during connecting — keeps the menu
+                // structure constant so setConnectStatus never has to rebuild
+                // (a rebuild would leave an open menu showing stale text).
+                // The 90s NetFSMountURLSync wait dominates the cycle anyway.
+                let hint = NSMenuItem(title: "Finder takes about 90 seconds to attach the volume",
+                                      action: nil, keyEquivalent: "")
+                hint.isEnabled = false
+                menu.addItem(hint)
             }
         } else {
             let noDevice = NSMenuItem(title: "No device connected", action: nil, keyEquivalent: "")
@@ -95,6 +112,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Quit Comprador",
                                 action: #selector(quitApp),
                                 keyEquivalent: "q"))
+
+#if DEBUG
+        menu.addItem(NSMenuItem.separator())
+        let buildItem = NSMenuItem(title: "Build: \(BuildInfo.id)",
+                                   action: nil, keyEquivalent: "")
+        buildItem.isEnabled = false
+        menu.addItem(buildItem)
+#endif
 
         statusItem.menu = menu
     }
@@ -315,6 +340,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSLog("Comprador: Eject requested")
         isConnecting = false
         pendingAttach = nil
+        stopConnectTimer()
+        connectStatus = ""
         Task {
             await teardown()
             await MainActor.run {
@@ -335,6 +362,54 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: - Bridge + Mount Lifecycle
+
+    private func setConnectStatus(_ s: String) {
+        NSLog("Comprador: [status] %@", s)
+        let isFirstCall = connectStartedAt == nil
+        connectStatus = s
+        if isFirstCall {
+            // First status update of a connect cycle: start the elapsed-time
+            // clock and rebuild the menu (structural transition idle →
+            // connecting). The 1s tick + .eventTracking run loop mode keeps
+            // the counter advancing while the user has the menu open.
+            connectStartedAt = Date()
+            let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
+                self?.tickConnectingStatus()
+            }
+            RunLoop.main.add(t, forMode: .common)
+            RunLoop.main.add(t, forMode: .eventTracking)
+            connectTimer = t
+            rebuildMenu()
+        } else {
+            // Subsequent status changes during the same cycle: mutate the
+            // visible item in place. Replacing statusItem.menu does NOT
+            // redraw an already-open menu, so any rebuild here would leave
+            // the user staring at stale text until they close and reopen.
+            connectingStatusItem?.title = connectingStatusTitle()
+        }
+    }
+
+    private func stopConnectTimer() {
+        connectTimer?.invalidate()
+        connectTimer = nil
+        connectStartedAt = nil
+    }
+
+    /// Builds the connecting status line text. Pulled out of rebuildMenu so the
+    /// timer tick can update the visible NSMenuItem in place — replacing the
+    /// whole menu via rebuildMenu() does not redraw an already-open menu, so
+    /// the elapsed counter only ticked when the user closed and reopened.
+    private func connectingStatusTitle() -> String {
+        let phase = connectStatus.isEmpty ? "Connecting…" : connectStatus
+        guard let start = connectStartedAt else { return phase }
+        let s = Int(-start.timeIntervalSinceNow)
+        return String(format: "%@  %d:%02d", phase, s / 60, s % 60)
+    }
+
+    private func tickConnectingStatus() {
+        guard isConnecting, let item = connectingStatusItem else { return }
+        item.title = connectingStatusTitle()
+    }
 
     private func connectDevice(_ device: USBDevice) async {
         // Ensure any previous bridge is fully stopped
@@ -358,6 +433,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.bridge = bp
 
             do {
+                await MainActor.run { setConnectStatus("Starting bridge…") }
+
+                // Surface key bridge-side milestones in the menu while connecting.
+                bp.onStatusLine = { [weak self] msg in
+                    DispatchQueue.main.async { self?.setConnectStatus(msg) }
+                }
+
                 // Start the bridge with no preferred host. The bridge does
                 // its own mDNS dance and prints PORT/HOST/DEVICE on stdout.
                 // Pass the device IDs so BridgeProcess can run the IOKit
@@ -384,6 +466,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     mountHost = cleanLabel
                 }
 
+                await MainActor.run { setConnectStatus("Mounting…") }
                 let mountedURL = try await mountManager.mount(host: mountHost, port: port, displayName: displayName)
 
                 // Start the resumable-upload companion. It polls the bridge's
@@ -402,6 +485,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
                 await MainActor.run {
                     NSLog("Comprador: Device mounted as volume")
+                    stopConnectTimer()
+                    connectStatus = ""
                     isConnecting = false
                     updateIcon(state: .mounted)
                     rebuildMenu()
@@ -414,6 +499,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 bp.stop()
                 self.bridge = nil
                 await MainActor.run {
+                    stopConnectTimer()
+                    connectStatus = ""
                     isConnecting = false
                     updateIcon(state: .error)
                     rebuildMenu()
@@ -432,6 +519,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     // shows MTP, and macOS daemons hold the interface.
                     BridgeProcess.postFileTransferNotification()
                     await MainActor.run {
+                        stopConnectTimer()
+                        connectStatus = ""
                         isConnecting = false
                         updateIcon(state: .error)
                         rebuildMenu()

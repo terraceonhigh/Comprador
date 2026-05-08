@@ -14,9 +14,14 @@ import (
 	"comprador/bridge/webdav"
 )
 
+// BuildID is overridden at link time via -ldflags "-X main.BuildID=...".
+// Defaults to "dev" so a bare `go build` still works.
+var BuildID = "dev"
+
 func main() {
 	log.SetOutput(os.Stderr)
 	log.SetFlags(log.Ltime | log.Lmicroseconds)
+	log.Printf("bridge build: %s", BuildID)
 
 	// Bind to a random localhost port first, before device detection.
 	// This lets us fail fast on port issues.
