@@ -1,5 +1,6 @@
-BRIDGE_OUT := build/bridge
-HELPER_OUT := build/comprador-helper
+BRIDGE_OUT   := build/bridge
+HELPER_OUT   := build/comprador-helper
+NFS_STUB_OUT := build/nfsstub
 APP_NAME   := Comprador
 GO         := /opt/homebrew/bin/go
 DERIVED    := $(HOME)/Library/Developer/Xcode/DerivedData
@@ -12,7 +13,7 @@ DIST_DIR   := dist
 # Format: short SHA + "-dirty" if the worktree has uncommitted changes.
 BUILD_ID := $(shell git rev-parse --short HEAD 2>/dev/null)$(shell git diff --quiet 2>/dev/null || echo "-dirty")
 
-.PHONY: bridge helper helper-test app app-debug app-swiftc dev run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
+.PHONY: bridge helper helper-test nfs-stub app app-debug app-swiftc dev run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
 
 bridge:
 	cd bridge && CGO_CFLAGS="-I$(CURDIR)/bridge/cvendor" CGO_LDFLAGS="-L/opt/homebrew/lib" $(GO) build -ldflags="-X main.BuildID=$(BUILD_ID)" -o ../$(BRIDGE_OUT) .
@@ -22,6 +23,12 @@ helper:
 
 helper-test:
 	cd helper && $(GO) test -v ./...
+
+# Phase 1 NFS pivot verification: memfs-backed NFS server with no MTP dependency.
+# Run this, then use the printed sudo mount command to verify macOS mounts
+# without the ~90s WebDAV quota wait.
+nfs-stub:
+	cd bridge && $(GO) build -o ../$(NFS_STUB_OUT) ./cmd/nfsstub
 
 # Bundle bridge + all dylibs into an app directory, fix rpaths
 define BUNDLE_BRIDGE

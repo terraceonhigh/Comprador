@@ -48,6 +48,19 @@ The cgo bindings need the libmtp header. It's already checked into
 cp $(brew --prefix libmtp)/include/libmtp.h bridge/cvendor/libmtp.h
 ```
 
+## NFS pivot dependency setup
+
+Before building `nfs-stub` or any NFS-path code, the bridge module needs
+go-nfs and its transitive dependencies resolved. Run once after pulling:
+
+```bash
+cd bridge && go mod tidy
+```
+
+This downloads `github.com/willscott/go-nfs` and all its dependencies
+(go-billy, uuid, lru, go-xdr, etc.) and populates `go.sum`. Requires
+internet access and a working Go toolchain.
+
 ## Build Targets
 
 ```bash
@@ -59,6 +72,9 @@ make helper
 
 # Run the helper unit tests
 make helper-test
+
+# Phase 1 NFS pivot verification stub (memfs, no MTP, no phone needed)
+make nfs-stub
 
 # Run the Go bridge standalone (for manual WebDAV testing)
 make dev
@@ -122,6 +138,36 @@ reads it from the bundle on first registration. The daemon stays
 disabled until the user approves it under System Settings → Login Items.
 
 ## Development Workflow
+
+### Testing the NFS stub (Phase 1 verification)
+
+This proves macOS mounts go-nfs without the ~90s WebDAV quota wait.
+Requires sudo and no phone needed.
+
+```bash
+# 1. Resolve dependencies (once)
+cd bridge && go mod tidy && cd ..
+
+# 2. Build and run the stub
+make nfs-stub
+./build/nfsstub
+# Prints: PORT=XXXXX plus a ready-to-paste mount command
+
+# 3. In a second terminal — mount (requires sudo):
+mkdir -p /tmp/nfsstub
+sudo mount -o port=XXXXX,mountport=XXXXX,nfsvers=3,nolocks,tcp -t nfs localhost:/ /tmp/nfsstub
+
+# 4. Verify: mount should return in <5s. Open Finder — volume appears.
+#    Files: hello.txt and Photos/readme.txt should be visible.
+#    Try dragging hello.txt to Desktop to verify read works.
+
+# 5. Unmount when done
+sudo umount /tmp/nfsstub
+```
+
+**Pass criterion:** mount completes in under 5 seconds with no 90s stall.
+If this passes, the NFS pivot is safe to build on. If it fails or hangs,
+stop and document the failure in docs/MISTAKES.md before proceeding.
 
 ### Testing the bridge standalone
 
