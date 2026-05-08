@@ -104,6 +104,15 @@ sometimes works too, but is phone-model-dependent. A slow unplug+replug
 does *not* reproduce this race — it fires a full detach with nothing
 in-flight, which was always handled correctly.
 
+**Timing caveat (observed on XQ-BT52):** a manual mode switch produces a
+~430ms detach-to-reattach gap, long enough for teardown to complete before
+the attach arrives. The app recovers correctly via the normal connect path
+rather than via `pendingAttach`. The `pendingAttach` branch is triggered
+only when both IOKit events arrive within the same run-loop tick (~5ms),
+which requires a phone-side MTP reset (screen sleep, power event) rather
+than a deliberate mode switch. This test validates recovery behaviour; it
+does not exercise the exact code path added by the fix.
+
 ### Bridge standalone
 
 ```bash
