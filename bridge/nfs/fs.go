@@ -1,6 +1,7 @@
 package nfs
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,15 +13,24 @@ import (
 )
 
 // MTPFileSystem implements billy.Filesystem over a live MTP session.
-// Phase 2a: read-only. Write methods return billy.ErrReadOnly.
 type MTPFileSystem struct {
 	session *mtp.Session
 	cache   *downloadCache
+	writes  *writeRegistry
 }
 
-// NewMTPFileSystem creates a new read-only billy.Filesystem backed by an MTP session.
+// NewMTPFileSystem creates a billy.Filesystem backed by an MTP session.
 func NewMTPFileSystem(session *mtp.Session) *MTPFileSystem {
-	return &MTPFileSystem{session: session, cache: newDownloadCache()}
+	return &MTPFileSystem{
+		session: session,
+		cache:   newDownloadCache(),
+		writes:  newWriteRegistry(),
+	}
+}
+
+// Capabilities advertises read+write so go-nfs's WriteCapability check passes.
+func (fs *MTPFileSystem) Capabilities() billy.Capability {
+	return billy.ReadCapability | billy.WriteCapability
 }
 
 // cleanPath converts a go-nfs path (no leading slash, "" for root) to the
@@ -40,16 +50,16 @@ type mtpFileInfo struct {
 	meta *mtp.ObjectMeta
 }
 
-func (fi *mtpFileInfo) Name() string      { return fi.meta.Name }
-func (fi *mtpFileInfo) Size() int64       { return int64(fi.meta.Size) }
+func (fi *mtpFileInfo) Name() string       { return fi.meta.Name }
+func (fi *mtpFileInfo) Size() int64        { return int64(fi.meta.Size) }
 func (fi *mtpFileInfo) ModTime() time.Time { return fi.meta.ModTime }
 func (fi *mtpFileInfo) IsDir() bool        { return fi.meta.IsDir }
 func (fi *mtpFileInfo) Sys() interface{}   { return nil }
 func (fi *mtpFileInfo) Mode() os.FileMode {
 	if fi.meta.IsDir {
-		return os.ModeDir | 0555
+		return os.ModeDir | 0755
 	}
-	return 0444
+	return 0644
 }
 
 // rootFileInfo is returned for Stat("") / Stat(".").
@@ -60,15 +70,18 @@ func (rootFileInfo) Size() int64        { return 0 }
 func (rootFileInfo) ModTime() time.Time { return time.Unix(0, 0) }
 func (rootFileInfo) IsDir() bool        { return true }
 func (rootFileInfo) Sys() interface{}   { return nil }
-func (rootFileInfo) Mode() os.FileMode  { return os.ModeDir | 0555 }
+func (rootFileInfo) Mode() os.FileMode  { return os.ModeDir | 0755 }
 
-// Stat implements billy.Basic. Returns os.ErrNotExist if the path is not on the device.
+// Stat implements billy.Basic. Checks staging area before MTP ObjectMap.
 func (fs *MTPFileSystem) Stat(filename string) (os.FileInfo, error) {
 	p := cleanPath(filename)
 	if p == "/" {
 		return rootFileInfo{}, nil
 	}
-	// Walk ancestor chain to ensure this entry is in the object map.
+	// Check staging first — a file being written is not in ObjectMap yet.
+	if sf := fs.writes.get(p); sf != nil {
+		return sf.stat()
+	}
 	fs.session.EnsureInMap(p)
 	meta, ok := fs.session.Objects.GetByPath(p)
 	if !ok {
@@ -97,18 +110,26 @@ func (fs *MTPFileSystem) ReadDir(path string) ([]os.FileInfo, error) {
 	return infos, nil
 }
 
-// Open implements billy.Basic (read-only open).
+// Open implements billy.Basic.
 func (fs *MTPFileSystem) Open(filename string) (billy.File, error) {
 	return fs.OpenFile(filename, os.O_RDONLY, 0)
 }
 
-// OpenFile implements billy.Basic. Write flags return billy.ErrReadOnly.
+// OpenFile implements billy.Basic.
+// If a staging entry exists for the path, all opens (read or write) use it.
+// Otherwise write flags are not permitted for existing MTP objects.
 func (fs *MTPFileSystem) OpenFile(filename string, flag int, perm os.FileMode) (billy.File, error) {
+	p := cleanPath(filename)
+
+	if sf := fs.writes.get(p); sf != nil {
+		return &stagingHandle{name: filename, sf: sf}, nil
+	}
+
 	const writeMask = os.O_WRONLY | os.O_RDWR | os.O_APPEND | os.O_CREATE | os.O_TRUNC
 	if flag&writeMask != 0 {
 		return nil, billy.ErrReadOnly
 	}
-	p := cleanPath(filename)
+
 	fs.session.EnsureInMap(p)
 	meta, ok := fs.session.Objects.GetByPath(p)
 	if !ok {
@@ -120,19 +141,43 @@ func (fs *MTPFileSystem) OpenFile(filename string, flag int, perm os.FileMode) (
 	return fs.cache.open(meta.Name, meta.ID, fs.session)
 }
 
-// Create always returns billy.ErrReadOnly.
+// Create registers a staging entry and returns a writable billy.File.
+// The file is not sent to MTP until COMMIT.
 func (fs *MTPFileSystem) Create(filename string) (billy.File, error) {
-	return nil, billy.ErrReadOnly
+	p := cleanPath(filename)
+	sf, err := fs.writes.register(p, filename)
+	if err != nil {
+		return nil, err
+	}
+	return &stagingHandle{name: filename, sf: sf}, nil
 }
 
-// Rename always returns billy.ErrReadOnly.
-func (fs *MTPFileSystem) Rename(oldpath, newpath string) error {
-	return billy.ErrReadOnly
+// Rename is not yet implemented (MTP has no native rename; requires copy+delete).
+func (fs *MTPFileSystem) Rename(_, _ string) error {
+	return billy.ErrNotSupported
 }
 
-// Remove always returns billy.ErrReadOnly.
+// Remove deletes an MTP object or discards a staging entry.
 func (fs *MTPFileSystem) Remove(filename string) error {
-	return billy.ErrReadOnly
+	p := cleanPath(filename)
+
+	if sf := fs.writes.delete(p); sf != nil {
+		sf.tmp.Close()
+		os.Remove(sf.tmp.Name())
+		return nil
+	}
+
+	fs.session.EnsureInMap(p)
+	meta, ok := fs.session.Objects.GetByPath(p)
+	if !ok {
+		return os.ErrNotExist
+	}
+	resp := fs.session.Do(mtp.MTPRequest{Op: mtp.OpDelete, ObjectID: meta.ID})
+	if resp.Err != nil {
+		return resp.Err
+	}
+	fs.session.Objects.Remove(p)
+	return nil
 }
 
 // Join implements filepath.Join semantics (required by billy.Basic).
@@ -140,28 +185,66 @@ func (fs *MTPFileSystem) Join(elem ...string) string {
 	return filepath.Join(elem...)
 }
 
-// TempFile always returns billy.ErrNotSupported.
+// TempFile is not supported.
 func (fs *MTPFileSystem) TempFile(dir, prefix string) (billy.File, error) {
 	return nil, billy.ErrNotSupported
 }
 
-// MkdirAll always returns billy.ErrReadOnly.
+// MkdirAll creates a directory on the MTP device, creating ancestors as needed.
 func (fs *MTPFileSystem) MkdirAll(filename string, perm os.FileMode) error {
-	return billy.ErrReadOnly
+	return fs.mkdirAll(cleanPath(filename), perm)
 }
 
-// Symlink always returns billy.ErrNotSupported.
-func (fs *MTPFileSystem) Symlink(target, link string) error {
+func (fs *MTPFileSystem) mkdirAll(p string, perm os.FileMode) error {
+	if p == "/" {
+		return nil
+	}
+	fs.session.EnsureInMap(p)
+	if _, ok := fs.session.Objects.GetByPath(p); ok {
+		return nil
+	}
+	parent := filepath.Dir(p)
+	if err := fs.mkdirAll(parent, perm); err != nil {
+		return err
+	}
+	parentMeta, ok := fs.session.Objects.GetByPath(parent)
+	if !ok {
+		return fmt.Errorf("parent not found after ensure: %s", parent)
+	}
+	dirName := filepath.Base(p)
+	resp := fs.session.Do(mtp.MTPRequest{
+		Op:        mtp.OpCreateFolder,
+		ParentID:  parentMeta.ID,
+		StorageID: parentMeta.StorageID,
+		Name:      dirName,
+	})
+	if resp.Err != nil {
+		return resp.Err
+	}
+	fs.session.Objects.Put(&mtp.ObjectMeta{
+		ID:        resp.ObjectID,
+		ParentID:  parentMeta.ID,
+		StorageID: parentMeta.StorageID,
+		Name:      dirName,
+		Path:      p,
+		IsDir:     true,
+		ModTime:   time.Now(),
+	})
+	return nil
+}
+
+// Symlink is not supported (MTP has no symlinks).
+func (fs *MTPFileSystem) Symlink(_, _ string) error {
 	return billy.ErrNotSupported
 }
 
-// Readlink always returns billy.ErrNotSupported.
-func (fs *MTPFileSystem) Readlink(link string) (string, error) {
+// Readlink is not supported.
+func (fs *MTPFileSystem) Readlink(_ string) (string, error) {
 	return "", billy.ErrNotSupported
 }
 
-// Chroot always returns billy.ErrNotSupported.
-func (fs *MTPFileSystem) Chroot(path string) (billy.Filesystem, error) {
+// Chroot is not supported.
+func (fs *MTPFileSystem) Chroot(_ string) (billy.Filesystem, error) {
 	return nil, billy.ErrNotSupported
 }
 

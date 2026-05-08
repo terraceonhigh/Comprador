@@ -2,7 +2,9 @@ package nfs
 
 import (
 	"context"
+	"log"
 	"net"
+	"strings"
 
 	billy "github.com/go-git/go-billy/v5"
 	gonfs "github.com/willscott/go-nfs"
@@ -26,16 +28,33 @@ func (h *mtpNFSHandler) Mount(_ context.Context, _ net.Conn, _ gonfs.MountReques
 	return gonfs.MountStatusOk, h.fs, []gonfs.AuthFlavor{gonfs.AuthFlavorNull}
 }
 
-// Change returns nil — read-only for Phase 2a. go-nfs returns EROFS for any
-// SETATTR calls that try to modify permissions or ownership.
+// Change returns a no-op billy.Change so that go-nfs's SetFileAttributes.Apply
+// can succeed when macOS sets chmod/mtime on a newly created file.
+// MTP has no Unix permission model; all attribute changes are silently accepted.
 func (h *mtpNFSHandler) Change(_ billy.Filesystem) billy.Change {
-	return nil
+	return noopChange{}
 }
 
 func (h *mtpNFSHandler) FSStat(_ context.Context, _ billy.Filesystem, s *gonfs.FSStat) error {
 	s.TotalSize = h.session.TotalBytes()
 	s.FreeSize = h.session.FreeBytes()
 	s.AvailableSize = h.session.FreeBytes()
+	return nil
+}
+
+// Commit is called when the NFS client issues a COMMIT RPC for the file at
+// path. This is the signal that all WRITE RPCs are done; we flush the staging
+// temp file to MTP here.
+func (h *mtpNFSHandler) Commit(_ context.Context, fs billy.Filesystem, path []string) error {
+	mtpFS, ok := fs.(*MTPFileSystem)
+	if !ok {
+		return nil
+	}
+	mtpPath := cleanPath(strings.Join(path, "/"))
+	if err := mtpFS.writes.commit(mtpPath, mtpFS.session, mtpFS.session.Objects); err != nil {
+		log.Printf("COMMIT %s: %v", mtpPath, err)
+		return err
+	}
 	return nil
 }
 
