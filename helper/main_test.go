@@ -165,3 +165,44 @@ func TestDispatch(t *testing.T) {
 		}
 	}
 }
+
+func TestValidatePort(t *testing.T) {
+	good := []string{"1024", "49152", "65535", "8080"}
+	bad := []string{"", "0", "1023", "65536", "abc", "80", "-1", "99999"}
+	for _, s := range good {
+		if _, err := validatePort(s); err != nil {
+			t.Errorf("expected %q to be valid, got %v", s, err)
+		}
+	}
+	for _, s := range bad {
+		if _, err := validatePort(s); err == nil {
+			t.Errorf("expected %q to be invalid, got nil", s)
+		}
+	}
+}
+
+func TestMountNFSDispatchValidation(t *testing.T) {
+	setupTestHosts(t, "127.0.0.1\tlocalhost\n")
+	cases := []struct {
+		in      string
+		wantOK  bool
+		wantPfx string
+	}{
+		{"MOUNT_NFS", false, "ERR usage:"},
+		{"MOUNT_NFS 80 Pixel-6", false, "ERR port 80"},
+		{"MOUNT_NFS 99999 Pixel-6", false, "ERR port 99999"},
+		{"MOUNT_NFS 49152 bad.name", false, "ERR invalid name"},
+		{"MOUNT_NFS 49152 ", false, "ERR"},
+		{"UNMOUNT_NFS ", false, "ERR"},
+		{"UNMOUNT_NFS bad.name", false, "ERR invalid name"},
+	}
+	for _, c := range cases {
+		got := dispatch(c.in)
+		if c.wantOK && got != "OK" {
+			t.Errorf("dispatch(%q) = %q, wanted OK", c.in, got)
+		}
+		if !c.wantOK && !strings.HasPrefix(got, c.wantPfx) {
+			t.Errorf("dispatch(%q) = %q, wanted prefix %q", c.in, got, c.wantPfx)
+		}
+	}
+}

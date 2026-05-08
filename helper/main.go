@@ -1,16 +1,19 @@
 // Comprador helper — runs as root, edits /etc/hosts within an
 // Comprador-managed block so the bridge can advertise URLs like
-// http://Pixel-6:port/ that NetFS will mount as /Volumes/Pixel-6.
+// http://Pixel-6:port/ that NetFS will mount as /Volumes/Pixel-6,
+// and mounts/unmounts the NFSv3 bridge volume via mount_nfs(8).
 //
 // The unprivileged main app talks to this daemon over a Unix domain socket.
 // The daemon is registered with launchd via SMAppService.daemon, which
 // triggers a single one-time admin approval the first time the app runs.
 //
 // Protocol (line-based, ASCII):
-//     ADD <name>      → 127.0.0.1 <name> appended to managed block
-//     REMOVE <name>   → matching line removed from managed block
-//     CLEAR           → entire managed block removed
-//     PING            → liveness check
+//     ADD <name>              → 127.0.0.1 <name> appended to managed block
+//     REMOVE <name>           → matching line removed from managed block
+//     CLEAR                   → entire managed block removed
+//     PING                    → liveness check
+//     MOUNT_NFS <port> <name> → mount bridge NFS at /Volumes/<name>
+//     UNMOUNT_NFS <name>      → unmount /Volumes/<name> and remove dir
 // Replies: "OK" or "ERR <reason>"
 //
 // `<name>` must match ^[A-Za-z][A-Za-z0-9-]{0,62}$ — single-label DNS names
@@ -24,9 +27,11 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -152,6 +157,33 @@ func dispatch(line string) string {
 			return "ERR " + err.Error()
 		}
 		return "OK"
+	case "MOUNT_NFS":
+		// arg is "<port> <vol-name>"
+		subparts := strings.SplitN(arg, " ", 2)
+		if len(subparts) != 2 {
+			return "ERR usage: MOUNT_NFS <port> <vol-name>"
+		}
+		portStr := strings.TrimSpace(subparts[0])
+		volName := strings.TrimSpace(subparts[1])
+		port, err := validatePort(portStr)
+		if err != nil {
+			return "ERR " + err.Error()
+		}
+		if err := validateName(volName); err != nil {
+			return "ERR " + err.Error()
+		}
+		if err := execMountNFS(port, volName); err != nil {
+			return "ERR " + err.Error()
+		}
+		return "OK"
+	case "UNMOUNT_NFS":
+		if err := validateName(arg); err != nil {
+			return "ERR " + err.Error()
+		}
+		if err := execUnmountNFS(arg); err != nil {
+			return "ERR " + err.Error()
+		}
+		return "OK"
 	default:
 		return "ERR unknown command"
 	}
@@ -161,6 +193,61 @@ func withLock(fn func() error) error {
 	mu.Lock()
 	defer mu.Unlock()
 	return fn()
+}
+
+// validatePort parses portStr as an integer in [1024, 65535].
+func validatePort(portStr string) (int, error) {
+	p, err := strconv.Atoi(portStr)
+	if err != nil {
+		return 0, fmt.Errorf("invalid port %q", portStr)
+	}
+	if p < 1024 || p > 65535 {
+		return 0, fmt.Errorf("port %d out of range [1024, 65535]", p)
+	}
+	return p, nil
+}
+
+// execMountNFS creates /Volumes/<name> and runs mount_nfs against the bridge.
+func execMountNFS(port int, volName string) error {
+	mountPoint := "/Volumes/" + volName
+
+	// Create the mountpoint if absent; error if it already has something mounted.
+	if err := os.MkdirAll(mountPoint, 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", mountPoint, err)
+	}
+
+	opts := fmt.Sprintf("nfsvers=3,tcp,nolocks,port=%d,mountport=%d", port, port)
+	cmd := exec.Command("/sbin/mount_nfs", "-o", opts, "127.0.0.1:/", mountPoint)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("mount_nfs: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	log.Printf("mounted NFS on port %d at %s", port, mountPoint)
+	return nil
+}
+
+// execUnmountNFS unmounts /Volumes/<name> and removes the directory.
+func execUnmountNFS(volName string) error {
+	mountPoint := "/Volumes/" + volName
+
+	cmd := exec.Command("/usr/sbin/diskutil", "unmount", mountPoint)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		// Try force unmount before giving up.
+		cmd2 := exec.Command("/usr/sbin/diskutil", "unmount", "force", mountPoint)
+		out2, err2 := cmd2.CombinedOutput()
+		if err2 != nil {
+			return fmt.Errorf("diskutil unmount force: %w: %s", err2, strings.TrimSpace(string(out2)))
+		}
+	} else {
+		log.Printf("unmounted %s: %s", mountPoint, strings.TrimSpace(string(out)))
+	}
+
+	// Best-effort removal of the now-empty directory so /Volumes stays clean.
+	if err := os.Remove(mountPoint); err != nil && !os.IsNotExist(err) {
+		log.Printf("rmdir %s: %v (non-fatal)", mountPoint, err)
+	}
+	return nil
 }
 
 func validateName(name string) error {

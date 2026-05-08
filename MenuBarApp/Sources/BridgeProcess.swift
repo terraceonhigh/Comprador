@@ -1,12 +1,14 @@
 import Foundation
 import UserNotifications
 
-/// Manages the lifecycle of the Go WebDAV bridge process.
+/// Manages the lifecycle of the Go bridge process (WebDAV or NFS mode).
 class BridgeProcess {
     private var process: Process?
     private(set) var port: Int?
     private(set) var host: String = "127.0.0.1"
     private(set) var deviceName: String?
+    /// "nfs" when bridge was started with --nfs, "webdav" otherwise.
+    private(set) var proto: String = "webdav"
 
     /// Called (on an arbitrary thread) with a short human-readable status
     /// string whenever a key milestone is observed in bridge stderr output.
@@ -16,13 +18,17 @@ class BridgeProcess {
     /// Returns the port number on success.
     /// Throws if the bridge fails to start or doesn't respond within the timeout.
     ///
+    /// If `useNFS` is true the bridge is started with `--nfs` and serves
+    /// NFSv3 instead of WebDAV.  Caller should mount via
+    /// `HelperClient.mountNFS(port:volumeName:)`.
+    ///
     /// If `seizeForVendor` and `seizeForProduct` are non-zero, an IOKit
     /// preflight runs first: seizes exclusive access to the device,
     /// re-enumerates it (USB-level detach/reattach, equivalent to physical
     /// replug), and releases. This is the only reliable way to break the
     /// macOS kernel driver's bind on a class-6 PTP interface so libusb's
     /// claim_interface can succeed on the bridge's first attempt.
-    func start(seizeForVendor: UInt16 = 0, seizeForProduct: UInt16 = 0) async throws -> Int {
+    func start(useNFS: Bool = false, seizeForVendor: UInt16 = 0, seizeForProduct: UInt16 = 0) async throws -> Int {
         let bridgePath = findBridgeBinary()
         guard FileManager.default.fileExists(atPath: bridgePath) else {
             throw BridgeError.binaryNotFound(bridgePath)
@@ -68,6 +74,7 @@ class BridgeProcess {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: bridgePath)
         p.currentDirectoryURL = URL(fileURLWithPath: NSTemporaryDirectory())
+        p.arguments = useNFS ? ["--nfs"] : []
 
         // Ensure libmtp can be found when launched from app bundle
         var env = ProcessInfo.processInfo.environment
@@ -125,8 +132,9 @@ class BridgeProcess {
         self.port = result.port
         self.host = result.host ?? "127.0.0.1"
         self.deviceName = result.device
-        NSLog("Comprador: Bridge ready on %@:%d, device: %@",
-              self.host, result.port, result.device ?? "unknown")
+        self.proto = result.proto ?? "webdav"
+        NSLog("Comprador: Bridge ready — proto=%@, addr=%@:%d, device: %@",
+              self.proto, self.host, result.port, result.device ?? "unknown")
         return result.port
     }
 
@@ -153,6 +161,7 @@ class BridgeProcess {
         process = nil
         port = nil
         deviceName = nil
+        proto = "webdav"
     }
 
     var isRunning: Bool {
@@ -214,14 +223,23 @@ class BridgeProcess {
         var port: Int?
         var host: String?
         var device: String?
+        var proto: String?
         let handle = pipe.fileHandleForReading
         var accumulated = ""
 
-        while port == nil || device == nil || host == nil {
+        // NFS bridge prints PORT, PROTO, DEVICE (no HOST).
+        // WebDAV bridge prints PORT, HOST, DEVICE (no PROTO).
+        // We're done when we have port + device + (host || proto).
+        func isComplete() -> Bool {
+            guard let _ = port, let _ = device else { return false }
+            return host != nil || proto != nil
+        }
+
+        while !isComplete() {
             let data = handle.availableData
             guard !data.isEmpty else {
                 if port != nil {
-                    break // Got port; host/device may have arrived but stream closed
+                    break // stream closed after port — accept what we have
                 }
                 throw BridgeError.exitedEarly
             }
@@ -240,16 +258,20 @@ class BridgeProcess {
                         let name = String(line.dropFirst(7))
                         if !name.isEmpty { device = name }
                     }
+                    if line.hasPrefix("PROTO=") {
+                        let p = String(line.dropFirst(6))
+                        if !p.isEmpty { proto = p }
+                    }
                 }
             }
 
-            // Brief wait for the rest of the metadata to arrive once we have port.
-            if port != nil && (host == nil || device == nil) {
-                try? await Task.sleep(nanoseconds: 150_000_000) // 150ms
+            // Brief wait once port is in — give the rest of the metadata 150ms to arrive.
+            if port != nil && !isComplete() {
+                try? await Task.sleep(nanoseconds: 150_000_000)
             }
         }
 
-        return BridgeStartupInfo(port: port!, host: host, device: device)
+        return BridgeStartupInfo(port: port!, host: host, device: device, proto: proto)
     }
 
     /// Posts a notification telling the user how to recover from a failed
@@ -286,6 +308,7 @@ struct BridgeStartupInfo {
     let port: Int
     let host: String?
     let device: String?
+    let proto: String?
 }
 
 enum BridgeError: LocalizedError, Equatable {

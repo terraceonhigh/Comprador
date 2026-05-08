@@ -74,14 +74,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 menu.addItem(statusLine)
                 connectingStatusItem = statusLine
 
-                // Hint always present during connecting — keeps the menu
-                // structure constant so setConnectStatus never has to rebuild
-                // (a rebuild would leave an open menu showing stale text).
-                // The 90s NetFSMountURLSync wait dominates the cycle anyway.
-                let hint = NSMenuItem(title: "Finder takes about 90 seconds to attach the volume",
-                                      action: nil, keyEquivalent: "")
-                hint.isEnabled = false
-                menu.addItem(hint)
+                // Hint only shown on the WebDAV path where the ~90s
+                // NetFSMountURLSync wait dominates the cycle.  NFS connects
+                // in a few seconds, so the hint would be misleading there.
+                if bridge?.proto != "nfs" {
+                    let hint = NSMenuItem(title: "Finder takes about 90 seconds to attach the volume",
+                                          action: nil, keyEquivalent: "")
+                    hint.isEnabled = false
+                    menu.addItem(hint)
+                }
             }
         } else {
             let noDevice = NSMenuItem(title: "No device connected", action: nil, keyEquivalent: "")
@@ -445,7 +446,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 // Pass the device IDs so BridgeProcess can run the IOKit
                 // preflight (seize + re-enumerate) and break the kernel's
                 // bind on the USB interface before libusb's claim attempt.
+                //
+                // Use NFS mode when the privileged helper is installed: it
+                // eliminates the ~90s WebDAV mount-time wait and removes the
+                // need for resumable-upload bookkeeping.
+                let useNFS = HelperClient.isEnabled
                 let port = try await bp.start(
+                    useNFS: useNFS,
                     seizeForVendor: device.vendorID,
                     seizeForProduct: device.productID
                 )
@@ -467,21 +474,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
 
                 await MainActor.run { setConnectStatus("Mounting…") }
-                let mountedURL = try await mountManager.mount(host: mountHost, port: port, displayName: displayName)
 
-                // Start the resumable-upload companion. It polls the bridge's
-                // /_comprador/sessions endpoint and, when the bridge reports
-                // a chunked-PUT truncation, finds the source file via
-                // NSMetadataQuery and streams the missing tail back through
-                // /_comprador/sessions/<id>/append. The polling itself keeps
-                // the bridge's `companionRegistered` gate open, which is
-                // what allows the bridge to return 200 OK on truncation
-                // (so Finder doesn't show -36) instead of falling back to
-                // the honest error.
-                let bridgeURL = URL(string: "http://\(bp.host):\(port)/")!
-                let companion = ResumeCompanion(bridgeURL: bridgeURL)
-                companion.start()
-                self.resumeCompanion = companion
+                let mountedURL: URL
+                if bp.proto == "nfs" {
+                    // NFS path: helper execs mount_nfs as root.
+                    // No resumable-upload companion needed — NFS writes are
+                    // not subject to WebDAVFS's writeseq cap.
+                    let volName = AppDelegate.sanitizeHostname(displayName)
+                    guard !volName.isEmpty else {
+                        throw MountError.mountFailed(-1)
+                    }
+                    mountedURL = try await mountManager.mountNFS(port: port, volumeName: volName)
+                } else {
+                    // WebDAV path (helper absent or NFS unavailable).
+                    mountedURL = try await mountManager.mount(host: mountHost, port: port, displayName: displayName)
+
+                    // Start the resumable-upload companion. It polls the bridge's
+                    // /_comprador/sessions endpoint and, when the bridge reports
+                    // a chunked-PUT truncation, finds the source file via
+                    // NSMetadataQuery and streams the missing tail back through
+                    // /_comprador/sessions/<id>/append.
+                    let bridgeURL = URL(string: "http://\(bp.host):\(port)/")!
+                    let companion = ResumeCompanion(bridgeURL: bridgeURL)
+                    companion.start()
+                    self.resumeCompanion = companion
+                }
 
                 await MainActor.run {
                     NSLog("Comprador: Device mounted as volume")

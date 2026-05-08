@@ -126,6 +126,20 @@ class MountManager {
         mountPath != nil
     }
 
+    // MARK: - NFS
+
+    /// Mounts the bridge NFS server via the privileged helper.
+    /// The helper execs `mount_nfs` as root; this call returns once the
+    /// mount is confirmed at /Volumes/<volumeName>.
+    func mountNFS(port: Int, volumeName: String) async throws -> URL {
+        NSLog("Comprador: Mounting NFS on port %d as /Volumes/%@", port, volumeName)
+        try HelperClient.mountNFS(port: port, volumeName: volumeName)
+        let mountedURL = URL(fileURLWithPath: "/Volumes/\(volumeName)")
+        self.mountPath = mountedURL
+        NSLog("Comprador: NFS mounted at %@", mountedURL.path)
+        return mountedURL
+    }
+
     /// Force-unmount every WebDAV volume that points at 127.0.0.1 (or a
     /// hostname we've registered). Called at app startup to clear out
     /// stale mounts left behind by a previous crash, kill, or restart —
@@ -143,27 +157,41 @@ class MountManager {
         guard let output = String(data: data, encoding: .utf8) else { return }
 
         for line in output.split(separator: "\n") {
-            // Format: "http://host:port/ on /Volumes/foo (webdav, ...)"
             let s = String(line)
-            guard s.contains("(webdav") else { continue }
-            // Match anything that looks like our bridge: localhost-ish URLs.
-            let isOurs = s.contains("://127.0.0.1:")
-                || s.contains("://localhost:")
-                || s.range(of: #"://[A-Za-z][A-Za-z0-9-]+(\.local)?:[0-9]+/"#, options: .regularExpression) != nil
-            guard isOurs else { continue }
-            guard let onRange = s.range(of: " on "),
-                  let parenRange = s.range(of: " (webdav") else { continue }
-            let mp = String(s[onRange.upperBound..<parenRange.lowerBound])
-            NSLog("Comprador: cleaning up stale mount %@", mp)
 
-            let u = Process()
-            u.executableURL = URL(fileURLWithPath: "/sbin/umount")
-            u.arguments = ["-f", mp]
-            u.standardOutput = FileHandle.nullDevice
-            u.standardError = FileHandle.nullDevice
-            try? u.run()
-            u.waitUntilExit()
+            // WebDAV: "http://host:port/ on /Volumes/foo (webdav, ...)"
+            if s.contains("(webdav") {
+                let isOurs = s.contains("://127.0.0.1:")
+                    || s.contains("://localhost:")
+                    || s.range(of: #"://[A-Za-z][A-Za-z0-9-]+(\.local)?:[0-9]+/"#, options: .regularExpression) != nil
+                guard isOurs else { continue }
+                guard let onRange = s.range(of: " on "),
+                      let parenRange = s.range(of: " (webdav") else { continue }
+                let mp = String(s[onRange.upperBound..<parenRange.lowerBound])
+                NSLog("Comprador: cleaning up stale WebDAV mount %@", mp)
+                forceUnmount(mp)
+                continue
+            }
+
+            // NFS: "127.0.0.1:/ on /Volumes/foo (nfs, ...)"
+            if s.contains("(nfs") && s.hasPrefix("127.0.0.1:/") {
+                guard let onRange = s.range(of: " on "),
+                      let parenRange = s.range(of: " (nfs") else { continue }
+                let mp = String(s[onRange.upperBound..<parenRange.lowerBound])
+                NSLog("Comprador: cleaning up stale NFS mount %@", mp)
+                forceUnmount(mp)
+            }
         }
+    }
+
+    private static func forceUnmount(_ mountPoint: String) {
+        let u = Process()
+        u.executableURL = URL(fileURLWithPath: "/sbin/umount")
+        u.arguments = ["-f", mountPoint]
+        u.standardOutput = FileHandle.nullDevice
+        u.standardError = FileHandle.nullDevice
+        try? u.run()
+        u.waitUntilExit()
     }
 }
 

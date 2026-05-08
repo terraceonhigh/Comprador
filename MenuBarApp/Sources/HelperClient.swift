@@ -104,6 +104,19 @@ enum HelperClient {
         if reply != "OK" { throw HelperError.helperReturned(reply) }
     }
 
+    /// Ask the helper (running as root) to mount the bridge NFS server at
+    /// /Volumes/<volumeName>.  Requires helper to be installed and enabled.
+    static func mountNFS(port: Int, volumeName: String) throws {
+        let reply = try send("MOUNT_NFS \(port) \(volumeName)")
+        if reply != "OK" { throw HelperError.helperReturned(reply) }
+    }
+
+    /// Ask the helper to unmount /Volumes/<volumeName> and remove the dir.
+    static func unmountNFS(volumeName: String) throws {
+        let reply = try send("UNMOUNT_NFS \(volumeName)")
+        if reply != "OK" { throw HelperError.helperReturned(reply) }
+    }
+
     // MARK: - Internals
 
     /// Send one line, read one reply. Opens a fresh connection per call —
