@@ -113,6 +113,13 @@ which requires a phone-side MTP reset (screen sleep, power event) rather
 than a deliberate mode switch. This test validates recovery behaviour; it
 does not exercise the exact code path added by the fix.
 
+**Verified path (use ⚡ Synthetic Flutter in debug builds):** the debug menu
+item fires both calls synchronously on the main thread, reproducing the
+exact race. Verified 2026-05-07 on XQ-BT52 — log showed
+`Reattach while unmount in flight — queuing (entry 19a)` at the same
+millisecond as the flutter, followed by `Device attached` at teardown
+completion, followed by a clean remount. Full pass.
+
 ### Bridge standalone
 
 ```bash
