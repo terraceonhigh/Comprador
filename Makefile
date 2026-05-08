@@ -111,7 +111,7 @@ SWIFT_TARGET := arm64-apple-macosx13.0
 
 app-swiftc: bridge helper
 	@mkdir -p build/swift
-	swiftc -target $(SWIFT_TARGET) -O \
+	swiftc -target $(SWIFT_TARGET) -O -D DEBUG \
 		-framework Cocoa -framework SwiftUI -framework IOKit \
 		-framework DiskArbitration -framework ServiceManagement \
 		-framework UserNotifications \
