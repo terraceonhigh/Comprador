@@ -85,7 +85,13 @@ app-debug: bridge
 	fi
 
 dev: bridge
-	./$(BRIDGE_OUT) 2>&1
+	DYLD_LIBRARY_PATH=/opt/homebrew/lib ./$(BRIDGE_OUT) 2>&1
+
+# Run the NFS bridge directly against a live MTP device.
+# The bridge will print PORT=N and the exact sudo mount command to use.
+# Use this to verify Phase 2/3 NFS behaviour without needing the helper.
+dev-nfs: bridge
+	DYLD_LIBRARY_PATH=/opt/homebrew/lib ./$(BRIDGE_OUT) --nfs 2>&1
 
 run: app-debug
 	@killall $(APP_NAME) 2>/dev/null || true
