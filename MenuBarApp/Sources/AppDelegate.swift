@@ -55,6 +55,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 menu.addItem(NSMenuItem(title: "Eject \(device.displayName)",
                                         action: #selector(ejectDevice),
                                         keyEquivalent: "e"))
+#if DEBUG
+                menu.addItem(NSMenuItem.separator())
+                menu.addItem(NSMenuItem(title: "⚡ Synthetic Flutter",
+                                        action: #selector(syntheticFlutter),
+                                        keyEquivalent: ""))
+#endif
             } else if isConnecting {
                 let connecting = NSMenuItem(title: "Connecting…", action: nil, keyEquivalent: "")
                 connecting.isEnabled = false
@@ -454,6 +460,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             registeredHostname = nil
         }
     }
+
+#if DEBUG
+    /// Fires a synthetic detach+reattach pair synchronously on the main thread,
+    /// reproducing the entry 19a race: handleDeviceDetached queues a teardown Task
+    /// and returns; handleDeviceAttached runs before that Task executes, sees
+    /// isMounted == true, and should queue via pendingAttach rather than discarding.
+    @objc private func syntheticFlutter() {
+        guard let device = connectedDevice else { return }
+        NSLog("Comprador: ⚡ synthetic flutter — firing detach+reattach on \(device.displayName)")
+        handleDeviceDetached(device)
+        handleDeviceAttached(device)
+    }
+#endif
 
     /// Sanitises a friendly device name into a DNS label and asks the
     /// privileged helper to point it at 127.0.0.1 in /etc/hosts. Returns
