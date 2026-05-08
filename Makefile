@@ -128,7 +128,7 @@ app-swiftc: bridge helper
 	$(call BUNDLE_BRIDGE,$(SWIFT_APP))
 	$(call BUNDLE_HELPER,$(SWIFT_APP))
 	codesign --force --deep --sign - \
-		--entitlements MenuBarApp/Comprador.entitlements \
+		--entitlements MenuBarApp/Comprador.debug.entitlements \
 		--options runtime \
 		$(SWIFT_APP)
 	@echo ""
