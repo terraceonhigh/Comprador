@@ -8,6 +8,10 @@ class BridgeProcess {
     private(set) var host: String = "127.0.0.1"
     private(set) var deviceName: String?
 
+    /// Called (on an arbitrary thread) with a short human-readable status
+    /// string whenever a key milestone is observed in bridge stderr output.
+    var onStatusLine: ((String) -> Void)?
+
     /// Starts the bridge binary and waits for it to print PORT=N.
     /// Returns the port number on success.
     /// Throws if the bridge fails to start or doesn't respond within the timeout.
@@ -80,11 +84,22 @@ class BridgeProcess {
         p.standardOutput = stdoutPipe
         p.standardError = stderrPipe
 
-        // Log stderr in background
-        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+        // Log stderr in background and extract status milestones for the menu.
+        stderrPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
-            if !data.isEmpty, let line = String(data: data, encoding: .utf8) {
-                NSLog("Comprador bridge: %@", line.trimmingCharacters(in: .whitespacesAndNewlines))
+            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
+            NSLog("Comprador bridge: %@", text.trimmingCharacters(in: .whitespacesAndNewlines))
+            guard let cb = self?.onStatusLine else { return }
+            for line in text.components(separatedBy: .newlines) {
+                if line.contains("Open attempt") {
+                    cb("Waiting for USB interface…")
+                } else if line.contains("Connected to: ") {
+                    let name = line.components(separatedBy: "Connected to: ").last?
+                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    if !name.isEmpty { cb("Connected to \(name)") }
+                } else if line.contains("Registered mDNS hostname:") || line.contains("Registered hostname") {
+                    cb("Registering hostname…")
+                }
             }
         }
 
