@@ -7,10 +7,15 @@ LIBMTP_DYLIB := /opt/homebrew/opt/libmtp/lib/libmtp.9.dylib
 LIBUSB_DYLIB := /opt/homebrew/opt/libusb/lib/libusb-1.0.0.dylib
 DIST_DIR   := dist
 
+# Build identity stamped into both the Go bridge and the Swift app, so the
+# user can verify "the binary I'm running has the source I think it does."
+# Format: short SHA + "-dirty" if the worktree has uncommitted changes.
+BUILD_ID := $(shell git rev-parse --short HEAD 2>/dev/null)$(shell git diff --quiet 2>/dev/null || echo "-dirty")
+
 .PHONY: bridge helper helper-test app app-debug app-swiftc dev run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
 
 bridge:
-	cd bridge && CGO_CFLAGS="-I$(CURDIR)/bridge/cvendor" CGO_LDFLAGS="-L/opt/homebrew/lib" $(GO) build -o ../$(BRIDGE_OUT) .
+	cd bridge && CGO_CFLAGS="-I$(CURDIR)/bridge/cvendor" CGO_LDFLAGS="-L/opt/homebrew/lib" $(GO) build -ldflags="-X main.BuildID=$(BUILD_ID)" -o ../$(BRIDGE_OUT) .
 
 helper:
 	cd helper && $(GO) build -o ../$(HELPER_OUT) .
@@ -108,14 +113,16 @@ SWIFT_APP    := build/swift/$(APP_NAME).app
 SWIFT_BIN    := build/swift/$(APP_NAME)
 SWIFT_SRC    := $(wildcard MenuBarApp/Sources/*.swift)
 SWIFT_TARGET := arm64-apple-macosx13.0
+BUILD_INFO_SWIFT := build/BuildInfo.swift
 
 app-swiftc: bridge helper
-	@mkdir -p build/swift
-	swiftc -target $(SWIFT_TARGET) -O \
+	@mkdir -p build/swift build
+	@printf 'enum BuildInfo { static let id = "%s" }\n' "$(BUILD_ID)" > $(BUILD_INFO_SWIFT)
+	swiftc -target $(SWIFT_TARGET) -O -D DEBUG \
 		-framework Cocoa -framework SwiftUI -framework IOKit \
 		-framework DiskArbitration -framework ServiceManagement \
 		-framework UserNotifications \
-		-o $(SWIFT_BIN) $(SWIFT_SRC)
+		-o $(SWIFT_BIN) $(SWIFT_SRC) $(BUILD_INFO_SWIFT)
 	@rm -rf $(SWIFT_APP)
 	@mkdir -p $(SWIFT_APP)/Contents/MacOS \
 	          $(SWIFT_APP)/Contents/Resources \
@@ -128,7 +135,7 @@ app-swiftc: bridge helper
 	$(call BUNDLE_BRIDGE,$(SWIFT_APP))
 	$(call BUNDLE_HELPER,$(SWIFT_APP))
 	codesign --force --deep --sign - \
-		--entitlements MenuBarApp/Comprador.entitlements \
+		--entitlements MenuBarApp/Comprador.debug.entitlements \
 		--options runtime \
 		$(SWIFT_APP)
 	@echo ""

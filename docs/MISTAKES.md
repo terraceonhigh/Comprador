@@ -549,19 +549,31 @@ flag only fires *during the initial mount sequence*. Once the mount
 succeeds it's cleared, leaving the post-mount state machine without a
 reattach-during-pending-unmount guard.
 
-**Fix (not yet written):** Two complementary changes are probably needed.
+**Fix (2026-05-07):** `AppDelegate` now tracks `pendingAttach: USBDevice?`.
+When `handleDeviceAttached` fires while `isMounted == true`, it queues the
+device there instead of discarding the event. At the end of the detach
+handler's teardown Task — after `connectedDevice = nil` and icon reset —
+it drains `pendingAttach` by calling `handleDeviceAttached(queued)`.
+`ejectDevice()` clears `pendingAttach` before teardown so a user-initiated
+disconnect doesn't immediately reconnect.
 
-1. The reattach handler should track a `pendingUnmount` flag (or
-   equivalent) — if a reattach arrives while an unmount is in flight,
-   queue the device-attach work for after the unmount completes rather
-   than discarding it.
-2. Even simpler: at the end of every successful unmount, check whether
-   IOKit currently sees a matching device. If yes, synthesise an attach
-   event ourselves to kick the connect path. That handles both this
-   race and the broader "reattach while we're busy" case.
+With the fix, the log reads:
 
-Workaround: physical unplug + replug fires a fresh attach event, which
-breaks the deadlock. Tracked in TODO.md under "Handle detach during
+```
+13:51:51  Mounted at /Volumes/XQ-BT52.local
+13:51:56.108  USB detached — XQ-BT52
+13:51:56.113  USB attached — XQ-BT52
+13:51:56.113  Device detached — XQ-BT52
+13:51:56.113  Device attached — XQ-BT52
+13:51:56.113  Reattach while unmount in flight — queuing (entry 19a)
+13:51:56.113  Unmounting /Volumes/XQ-BT52.local
+13:51:56.115  Stopping bridge (PID 1743)
+[teardown completes]
+13:51:57.400  Device attached — XQ-BT52   ← synthesised from pending queue
+13:51:57.400  [normal mount sequence resumes]
+```
+
+Workaround no longer needed. Tracked in TODO.md under "Handle detach during
 file transfer gracefully (don't hang Finder)" — that entry was filed
 before we'd reproduced this exact race, but the fix is the same shape.
 

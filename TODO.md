@@ -134,7 +134,7 @@
 
 - [ ] Error recovery — detect bridge crash mid-session, auto-restart
 - [ ] Handle detach during file transfer gracefully (don't hang Finder)
-- [ ] **Reattach-during-unmount race leaves Comprador in dead state.**
+- [x] **Reattach-during-unmount race leaves Comprador in dead state.**
       Reproduced 2026-05-06: after a successful mount, a USB
       detach+reattach storm fires within milliseconds (typically
       phone-side: screen sleep, MTP layer flutter). The reattach

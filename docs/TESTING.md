@@ -45,6 +45,81 @@ Prompts you to unplug and replug the phone while monitoring output for
 
 ## Manual Testing
 
+### Entry 19a — reattach-during-unmount race
+
+Verifies that a USB detach+reattach storm arriving while an unmount is in
+flight does not leave Comprador in a dead state (phone plugged in but nothing
+mounted, no further recovery possible without a physical replug).
+
+**Setup:** phone connected and mounted in Finder.
+
+**Trigger:** on the phone, open the USB notification (pull down the shade,
+tap the "Charging this device via USB" / "File Transfer" notification) and
+switch the USB mode to **Charging Only**. Immediately switch it back to
+**File Transfer**. The two taps should be within a second of each other.
+
+This fires a real OS-level detach event followed immediately by a reattach
+— the same sequence as a phone screen sleep or MTP interface flutter,
+reproduced on demand.
+
+**Expected log sequence (pass):**
+
+```
+USB detached — <DeviceName>
+USB attached — <DeviceName>           ← arrives while teardown is in flight
+Reattach while unmount in flight — queuing (entry 19a)
+Unmounting /Volumes/<DeviceName>
+Stopping bridge (PID XXXXX)
+[teardown completes]
+Device attached — <DeviceName>        ← synthesised from pending queue
+[normal mount sequence: bridge → PORT= → mount → Mounted at /Volumes/<DeviceName>]
+```
+
+Phone remounts in Finder without any user action beyond the USB mode switch.
+
+**Regression (fail):**
+
+```
+USB detached — <DeviceName>
+USB attached — <DeviceName>
+Ignoring attach — already mounted     ← old behaviour; device lost forever
+Unmounting /Volumes/<DeviceName>
+Stopping bridge (PID XXXXX)
+[silence]
+```
+
+**Monitoring the log during the test:**
+
+```bash
+# In one terminal — build and run the app (log tees to build/comprador.log)
+make run-swiftc
+
+# In another terminal — watch the log
+tail -f build/comprador.log | grep -E "attach|detach|Unmount|Mounted|queuing|Ignoring"
+```
+
+**Note on the trigger:** the USB mode switch is the most reliable way to
+reproduce the race on demand. Locking the phone screen while connected
+sometimes works too, but is phone-model-dependent. A slow unplug+replug
+does *not* reproduce this race — it fires a full detach with nothing
+in-flight, which was always handled correctly.
+
+**Timing caveat (observed on XQ-BT52):** a manual mode switch produces a
+~430ms detach-to-reattach gap, long enough for teardown to complete before
+the attach arrives. The app recovers correctly via the normal connect path
+rather than via `pendingAttach`. The `pendingAttach` branch is triggered
+only when both IOKit events arrive within the same run-loop tick (~5ms),
+which requires a phone-side MTP reset (screen sleep, power event) rather
+than a deliberate mode switch. This test validates recovery behaviour; it
+does not exercise the exact code path added by the fix.
+
+**Verified path (use ⚡ Synthetic Flutter in debug builds):** the debug menu
+item fires both calls synchronously on the main thread, reproducing the
+exact race. Verified 2026-05-07 on XQ-BT52 — log showed
+`Reattach while unmount in flight — queuing (entry 19a)` at the same
+millisecond as the flutter, followed by `Device attached` at teardown
+completion, followed by a clean remount. Full pass.
+
 ### Bridge standalone
 
 ```bash
