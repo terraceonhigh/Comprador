@@ -447,10 +447,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 // preflight (seize + re-enumerate) and break the kernel's
                 // bind on the USB interface before libusb's claim attempt.
                 //
-                // Use NFS mode when the privileged helper is installed: it
-                // eliminates the ~90s WebDAV mount-time wait and removes the
-                // need for resumable-upload bookkeeping.
-                let useNFS = HelperClient.isEnabled
+                // NFS is now the default mount path. The privileged helper
+                // is no longer a gate: macOS allows unprivileged
+                // `mount -t nfs` to localhost (verified 2026-05-08), so
+                // MountManager.mountNFS shells out to /sbin/mount directly
+                // and the helper layer is vestigial for the mount path.
+                // Eliminates the ~90s WebDAV mount-time wait unconditionally.
+                let useNFS = true
                 let port = try await bp.start(
                     useNFS: useNFS,
                     seizeForVendor: device.vendorID,

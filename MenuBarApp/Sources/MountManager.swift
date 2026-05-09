@@ -128,16 +128,71 @@ class MountManager {
 
     // MARK: - NFS
 
-    /// Mounts the bridge NFS server via the privileged helper.
-    /// The helper execs `mount_nfs` as root; this call returns once the
-    /// mount is confirmed at /Volumes/<volumeName>.
+    /// Mounts the bridge NFS server using the unprivileged `mount(8)`
+    /// path. macOS allows `mount -t nfs` from a non-root user when the
+    /// target server is on localhost; the kernel adds `nodev,nosuid`
+    /// flags automatically. Verified empirically 2026-05-08:
+    ///
+    ///     mount -t nfs -o port=N,mountport=N,nfsvers=3,nolocks,tcp \
+    ///       localhost:/ /private/tmp/probe
+    ///     # rc=0; mount table shows "mounted by terrace"
+    ///
+    /// This bypasses the privileged-helper layer entirely. The helper
+    /// (and SMAppService.daemon registration) used to exist purely to
+    /// launder root for `mount_nfs`; with this discovery they are
+    /// vestigial for the NFS path and should not be invoked.
+    ///
+    /// The `/Volumes` directory is not user-writable on modern macOS
+    /// (drwxr-xr-x root:wheel), so we mount under the user's
+    /// Application Support tree instead. Finder still surfaces the
+    /// mount as a Locations sidebar entry; the volume label shows as
+    /// the mountpoint's parent name rather than `/Volumes/<phone>`,
+    /// which is a cosmetic difference we accept.
     func mountNFS(port: Int, volumeName: String) async throws -> URL {
-        NSLog("Comprador: Mounting NFS on port %d as /Volumes/%@", port, volumeName)
-        try HelperClient.mountNFS(port: port, volumeName: volumeName)
-        let mountedURL = URL(fileURLWithPath: "/Volumes/\(volumeName)")
-        self.mountPath = mountedURL
-        NSLog("Comprador: NFS mounted at %@", mountedURL.path)
-        return mountedURL
+        let baseDir = try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        ).appendingPathComponent("Comprador").appendingPathComponent("Volumes")
+        try FileManager.default.createDirectory(at: baseDir,
+                                                withIntermediateDirectories: true)
+        let mountpoint = baseDir.appendingPathComponent(volumeName)
+        // Mountpoint must exist and be empty; recreate if stale.
+        try? FileManager.default.removeItem(at: mountpoint)
+        try FileManager.default.createDirectory(at: mountpoint,
+                                                withIntermediateDirectories: false)
+
+        NSLog("Comprador: Mounting NFS on port %d at %@", port, mountpoint.path)
+
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/sbin/mount")
+        p.arguments = [
+            "-t", "nfs",
+            "-o", "port=\(port),mountport=\(port),nfsvers=3,nolocks,tcp",
+            "localhost:/",
+            mountpoint.path,
+        ]
+        let errPipe = Pipe()
+        p.standardError = errPipe
+        p.standardOutput = FileHandle.nullDevice
+        try p.run()
+        p.waitUntilExit()
+
+        if p.terminationStatus != 0 {
+            let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+            let errMsg = String(data: errData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            NSLog("Comprador: mount(8) failed with status %d: %@",
+                  p.terminationStatus, errMsg)
+            // Best-effort cleanup of the empty mountpoint we created.
+            try? FileManager.default.removeItem(at: mountpoint)
+            throw MountError.mountFailed(p.terminationStatus)
+        }
+
+        self.mountPath = mountpoint
+        NSLog("Comprador: NFS mounted at %@", mountpoint.path)
+        return mountpoint
     }
 
     /// Force-unmount every WebDAV volume that points at 127.0.0.1 (or a
@@ -173,8 +228,11 @@ class MountManager {
                 continue
             }
 
-            // NFS: "127.0.0.1:/ on /Volumes/foo (nfs, ...)"
-            if s.contains("(nfs") && s.hasPrefix("127.0.0.1:/") {
+            // NFS: "localhost:/ on .../Comprador/Volumes/foo (nfs, ...)"
+            // or "127.0.0.1:/ on /Volumes/foo (nfs, ...)" for legacy
+            // helper-driven mounts left over from older builds.
+            if s.contains("(nfs") &&
+               (s.hasPrefix("127.0.0.1:/") || s.hasPrefix("localhost:/")) {
                 guard let onRange = s.range(of: " on "),
                       let parenRange = s.range(of: " (nfs") else { continue }
                 let mp = String(s[onRange.upperBound..<parenRange.lowerBound])
