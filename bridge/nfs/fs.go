@@ -2,6 +2,7 @@ package nfs
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,12 +21,18 @@ type MTPFileSystem struct {
 }
 
 // NewMTPFileSystem creates a billy.Filesystem backed by an MTP session.
+// The write registry is wired with an idle-flush callback that uploads
+// staged writes to MTP when an entry has been quiet for idleFlushInterval.
 func NewMTPFileSystem(session *mtp.Session) *MTPFileSystem {
-	return &MTPFileSystem{
-		session: session,
-		cache:   newDownloadCache(),
-		writes:  newWriteRegistry(),
-	}
+	fs := &MTPFileSystem{session: session, cache: newDownloadCache()}
+	fs.writes = newWriteRegistry(func(mtpPath string) {
+		if err := fs.writes.commit(mtpPath, fs.session, fs.session.Objects); err != nil {
+			log.Printf("idle-flush %s: %v", mtpPath, err)
+		} else {
+			log.Printf("idle-flush %s: committed", mtpPath)
+		}
+	})
+	return fs
 }
 
 // Capabilities advertises read+write so go-nfs's WriteCapability check passes.
@@ -152,9 +159,118 @@ func (fs *MTPFileSystem) Create(filename string) (billy.File, error) {
 	return &stagingHandle{name: filename, sf: sf}, nil
 }
 
-// Rename is not yet implemented (MTP has no native rename; requires copy+delete).
-func (fs *MTPFileSystem) Rename(_, _ string) error {
-	return billy.ErrNotSupported
+// Rename moves a file. Two paths:
+//
+//   - Fast path (Finder atomic-copy): source is still in the staging
+//     registry because Finder writes ".tmpXXXX" then renames before our
+//     idle timer fires. Re-key the staging entry under the new name; the
+//     timer commits to MTP at the destination name.
+//
+//   - Slow path: source is already on MTP. Copy the bytes through a
+//     temp file (libmtp has no partial read), OpSendFile under the new
+//     name, OpDelete the source. Directory rename is not supported in
+//     this cut.
+//
+// MTP itself has no rename op, so this is fundamentally copy + delete on
+// the slow path.
+func (fs *MTPFileSystem) Rename(oldpath, newpath string) error {
+	oldP := cleanPath(oldpath)
+	newP := cleanPath(newpath)
+	if oldP == newP {
+		return nil
+	}
+
+	// Fast path: staging-resident source.
+	if fs.writes.rekey(oldP, newP, strings.TrimPrefix(newpath, "/")) {
+		return nil
+	}
+
+	// Slow path: MTP-resident source.
+	fs.session.EnsureInMap(oldP)
+	srcMeta, ok := fs.session.Objects.GetByPath(oldP)
+	if !ok {
+		return os.ErrNotExist
+	}
+	if srcMeta.IsDir {
+		return fmt.Errorf("rename of directories not supported in this build")
+	}
+
+	destParent := cleanPath(filepath.Dir(strings.TrimPrefix(newpath, "/")))
+	fs.session.EnsureInMap(destParent)
+	parentMeta, ok := fs.session.Objects.GetByPath(destParent)
+	if !ok {
+		return os.ErrNotExist
+	}
+
+	// POSIX rename overwrites an existing destination.
+	if existing, ok := fs.session.Objects.GetByPath(newP); ok {
+		resp := fs.session.Do(mtp.MTPRequest{Op: mtp.OpDelete, ObjectID: existing.ID})
+		if resp.Err != nil {
+			return fmt.Errorf("rename: delete existing destination: %w", resp.Err)
+		}
+		fs.session.Objects.Remove(newP)
+	}
+
+	tmp, err := os.CreateTemp("", "comprador-rename-*")
+	if err != nil {
+		return fmt.Errorf("rename: temp file: %w", err)
+	}
+	defer func() {
+		tmp.Close()
+		os.Remove(tmp.Name())
+	}()
+
+	getResp := fs.session.Do(mtp.MTPRequest{Op: mtp.OpGetFile, ObjectID: srcMeta.ID, Writer: tmp})
+	if getResp.Err != nil {
+		return fmt.Errorf("rename: read source: %w", getResp.Err)
+	}
+	if _, err := tmp.Seek(0, 0); err != nil {
+		return fmt.Errorf("rename: seek temp: %w", err)
+	}
+
+	fileName := filepath.Base(newP)
+	sendResp := fs.session.Do(mtp.MTPRequest{
+		Op:        mtp.OpSendFile,
+		ParentID:  parentMeta.ID,
+		StorageID: parentMeta.StorageID,
+		Name:      fileName,
+		Size:      srcMeta.Size,
+		Reader:    tmp,
+	})
+	if sendResp.Err != nil {
+		return fmt.Errorf("rename: write destination: %w", sendResp.Err)
+	}
+
+	delResp := fs.session.Do(mtp.MTPRequest{Op: mtp.OpDelete, ObjectID: srcMeta.ID})
+	if delResp.Err != nil {
+		// Source delete failed; we have the file at both ends. Update the
+		// map for the destination so subsequent ops see it; the source
+		// remains visible until next session refresh.
+		fs.session.Objects.Put(&mtp.ObjectMeta{
+			ID:        sendResp.ObjectID,
+			ParentID:  parentMeta.ID,
+			StorageID: parentMeta.StorageID,
+			Name:      fileName,
+			Path:      newP,
+			Size:      srcMeta.Size,
+			ModTime:   time.Now(),
+			IsDir:     false,
+		})
+		return fmt.Errorf("rename: delete source after copy: %w", delResp.Err)
+	}
+
+	fs.session.Objects.Remove(oldP)
+	fs.session.Objects.Put(&mtp.ObjectMeta{
+		ID:        sendResp.ObjectID,
+		ParentID:  parentMeta.ID,
+		StorageID: parentMeta.StorageID,
+		Name:      fileName,
+		Path:      newP,
+		Size:      srcMeta.Size,
+		ModTime:   time.Now(),
+		IsDir:     false,
+	})
+	return nil
 }
 
 // Remove deletes an MTP object or discards a staging entry.
