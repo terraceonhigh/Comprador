@@ -173,6 +173,17 @@ In execution order:
 
 Tracked here so they don't get lost, not implemented in this cut:
 
+- **Reflect phone-side changes in Finder** (v0.3.3 candidate). When a
+  user deletes/renames/creates a file on the phone *itself* (e.g. via
+  the phone's Files app while Comprador is mounted), the bridge's
+  ObjectMap doesn't know — only bridge-initiated ops update the map.
+  NFSv3 has no server-push callback (NFSv4 does); the protocol-level
+  fix is to expire ObjectMap entries on a TTL and re-enumerate from
+  MTP on `EnsurePopulated`/`ListChildren` when the entry is stale.
+  Two-second TTL would catch most user-perceived staleness without
+  thrashing MTP. Cost: every directory listing pays one MTP enumerate
+  per N seconds.
+- Strip `<DeviceName>.local` `.local` suffix from Finder sidebar label
 - Filter `._xattr` / `.AppleDouble` companions before MTP commit
 - Refresh `FSStat` free bytes after each commit
 - Map MTP mtime → NFS ModTime properly
@@ -180,3 +191,5 @@ Tracked here so they don't get lost, not implemented in this cut:
 - SD-card / multi-storage device support
 - Upstream the go-nfs `unstable` patch to willscott/go-nfs
 - Quick Look hazard mitigation (carryover from WebDAV findings)
+- CI: `workflow_dispatch` trigger + smoke-test launch step
+  (per `docs/BUILDING.md` § "CI pipeline: where it bit us")
