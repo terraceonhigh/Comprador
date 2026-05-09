@@ -13,7 +13,7 @@ DIST_DIR   := dist
 # Format: short SHA + "-dirty" if the worktree has uncommitted changes.
 BUILD_ID := $(shell git rev-parse --short HEAD 2>/dev/null)$(shell git diff --quiet 2>/dev/null || echo "-dirty")
 
-.PHONY: bridge helper helper-test nfs-stub app app-debug app-signed app-swiftc dev dev-nfs run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
+.PHONY: bridge helper helper-test nfs-stub app app-debug app-signed app-notarized app-swiftc dev dev-nfs run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
 
 bridge:
 	cd bridge && CGO_CFLAGS="-I$(CURDIR)/bridge/cvendor" CGO_LDFLAGS="-L/opt/homebrew/lib" $(GO) build -ldflags="-X main.BuildID=$(BUILD_ID)" -o ../$(BRIDGE_OUT) .
@@ -227,6 +227,35 @@ app-signed: dist-swiftc
 	@echo ""
 	@echo "Install with:"
 	@echo "  killall Comprador 2>/dev/null; sudo rm -rf /Applications/$(APP_NAME).app && sudo cp -R $(DIST_DIR)/$(APP_NAME).app /Applications/"
+
+# Local notarization. Submits the Developer-ID-signed app to Apple's
+# notary service, waits for the verdict, then staples the ticket so
+# the .app passes Gatekeeper offline.
+#
+# One-time setup before first use:
+#   xcrun notarytool store-credentials notarytool-password \
+#     --apple-id terrace@terrace.zone \
+#     --team-id 5875SC35WL
+# (it'll prompt for an app-specific password from appleid.apple.com)
+#
+# Total wall time: ~5 min (depends on Apple notary queue).
+app-notarized: app-signed
+	@echo "Zipping for notarytool submission..."
+	@rm -f $(DIST_DIR)/$(APP_NAME).zip
+	@cd $(DIST_DIR) && /usr/bin/ditto -c -k --keepParent $(APP_NAME).app $(APP_NAME).zip
+	@echo "Submitting to Apple notary (this may take a few minutes)..."
+	@xcrun notarytool submit $(DIST_DIR)/$(APP_NAME).zip \
+	  --keychain-profile notarytool-password \
+	  --wait
+	@echo "Stapling ticket to .app..."
+	@xcrun stapler staple $(DIST_DIR)/$(APP_NAME).app
+	@xcrun stapler validate $(DIST_DIR)/$(APP_NAME).app
+	@echo ""
+	@echo "=== Notarized app ready ==="
+	@echo "  $(DIST_DIR)/$(APP_NAME).app"
+	@echo ""
+	@echo "Install with:"
+	@echo "  killall Comprador 2>/dev/null; rm -rf /Applications/$(APP_NAME).app && cp -R $(DIST_DIR)/$(APP_NAME).app /Applications/"
 
 # Build a drag-to-Applications .dmg from the existing dist-swiftc output.
 # Uses macOS's built-in hdiutil — no extra tooling. The DMG is a 100MB
