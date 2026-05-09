@@ -605,3 +605,9 @@ When the original libmtp binding and this project's binding differ, prefer
 the approach that keeps all MTP calls on the session goroutine, even if
 it means more channel overhead. Correctness over performance in the
 binding layer.
+
+---
+
+## Pre-Launch Checklist
+
+- [ ] Logo needed before public release
