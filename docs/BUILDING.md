@@ -203,3 +203,157 @@ make run
 - **Not notarized**: The app is ad-hoc signed. First launch requires
   right-click → Open to bypass Gatekeeper. Notarization requires an
   Apple Developer account ($99/year).
+
+## The build chain that shipped v0.3.0
+
+Recorded for future-us to deliberate on which targets are still earning
+their keep. Captured 2026-05-09 after the helper-free NFS architecture
+was verified end-to-end on `gala`.
+
+### One command, what it does
+
+A single invocation produces the install-ready bundle:
+
+```bash
+make app-signed
+```
+
+Resolved in dependency order, this is what runs:
+
+1. **`make bridge`** — `cd bridge && CGO_CFLAGS=... CGO_LDFLAGS="-L/opt/homebrew/lib"
+   go build -ldflags="-X main.BuildID=<git SHA>" -o build/bridge .`
+   Produces the Go bridge binary, ~10 MB, linked against Homebrew's
+   libmtp/libusb at their `/opt/homebrew/...` install paths.
+
+2. **`make helper`** — `cd helper && go build -o build/comprador-helper .`
+   Produces the privileged-helper binary. **Vestigial after the
+   2026-05-08 refactor; the NFS path no longer invokes it.** It still
+   gets bundled into the .app for legacy WebDAV cosmetics (`/etc/hosts`
+   hostname rename) and to keep the bundle layout stable across the
+   v0.2.x → v0.3.0 transition. **Cull candidate** for v0.4.0 once the
+   WebDAV path is fully retired.
+
+3. **`make app-swiftc`** — pure-`swiftc` Swift app build (no Xcode), then
+   bundle assembly:
+   - Generate `build/BuildInfo.swift` with the BUILD_ID baked in
+   - `swiftc` the Swift sources → `build/swift/Comprador`
+   - Create `build/swift/Comprador.app/Contents/{MacOS,Resources,Frameworks,Library/LaunchDaemons}`
+   - Copy the Swift binary, `Info.plist`, `VendorIDs.plist`, write `PkgInfo`
+   - **`BUNDLE_BRIDGE` macro:** copy `build/bridge` →
+     `Contents/Resources/bridge`, copy libmtp/libusb dylibs →
+     `Contents/Frameworks/`, `install_name_tool -change` to rewrite
+     load-paths from `/opt/homebrew/...` to
+     `@executable_path/../Frameworks/...`, then `codesign --force --sign -`
+     (ad-hoc) each binary. **The libusb `install_name_tool -change` on
+     the bridge itself was added 2026-05-08 after a hardened-runtime
+     cdhash mismatch broke loading; without it, the bundled libusb is
+     rejected at dlopen time on Developer-ID-signed builds.**
+   - **`BUNDLE_HELPER` macro:** copy `build/comprador-helper` →
+     `Contents/MacOS/comprador-helper`, copy
+     `helper/com.comprador.helper.plist` →
+     `Contents/Library/LaunchDaemons/`, ad-hoc sign. **Also cull
+     candidate** alongside the helper binary itself.
+   - Final `codesign --force --deep --sign - --entitlements
+     MenuBarApp/Comprador.debug.entitlements --options runtime` on the
+     bundle. Debug entitlements omit
+     `com.apple.developer.system-extension.install` (which would require
+     a provisioning profile).
+
+4. **`make dist-swiftc`** — `rm -rf dist/`, copy
+   `build/swift/Comprador.app` to `dist/Comprador.app`, zip into
+   `dist/Comprador.zip`. The zip is only used by the `notarytool`
+   submission flow; for local install the `.app` directory in `dist/`
+   is what we install.
+
+5. **`make app-signed`** — re-signs everything in `dist/Comprador.app`
+   with the local Developer ID Application certificate. Ordering is
+   deepest-first per Apple's guidance:
+   - `codesign --force --options runtime --timestamp --sign "Developer ID..."`
+     on each of `Frameworks/libmtp.9.dylib`,
+     `Frameworks/libusb-1.0.0.dylib`, `Resources/bridge`,
+     `MacOS/comprador-helper`
+   - Then `codesign ... --entitlements Comprador.debug.entitlements ...
+     <bundle>`
+   - Verify: `codesign --verify --strict --verbose=2 <bundle>`
+
+   `--timestamp` requires network access to Apple's timestamp authority.
+
+### Install over the existing `/Applications/Comprador.app`
+
+```bash
+killall Comprador 2>/dev/null   # quit any running instance
+umount "$HOME/Library/Application Support/Comprador/Volumes/"*  # release any active NFS mount
+rm -rf /Applications/Comprador.app
+cp -R dist/Comprador.app /Applications/Comprador.app
+```
+
+No `sudo` required — `/Applications` is user-writable for app installs
+in standard macOS configurations.
+
+### Launch (CLI for stderr capture, useful during dev)
+
+```bash
+/Applications/Comprador.app/Contents/MacOS/Comprador
+```
+
+Or normal-launch by clicking the app in Finder / Spotlight.
+
+### Optional: notarize before installing
+
+If a fresh install on a *different* Mac is needed and Gatekeeper-clean
+is required, run `make app-notarized` instead of `make app-signed`. This
+appends:
+
+6. `ditto -c -k --keepParent dist/Comprador.app dist/Comprador.zip`
+7. `xcrun notarytool submit dist/Comprador.zip --keychain-profile
+   notarytool-password --wait` (3–5 minute wall clock, depends on Apple
+   notary queue)
+8. `xcrun stapler staple dist/Comprador.app`
+9. `xcrun stapler validate dist/Comprador.app`
+
+Requires a one-time `xcrun notarytool store-credentials
+notarytool-password --apple-id <id> --team-id <team>` setup.
+**Empirically (2026-05-08) notarization is *not* required for the
+SMAppService daemon path on macOS Sequoia — the helper-launch issue we
+spent six hours diagnosing turned out to be unrelated. Notarization
+remains the right answer for distribution-grade builds (Gatekeeper
+trust on fresh machines), but is not load-bearing for
+local-development trust.**
+
+### Summary: targets currently in use vs vestigial
+
+| Target | Used in v0.3.0 ship path? | Notes |
+|---|---|---|
+| `bridge` | ✓ | Core Go binary |
+| `helper` | partial | Bundled but not invoked on NFS path; legacy WebDAV cosmetic only |
+| `helper-test` | ✓ (CI) | Unit tests for the helper RPC protocol |
+| `nfs-stub` | × | Phase 1 verification artifact; superseded; cull candidate |
+| `app` | × | Xcode auto-provisioning fails locally without a development cert |
+| `app-debug` | × | Same auto-provisioning failure |
+| `app-swiftc` | ✓ (transitively) | Foundation for `dist-swiftc` / `app-signed` |
+| `app-signed` | ✓ | The ship-path target |
+| `app-notarized` | optional | Use for fresh-install distribution |
+| `dev` | dev only | WebDAV bridge standalone |
+| `dev-nfs` | dev only | NFS bridge standalone — used heavily during pivot verification |
+| `run` | × | Depends on broken `app-debug`; cull candidate |
+| `run-swiftc` | dev only | Build + launch with stderr capture |
+| `dist` | × | Xcode-based; same auto-provisioning failure |
+| `dist-swiftc` | ✓ (transitively) | Stages the app into `dist/` for re-signing |
+| `dist-dmg` | possibly | Used by CI; verify before shipping |
+| `clean` | ✓ | |
+| `reset-onboarding` | dev only | Clears the first-launch flag |
+
+**Cull candidates for the next housekeeping pass:** `nfs-stub`, `run`,
+`app`, `app-debug`, `dist` (all the Xcode-based targets that fail
+locally), and possibly `helper` + `BUNDLE_HELPER` once the WebDAV path
+is fully retired.
+
+### Open polish item carried into v0.3.1
+
+The Finder Locations sidebar entry shows `<DeviceName>.local` (e.g.
+`XQ-BT52.local`) because the NFS mount source is the bridge's
+mDNS-registered hostname. Stripping the `.local` suffix would require
+either re-introducing a privileged path for `/etc/hosts` editing
+(reversing the helper-free simplification) or switching from
+`/sbin/mount` to `NetFSMountURLAsync` and probing whether NetFS exposes
+a volume-name override for NFS URLs. Tracked but not gating ship.
