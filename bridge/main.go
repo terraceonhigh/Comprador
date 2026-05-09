@@ -56,16 +56,31 @@ func main() {
 	}()
 
 	if *useNFS {
+		// Register a per-device .local hostname that resolves to
+		// 127.0.0.1 via mDNS. NetFS / mount(8) display the source's
+		// hostname in Finder's Locations sidebar, so mounting via
+		// `XQ-BT52.local:/` gets the user a sidebar entry named
+		// "XQ-BT52.local" (or "XQ-BT52" — macOS strips the suffix in
+		// some views) instead of the bare "localhost".
+		host := "localhost"
+		if hostReg, err := mtp.RegisterHostname(deviceName, port); err != nil {
+			log.Printf("Hostname registration failed (mount source will be 'localhost'): %v", err)
+		} else {
+			host = hostReg.Hostname
+			defer hostReg.Stop()
+		}
+
 		fmt.Fprintf(os.Stdout, "PORT=%d\n", port)
+		fmt.Fprintf(os.Stdout, "HOST=%s\n", host)
 		fmt.Fprintf(os.Stdout, "PROTO=nfs\n")
 		fmt.Fprintf(os.Stdout, "DEVICE=%s\n", deviceName)
 		os.Stdout.Sync()
 
-		log.Printf("NFSv3 server listening on 127.0.0.1:%d", port)
+		log.Printf("NFSv3 server listening on 127.0.0.1:%d (mDNS host: %s)", port, host)
 		log.Printf("Mount command:")
 		log.Printf("  mkdir -p /tmp/comprador")
-		log.Printf("  sudo mount -o port=%d,mountport=%d,nfsvers=3,nolocks,tcp -t nfs localhost:/ /tmp/comprador", port, port)
-		log.Printf("Unmount: sudo umount /tmp/comprador")
+		log.Printf("  mount -o port=%d,mountport=%d,nfsvers=3,nolocks,tcp -t nfs %s:/ /tmp/comprador", port, port, host)
+		log.Printf("Unmount: umount /tmp/comprador")
 
 		if err := nfsbridge.Serve(listener, session); err != nil {
 			log.Printf("NFS server stopped: %v", err)

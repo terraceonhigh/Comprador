@@ -18,13 +18,32 @@ import (
 // When go-nfs issues CREATE it adds an entry; on COMMIT the entry is flushed
 // to MTP and removed. Concurrent WRITE RPCs share the same temp file via
 // stagingHandle.WriteAt, which is concurrency-safe on *os.File.
+//
+// macOS NFSv3 clients do not reliably send COMMIT RPCs (verified empirically
+// 2026-05-08: writes sit dirty across sync, fsync, and graceful unmount).
+// We therefore arm a per-entry idle timer on every WRITE; if no further
+// writes arrive within idleFlushInterval, the registry flushes to MTP on
+// its own. An explicit client COMMIT preempts the timer.
 type writeRegistry struct {
 	mu      sync.Mutex
 	pending map[string]*stagingFile // keyed by MTP path ("/storage/dir/file")
+	flush   func(mtpPath string)    // commits a single staging entry; never blocks the caller
+	idle    time.Duration
 }
 
-func newWriteRegistry() *writeRegistry {
-	return &writeRegistry{pending: make(map[string]*stagingFile)}
+// idleFlushInterval is how long the registry waits after the last WRITE
+// before assuming the writer is done and flushing to MTP. Tuned to be
+// long enough that a multi-WRITE upload doesn't get split mid-stream
+// (macOS sends WRITEs roughly every few ms during a copy) but short
+// enough that the user perceives the file as "saved" promptly.
+const idleFlushInterval = 2 * time.Second
+
+func newWriteRegistry(flush func(mtpPath string)) *writeRegistry {
+	return &writeRegistry{
+		pending: make(map[string]*stagingFile),
+		flush:   flush,
+		idle:    idleFlushInterval,
+	}
 }
 
 func (r *writeRegistry) get(mtpPath string) *stagingFile {
@@ -42,10 +61,60 @@ func (r *writeRegistry) register(mtpPath, billyPath string) (*stagingFile, error
 		return nil, err
 	}
 	sf := &stagingFile{tmp: tmp, billyPath: billyPath}
+	// Timer is created stopped. Each Write resets it; idle expiry triggers flush.
+	sf.timer = time.AfterFunc(r.idle, func() { r.flush(mtpPath) })
+	sf.timer.Stop()
 	r.mu.Lock()
 	r.pending[mtpPath] = sf
 	r.mu.Unlock()
 	return sf, nil
+}
+
+// touch resets the idle-flush timer for sf. Called by stagingHandle.Write
+// after every successful write. Safe to call concurrently from multiple
+// WRITE RPC goroutines.
+func (sf *stagingFile) touch(idle time.Duration) {
+	if sf.timer != nil {
+		sf.timer.Reset(idle)
+	}
+}
+
+// bumpDirMtime sets a directory's ModTime to now. NFSv3 clients
+// invalidate their cached READDIR results when a GETATTR on the parent
+// directory shows a newer mtime than the cached value, so calling this
+// after any directory-mutating op (commit, delete, rename) makes Finder
+// re-enumerate within seconds rather than waiting on the client's
+// natural attribute-cache TTL. No-op if dir is nil.
+func bumpDirMtime(dir *mtp.ObjectMeta, objects *mtp.ObjectMap) {
+	if dir == nil {
+		return
+	}
+	dir.ModTime = time.Now()
+	objects.Put(dir)
+}
+
+// rekey moves a staging entry from oldPath to newPath. Used by fs.Rename
+// when Finder renames a freshly-written ".tmpXXXX" temp to its final name
+// before the idle-flush timer fires for the temp. Returns true if there
+// was an entry at oldPath; the caller should treat false as "source isn't
+// in staging — fall back to MTP-side copy+delete." The timer is rebuilt
+// to flush under newPath; it starts armed so a Finder rename followed by
+// no further writes still commits in idleFlushInterval.
+func (r *writeRegistry) rekey(oldPath, newPath, newBillyPath string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	sf, ok := r.pending[oldPath]
+	if !ok {
+		return false
+	}
+	delete(r.pending, oldPath)
+	if sf.timer != nil {
+		sf.timer.Stop()
+	}
+	sf.billyPath = newBillyPath
+	sf.timer = time.AfterFunc(r.idle, func() { r.flush(newPath) })
+	r.pending[newPath] = sf
+	return true
 }
 
 // delete removes a staging entry and returns it (nil if not found).
@@ -59,7 +128,8 @@ func (r *writeRegistry) delete(mtpPath string) *stagingFile {
 
 type stagingFile struct {
 	tmp       *os.File
-	billyPath string // as passed to Create, e.g. "Internal storage/DCIM/photo.jpg"
+	billyPath string      // as passed to Create, e.g. "Internal storage/DCIM/photo.jpg"
+	timer     *time.Timer // idle-flush timer; reset on every Write
 }
 
 // stat returns an os.FileInfo for the staging file with Name() set to the
@@ -94,6 +164,9 @@ func (h *stagingHandle) Name() string { return h.name }
 func (h *stagingHandle) Write(p []byte) (int, error) {
 	n, err := h.sf.tmp.WriteAt(p, h.pos)
 	h.pos += int64(n)
+	if n > 0 {
+		h.sf.touch(idleFlushInterval)
+	}
 	return n, err
 }
 
@@ -137,11 +210,16 @@ func (h *stagingHandle) Unlock() error { return nil }
 func (h *stagingHandle) Close() error  { return nil } // owned by registry, not caller
 
 // commit flushes the staging file for mtpPath to the MTP device.
-// Called by mtpNFSHandler.Commit when the NFS client issues a COMMIT RPC.
+// Called from two paths: mtpNFSHandler.Commit (explicit client COMMIT RPC)
+// and the per-entry idle timer set up in register/touch. The atomic delete
+// at the top makes both callers race-safe — only one will see a non-nil sf.
 func (r *writeRegistry) commit(mtpPath string, session *mtp.Session, objects *mtp.ObjectMap) error {
-	sf := r.get(mtpPath)
+	sf := r.delete(mtpPath)
 	if sf == nil {
-		return nil // no pending write; COMMIT with no prior write is valid
+		return nil // already committed, or COMMIT with no prior write
+	}
+	if sf.timer != nil {
+		sf.timer.Stop()
 	}
 
 	fi, err := sf.tmp.Stat()
@@ -195,8 +273,12 @@ func (r *writeRegistry) commit(mtpPath string, session *mtp.Session, objects *mt
 		IsDir:     false,
 	})
 
+	// Bump the parent's mtime so Finder/the NFS client invalidates
+	// any cached READDIR for this directory and surfaces the new file
+	// without waiting on the attribute-cache TTL.
+	bumpDirMtime(parentMeta, objects)
+
 	// Discard staging file.
-	r.delete(mtpPath)
 	sf.tmp.Close()
 	os.Remove(sf.tmp.Name())
 	return nil

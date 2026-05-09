@@ -13,7 +13,7 @@ DIST_DIR   := dist
 # Format: short SHA + "-dirty" if the worktree has uncommitted changes.
 BUILD_ID := $(shell git rev-parse --short HEAD 2>/dev/null)$(shell git diff --quiet 2>/dev/null || echo "-dirty")
 
-.PHONY: bridge helper helper-test nfs-stub app app-debug app-swiftc dev run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
+.PHONY: bridge helper helper-test nfs-stub app app-debug app-signed app-notarized app-swiftc dev dev-nfs run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
 
 bridge:
 	cd bridge && CGO_CFLAGS="-I$(CURDIR)/bridge/cvendor" CGO_LDFLAGS="-L/opt/homebrew/lib" $(GO) build -ldflags="-X main.BuildID=$(BUILD_ID)" -o ../$(BRIDGE_OUT) .
@@ -41,6 +41,9 @@ define BUNDLE_BRIDGE
 	cp $(LIBUSB_DYLIB) "$(1)/Contents/Frameworks/libusb-1.0.0.dylib"; \
 	install_name_tool -change $(LIBMTP_DYLIB) \
 		@executable_path/../Frameworks/libmtp.9.dylib \
+		"$(1)/Contents/Resources/bridge"; \
+	install_name_tool -change $(LIBUSB_DYLIB) \
+		@executable_path/../Frameworks/libusb-1.0.0.dylib \
 		"$(1)/Contents/Resources/bridge"; \
 	install_name_tool -change $(LIBUSB_DYLIB) \
 		@executable_path/../Frameworks/libusb-1.0.0.dylib \
@@ -176,6 +179,83 @@ dist-swiftc: app-swiftc
 	@echo "  $(DIST_DIR)/$(APP_NAME).zip ($$(du -h $(DIST_DIR)/$(APP_NAME).zip | cut -f1))"
 	@echo ""
 	@echo "Testers: right-click → Open on first launch (ad-hoc signed)"
+
+# Re-sign dist/Comprador.app with the local Developer ID Application
+# certificate. The bundle that comes out is suitable for replacing an
+# installed /Applications/Comprador.app while keeping the SMAppService
+# helper registration intact (SMAppService accepts cdhash changes when
+# the signature chain stays valid).
+#
+# Skips notarization. macOS allows opening a properly-signed but
+# un-notarized app by right-click → Open on first launch. SMAppService
+# itself only requires Developer ID + hardened runtime, not notarization.
+#
+# Uses Comprador.debug.entitlements (no com.apple.developer.system-extension.install)
+# because that entitlement requires a provisioning profile, which we
+# can't generate locally without an active development scheme. The
+# DriverKit install path is unavailable in app-signed builds; everything
+# else (USB matching, helper, NFS bridge) works.
+app-signed: dist-swiftc
+	@IDENTITY=$$(security find-identity -v -p codesigning \
+	            | awk '/Developer ID Application/{print $$2; exit}'); \
+	if [ -z "$$IDENTITY" ]; then \
+	  echo "ERROR: No Developer ID Application certificate in keychain"; \
+	  exit 1; \
+	fi; \
+	echo "Signing with $$IDENTITY"; \
+	BUNDLE=$(DIST_DIR)/$(APP_NAME).app; \
+	for path in \
+	  "$$BUNDLE/Contents/Frameworks/libmtp.9.dylib" \
+	  "$$BUNDLE/Contents/Frameworks/libusb-1.0.0.dylib" \
+	  "$$BUNDLE/Contents/Resources/bridge" \
+	  "$$BUNDLE/Contents/MacOS/comprador-helper"; \
+	do \
+	  if [ -e "$$path" ]; then \
+	    echo "Signing $$path"; \
+	    codesign --force --options runtime --timestamp \
+	      --sign "$$IDENTITY" "$$path"; \
+	  fi; \
+	done; \
+	echo "Signing bundle"; \
+	codesign --force --options runtime --timestamp \
+	  --entitlements MenuBarApp/Comprador.debug.entitlements \
+	  --sign "$$IDENTITY" "$$BUNDLE"; \
+	codesign --verify --strict --verbose=2 "$$BUNDLE"
+	@echo ""
+	@echo "=== Developer-ID-signed app ready ==="
+	@echo "  $(DIST_DIR)/$(APP_NAME).app"
+	@echo ""
+	@echo "Install with:"
+	@echo "  killall Comprador 2>/dev/null; sudo rm -rf /Applications/$(APP_NAME).app && sudo cp -R $(DIST_DIR)/$(APP_NAME).app /Applications/"
+
+# Local notarization. Submits the Developer-ID-signed app to Apple's
+# notary service, waits for the verdict, then staples the ticket so
+# the .app passes Gatekeeper offline.
+#
+# One-time setup before first use:
+#   xcrun notarytool store-credentials notarytool-password \
+#     --apple-id terrace@terrace.zone \
+#     --team-id 5875SC35WL
+# (it'll prompt for an app-specific password from appleid.apple.com)
+#
+# Total wall time: ~5 min (depends on Apple notary queue).
+app-notarized: app-signed
+	@echo "Zipping for notarytool submission..."
+	@rm -f $(DIST_DIR)/$(APP_NAME).zip
+	@cd $(DIST_DIR) && /usr/bin/ditto -c -k --keepParent $(APP_NAME).app $(APP_NAME).zip
+	@echo "Submitting to Apple notary (this may take a few minutes)..."
+	@xcrun notarytool submit $(DIST_DIR)/$(APP_NAME).zip \
+	  --keychain-profile notarytool-password \
+	  --wait
+	@echo "Stapling ticket to .app..."
+	@xcrun stapler staple $(DIST_DIR)/$(APP_NAME).app
+	@xcrun stapler validate $(DIST_DIR)/$(APP_NAME).app
+	@echo ""
+	@echo "=== Notarized app ready ==="
+	@echo "  $(DIST_DIR)/$(APP_NAME).app"
+	@echo ""
+	@echo "Install with:"
+	@echo "  killall Comprador 2>/dev/null; rm -rf /Applications/$(APP_NAME).app && cp -R $(DIST_DIR)/$(APP_NAME).app /Applications/"
 
 # Build a drag-to-Applications .dmg from the existing dist-swiftc output.
 # Uses macOS's built-in hdiutil — no extra tooling. The DMG is a 100MB

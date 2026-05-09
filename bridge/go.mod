@@ -2,8 +2,6 @@ module comprador/bridge
 
 go 1.21
 
-replace github.com/willscott/go-nfs => /Users/terrace/Labs/go-nfs
-
 require (
 	github.com/go-git/go-billy/v5 v5.6.0
 	github.com/willscott/go-nfs v0.0.4
