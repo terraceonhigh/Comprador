@@ -80,8 +80,24 @@ jobs:
           done
 
           echo "Signing bundle"
+          # Sign with the debug entitlements file (no
+          # com.apple.developer.system-extension.install). The production
+          # entitlements file requires a provisioning profile embedded
+          # as Contents/embedded.provisionprofile, which the workflow
+          # does not currently provision. v0.3.0 shipped with the
+          # production entitlements and AMFI rejected the binary at
+          # launch with -413 "No matching profile found".
+          # Restore Comprador.entitlements when:
+          #   1. a DriverKit USB extension is actually being shipped,
+          #      AND
+          #   2. the provisioning profile is downloaded from the Apple
+          #      Developer portal, base64'd into a CI secret, and the
+          #      workflow decodes + drops it into the bundle here.
+          # Until then, the debug entitlements have everything the
+          # shipped feature set actually uses (just the USB device
+          # access entitlement).
           codesign --force --options runtime --timestamp \
-            --entitlements MenuBarApp/Comprador.entitlements \
+            --entitlements MenuBarApp/Comprador.debug.entitlements \
             --sign "$IDENTITY" \
             "$BUNDLE"
 
