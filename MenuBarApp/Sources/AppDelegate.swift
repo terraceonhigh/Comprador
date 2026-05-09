@@ -480,14 +480,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
                 let mountedURL: URL
                 if bp.proto == "nfs" {
-                    // NFS path: helper execs mount_nfs as root.
-                    // No resumable-upload companion needed — NFS writes are
-                    // not subject to WebDAVFS's writeseq cap.
+                    // NFS path: unprivileged `/sbin/mount` with the bridge's
+                    // mDNS-registered hostname as the source. No helper, no
+                    // resumable-upload companion (NFS isn't subject to
+                    // WebDAVFS's writeseq cap).
                     let volName = AppDelegate.sanitizeHostname(displayName)
                     guard !volName.isEmpty else {
                         throw MountError.mountFailed(-1)
                     }
-                    mountedURL = try await mountManager.mountNFS(port: port, volumeName: volName)
+                    mountedURL = try await mountManager.mountNFS(
+                        host: bp.host,
+                        port: port,
+                        volumeName: volName
+                    )
                 } else {
                     // WebDAV path (helper absent or NFS unavailable).
                     mountedURL = try await mountManager.mount(host: mountHost, port: port, displayName: displayName)

@@ -79,6 +79,20 @@ func (sf *stagingFile) touch(idle time.Duration) {
 	}
 }
 
+// bumpDirMtime sets a directory's ModTime to now. NFSv3 clients
+// invalidate their cached READDIR results when a GETATTR on the parent
+// directory shows a newer mtime than the cached value, so calling this
+// after any directory-mutating op (commit, delete, rename) makes Finder
+// re-enumerate within seconds rather than waiting on the client's
+// natural attribute-cache TTL. No-op if dir is nil.
+func bumpDirMtime(dir *mtp.ObjectMeta, objects *mtp.ObjectMap) {
+	if dir == nil {
+		return
+	}
+	dir.ModTime = time.Now()
+	objects.Put(dir)
+}
+
 // rekey moves a staging entry from oldPath to newPath. Used by fs.Rename
 // when Finder renames a freshly-written ".tmpXXXX" temp to its final name
 // before the idle-flush timer fires for the temp. Returns true if there
@@ -258,6 +272,11 @@ func (r *writeRegistry) commit(mtpPath string, session *mtp.Session, objects *mt
 		ModTime:   time.Now(),
 		IsDir:     false,
 	})
+
+	// Bump the parent's mtime so Finder/the NFS client invalidates
+	// any cached READDIR for this directory and surfaces the new file
+	// without waiting on the attribute-cache TTL.
+	bumpDirMtime(parentMeta, objects)
 
 	// Discard staging file.
 	sf.tmp.Close()

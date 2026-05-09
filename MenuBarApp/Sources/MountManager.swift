@@ -148,7 +148,15 @@ class MountManager {
     /// mount as a Locations sidebar entry; the volume label shows as
     /// the mountpoint's parent name rather than `/Volumes/<phone>`,
     /// which is a cosmetic difference we accept.
-    func mountNFS(port: Int, volumeName: String) async throws -> URL {
+    ///
+    /// The `host` argument should be the mDNS-registered hostname the
+    /// bridge advertises (typically `<DeviceName>.local`), not the
+    /// bare loopback address. Finder's Locations sidebar displays the
+    /// mount source's hostname for the volume label; mounting via
+    /// `XQ-BT52.local:/` gives a much friendlier sidebar entry than
+    /// `localhost:/`. Falls back to `localhost` if the bridge couldn't
+    /// register a hostname.
+    func mountNFS(host: String, port: Int, volumeName: String) async throws -> URL {
         let baseDir = try FileManager.default.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
@@ -170,7 +178,7 @@ class MountManager {
         p.arguments = [
             "-t", "nfs",
             "-o", "port=\(port),mountport=\(port),nfsvers=3,nolocks,tcp",
-            "localhost:/",
+            "\(host):/",
             mountpoint.path,
         ]
         let errPipe = Pipe()

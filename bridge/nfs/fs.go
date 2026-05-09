@@ -270,6 +270,14 @@ func (fs *MTPFileSystem) Rename(oldpath, newpath string) error {
 		ModTime:   time.Now(),
 		IsDir:     false,
 	})
+
+	// Bump both source-parent and dest-parent dir mtimes so Finder
+	// re-enumerates both directories.
+	srcParentP := cleanPath(filepath.Dir(strings.TrimPrefix(oldpath, "/")))
+	if srcParent, ok := fs.session.Objects.GetByPath(srcParentP); ok {
+		bumpDirMtime(srcParent, fs.session.Objects)
+	}
+	bumpDirMtime(parentMeta, fs.session.Objects)
 	return nil
 }
 
@@ -293,6 +301,14 @@ func (fs *MTPFileSystem) Remove(filename string) error {
 		return resp.Err
 	}
 	fs.session.Objects.Remove(p)
+
+	// Bump the parent dir's mtime so Finder re-enumerates and the
+	// removed file disappears from the listing without waiting for
+	// the NFS client's attribute-cache TTL to expire.
+	parentP := cleanPath(filepath.Dir(strings.TrimPrefix(filename, "/")))
+	if parent, ok := fs.session.Objects.GetByPath(parentP); ok {
+		bumpDirMtime(parent, fs.session.Objects)
+	}
 	return nil
 }
 
@@ -346,6 +362,13 @@ func (fs *MTPFileSystem) mkdirAll(p string, perm os.FileMode) error {
 		IsDir:     true,
 		ModTime:   time.Now(),
 	})
+	// Bump the parent directory's mtime so Finder/the NFS client
+	// re-enumerates and surfaces the new subdirectory immediately.
+	// Without this, recursive folder drags stutter — Finder issues
+	// MKDIR for an intermediate dir, then CREATE for files inside,
+	// but the parent listing isn't refreshed until the first file
+	// commits, which can confuse Finder mid-copy.
+	bumpDirMtime(parentMeta, fs.session.Objects)
 	return nil
 }
 
