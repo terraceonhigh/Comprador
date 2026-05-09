@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.3.1 — 2026-05-09
+
+Hotfix: v0.3.0's released `.dmg` was rejected at launch by AMFI with
+`-413 "No matching profile found"`. The CI workflow signed the bundle
+with the production entitlements file (`Comprador.entitlements`),
+which contains `com.apple.developer.system-extension.install` for the
+planned DriverKit USB extension. That entitlement requires an
+embedded provisioning profile, which the workflow doesn't provision.
+
+Switch CI to sign with `Comprador.debug.entitlements` (no
+system-extension key, no profile required). The DriverKit feature
+isn't shipping in v0.3.x; restore the production entitlements when
+the extension is ready and the provisioning profile is wired into the
+secrets store.
+
+No changes to runtime behavior. Same NFS pivot as v0.3.0.
+
 ## v0.3.0 — 2026-05-09
 
 NFSv3 replaces WebDAV as the default mount surface.
