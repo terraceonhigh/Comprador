@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.3.0 — 2026-05-09
+
+NFSv3 replaces WebDAV as the default mount surface.
+
+- **No more 90-second mount wait.** Mount time is sub-second on macOS
+  15.4+. The WebDAV path's quota PROPFIND chokepoint is gone.
+- **Helper-free architecture.** `mount -t nfs` to localhost works for
+  unprivileged callers on macOS — verified empirically. The privileged
+  SMAppService daemon that v0.2.x shipped is no longer involved in the
+  mount path. First-launch friction is reduced; no Login Items
+  approval prompt is needed for normal use.
+- **Per-device sidebar label.** The mount source is `<DeviceName>.local`
+  (e.g. `XQ-BT52.local`) so Finder's Locations sidebar shows a
+  meaningful per-device entry. The `.local` suffix is a known cosmetic
+  carried into the v0.3.1 polish list.
+- **Live re-enumeration.** Drag a file in Finder, see it appear in the
+  directory listing within a couple seconds — no manual refresh. The
+  bridge bumps the parent directory's mtime on every commit/delete/
+  rename/mkdir so NFS clients invalidate their cached READDIR.
+- **Recursive folder copies.** Deep tree drags (verified against a
+  real git repo with `.git/objects/...`) re-enumerate each
+  subdirectory as files commit.
+
+### Under the hood
+
+- Vendored `willscott/go-nfs` with one patch (`nfs_onwrite.go` responds
+  `unstable` instead of `fileSync`) so macOS NFSv3 clients know they
+  must follow up writes with a COMMIT RPC.
+- 2-second idle-flush timer in the bridge's staging registry, since
+  macOS clients are unreliable about sending COMMIT spontaneously.
+- `fs.Rename` implemented with fast-path staging-rekey and slow-path
+  MTP copy+delete.
+- The privileged helper (`comprador-helper`) is still bundled for
+  legacy WebDAV cosmetics but is no longer invoked on the NFS path.
+  Slated for full removal in v0.4.0 once the WebDAV path is retired.
+
 ## v0.2.3 — 2026-05-04
 
 First notarized release. (v0.2.0–v0.2.2 were burned getting the
