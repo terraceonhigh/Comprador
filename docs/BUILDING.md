@@ -357,3 +357,146 @@ either re-introducing a privileged path for `/etc/hosts` editing
 (reversing the helper-free simplification) or switching from
 `/sbin/mount` to `NetFSMountURLAsync` and probing whether NetFS exposes
 a volume-name override for NFS URLs. Tracked but not gating ship.
+
+## CI pipeline: where it bit us, what to do about it
+
+The v0.3.x release sequence shipped two broken `.dmg`s in succession
+on 2026-05-09 before landing a working v0.3.2. Worth recording how
+each broke and how to make CI catch the next one before it ships.
+
+### What happened
+
+**v0.3.0:** code built, signed, and notarized cleanly. CI's only
+correctness gate is `codesign --verify --strict` and Apple's notary
+service — both passed. But the workflow signed the bundle with
+`MenuBarApp/Comprador.entitlements`, which contains the
+`com.apple.developer.system-extension.install` entitlement (added for
+a planned-but-not-shipping DriverKit USB extension). That entitlement
+requires `Contents/embedded.provisionprofile` in the bundle, which
+the workflow didn't provision. macOS AMFI rejected at `execve(2)`
+time with `-413 "No matching profile found"`.
+
+The local-build path uses `Comprador.debug.entitlements` (no
+system-extension key), so the entire 2026-05-08 verification session
+ran on a different entitlements set than the released `.dmg` did. The
+issue could not surface until a user ran the `.dmg`.
+
+**v0.3.1 (the hotfix tag):** tag was pushed against the local
+`origin/master` ref, which was stale at the moment of tagging — the
+PR #9 merge had landed on GitHub but the local fetch hadn't. `git tag
+-a v0.3.1 origin/master` resolved to the v0.3.0 commit, and CI rebuilt
+the same broken code under the new tag name.
+
+**v0.3.2:** tagged against the freshly-fetched `origin/master`. Built
+clean, AMFI accepts, this is the working release.
+
+### What CI should do differently
+
+Three options, ordered cheap → thorough.
+
+**A. Add `workflow_dispatch` + always-upload artifact.**
+Ten lines of YAML. Lets us click a "Run workflow" button on the
+Release page in the Actions UI, pick any branch, get a fully
+notarized `.dmg` as a workflow artifact (download from the run's
+Artifacts panel) without creating a public release. Catches the
+"does the pipeline produce a sane artifact at all" question.
+
+```yaml
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:        # adds a "Run workflow" button
+
+jobs:
+  build-sign-notarize:
+    # ... existing steps ...
+
+    - name: Upload .dmg as workflow artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Comprador-dmg
+        path: dist/Comprador.dmg
+        retention-days: 30
+
+    - name: Upload to GitHub Release
+      if: startsWith(github.ref, 'refs/tags/v')   # tag-push only
+      uses: softprops/action-gh-release@v1
+      with:
+        files: dist/Comprador.dmg
+```
+
+**B. Add a smoke-test launch step.** GitHub macos-14 runners are
+ephemeral and headless, but the kernel still runs AMFI checks at
+`execve(2)`. Tonight's `-413` rejection would have failed this:
+
+```yaml
+- name: Smoke-test launch
+  run: |
+    cp -R dist/Comprador.app /tmp/Comprador.app
+    /tmp/Comprador.app/Contents/MacOS/Comprador & PID=$!
+    sleep 3
+    if ! ps -p $PID > /dev/null; then
+      echo "::error::Binary was killed within 3 s of launch (likely AMFI / Gatekeeper rejection)"
+      exit 1
+    fi
+    kill $PID
+```
+
+The Comprador menu-bar app starts cleanly without a UI surface (it's
+just `NSStatusItem`), and exits clean on SIGTERM. AMFI / library
+validation / hardened runtime / signing-chain mismatches all surface
+as immediate process death, which is exactly what this catches.
+
+**C. Two-workflow split.** `prerelease.yml` runs on every PR and on
+`workflow_dispatch`: builds + signs + notarizes + smoke-tests +
+uploads artifact. `release.yml` runs only on tag push, runs the same
+pipeline, AND attaches the artifact to a GitHub release.
+
+Strict separation: PRs are auto-verified before merge; tag pushes can
+only ship code that has already passed in PR.
+
+### Recommendation
+
+**A + B together as part of v0.3.x housekeeping.** Twenty lines of
+YAML total, gives "build a notarized `.dmg` from any branch, verify
+it launches, ship only when ready." C is the rigorous version once
+PR-driven release verification feels like the right discipline; not
+needed for a single-developer project.
+
+### Process lessons from v0.3.1's wrong-commit tag
+
+CI cannot catch "the tag points at the wrong commit." That's a
+process issue. Two cheap mitigations:
+
+1. **Always `git fetch origin` before `git tag origin/master`.** A
+   stale local ref is the failure mode; refreshing eliminates it.
+2. **Explicit verification:** before pushing a tag, `git log -1
+   <tag>` and visually confirm the commit subject matches what you
+   meant to ship. Tonight's broken v0.3.1 tag pointed at "Merge pull
+   request #8" instead of "Merge pull request #9" — the diff would
+   have been visible.
+
+Or: have CI tag automatically based on a labelled PR merge, removing
+the manual `git tag` step. But that requires the project to
+internalize a PR-driven release workflow it doesn't currently use.
+
+### Retracting a broken release
+
+When a release ships broken (as v0.3.0 and v0.3.1 did tonight), the
+gentlest recovery preserves history while keeping users away from the
+broken artifact:
+
+```bash
+gh release edit v0.3.0 --prerelease \
+  --notes "Broken — install v0.3.2 instead. (Original notes below.)\n\n<original notes>"
+gh release edit v0.3.1 --prerelease \
+  --notes "Broken — install v0.3.2 instead. (Original notes below.)\n\n<original notes>"
+```
+
+Marking as `--prerelease` removes the "Latest Release" badge so anyone
+hitting the releases page sees the working version as canonical.
+Editing the notes with a one-line warning at the top means a user who
+lands directly on the broken release's page sees the warning.
+
+Don't delete the tags or releases — they're the historical record of
+what happened. The lesson is more useful preserved than erased.
