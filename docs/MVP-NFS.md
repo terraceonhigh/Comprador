@@ -1,11 +1,14 @@
 # MVP for the NFS migration
 
-**Status — 2026-05-08:** scope and acceptance criteria for shipping
-Comprador's NFS path as the default mount surface, replacing the
-WebDAV path that ships in v0.2.3. Authored by Mercer after the
-verification session that uncovered the silent-write-loss bug in the
+**Status — 2026-05-08 (revised, late evening):** scope and acceptance
+criteria for shipping Comprador's NFS path as the default mount surface,
+replacing the WebDAV path that ships in v0.2.3. Authored by Mercer after
+the verification session that uncovered the silent-write-loss bug in the
 Phase 2b code on master and fixed it via a go-nfs response-stability
-patch plus a bridge-side idle-flush timer.
+patch plus a bridge-side idle-flush timer. **Revised after discovering
+the privileged helper was load-bearing for nothing — see commit
+`406e35e8` and `MISTAKES.md` § "The privileged helper was load-bearing
+for nothing".** The architecture below reflects the helper-free path.
 
 ## Goal
 
@@ -83,11 +86,14 @@ These are properties of the implementation that must hold at ship:
   MVP picks copy+delete; the optimised form is post-ship work.
 - **go-nfs patch is durable.** The fix to
   `nfs_onwrite.go` (respond `unstable` not `fileSync`) cannot live
-  only in `~/Labs/go-nfs` on `gala`. It must be either:
-  - A fork at `terraceonhigh/go-nfs` pinned in `go.mod` via a
-    commit-hash require, with `replace` removed, OR
-  - Upstreamed and depending on a tagged release.
-  MVP picks the fork; upstream is post-ship.
+  only in `~/Labs/go-nfs` on `gala`. **Resolved by vendoring** —
+  go-nfs is now in `bridge/vendor/`, the patch travels with the
+  repository, no external fork or replace directive needed.
+- **Helper layer is no longer required for the mount path.** Verified
+  empirically that `mount -t nfs` to localhost accepts unprivileged
+  callers; `MountManager.mountNFS` shells out to `/sbin/mount`
+  directly. SMAppService.daemon, the BTM database, and notarization
+  of the helper binary are all out of the critical path for v0.3.0.
 - **Build identity stamped.** The shipped binary must report its
   build SHA via `BuildID`. Already present (`60075e64-dirty` in this
   session — the dirty bit must be clean before shipping).

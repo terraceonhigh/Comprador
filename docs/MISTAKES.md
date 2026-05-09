@@ -725,3 +725,66 @@ empty or fail.
 **Fix:** Always create at least one file at the root level before serving.
 Our stub does this (`hello.txt`). The MTP adapter will naturally satisfy
 this because storage roots always contain at least one child.
+
+## SMAppService / Helper
+
+### 1. The privileged helper was load-bearing for nothing
+
+**What happened:** Phase 3 of the NFS pivot introduced a privileged
+SMAppService daemon (`comprador-helper`) whose sole purpose was to
+exec `mount_nfs` as root, on the assumption that `mount(2)` for NFS
+volumes refuses unprivileged callers.
+
+This produced a long list of downstream complications:
+
+- An entire Go binary (`helper/`) running as root with a Unix-socket RPC
+  protocol the GUI app talks to.
+- LaunchDaemons plist embedded in the .app bundle.
+- `SMAppService.daemon(plistName:).register()` flow on first run, with a
+  System Settings → Login Items approval prompt.
+- Notarization requirements for the helper signature to satisfy launchd's
+  spawn checks.
+- A `/var/db/com.apple.backgroundtaskmanagement/` (BTM) database state
+  that, on the development machine, accumulated 16,975 failed-spawn
+  records over a 24-hour debugging session and refused to recover even
+  after `launchctl bootout`, fresh notarization, and a full reboot.
+
+The session of 2026-05-08 was spent trying to surgically untangle BTM
+without `sfltool resetbtm` (which would nuke every other Mac app's
+login-item state). Six hours of archaeology.
+
+The actual fact, verified by the empirical test that should have been
+run on day one of the helper design:
+
+```bash
+mkdir -p /private/tmp/probe
+mount -t nfs -o port=N,mountport=N,nfsvers=3,nolocks,tcp \
+  localhost:/ /private/tmp/probe
+echo $?  # 0
+mount | grep probe
+# localhost:/ on /private/tmp/probe (nfs, nodev, nosuid, mounted by terrace)
+```
+
+**`mount(2)` for NFS volumes on localhost accepts unprivileged callers,
+applying `nodev,nosuid` flags as the safety floor.** The kernel was
+willing the entire time; the helper layer was solving a problem that
+didn't exist.
+
+**Fix (commit `406e35e8`):** `MountManager.mountNFS` shells out to
+`/sbin/mount` directly with the running user's credentials. Mountpoint
+moves from `/Volumes/<phone>` (drwxr-xr-x root:wheel, mkdir-rejected for
+unprivileged users) to `~/Library/Application Support/Comprador/Volumes/<phone>`
+(user-owned). Finder still presents it as a Locations sidebar entry; the
+volume label auto-derives from the mountpoint dirname, so a phone named
+`XQ-BT52` shows up as `XQ-BT52` — without any of the helper's
+mDNS/`/etc/hosts` hostname-rename machinery.
+
+The helper code remains in tree for legacy WebDAV mounts and for
+hostname cosmetics, but is no longer invoked on the NFS mount path.
+SMAppService.daemon registration is no longer required for shipping,
+which means BTM state corruption stops being a release blocker.
+
+**Lesson:** before designing a privileged helper to launder root for a
+single syscall, run that syscall as a non-privileged user and check
+whether it actually fails. The empirical test would have taken thirty
+seconds and saved a privileged-services architecture.
