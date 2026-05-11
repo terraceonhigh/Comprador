@@ -122,6 +122,7 @@ const (
 	OpDelete
 	OpCreateFolder
 	OpListDir // lazy enumeration of a single directory
+	OpRefreshStorages // re-query LIBMTP_Get_Storage to refresh free/max bytes per storage
 )
 
 // MTPRequest is sent to the session goroutine.
@@ -149,17 +150,25 @@ type MTPResponse struct {
 type Session struct {
 	device   *Device
 	Objects  *ObjectMap
-	storages []Storage // cached at session init; capacity/free reported via WebDAV quota
-	requests chan MTPRequest
-	done     chan struct{}
+	// storages is the cached storage list. Snapshotted at session init and
+	// refreshed via OpRefreshStorages (e.g. on each FSStat call so Finder sees
+	// up-to-date per-storage free numbers). Protected by storagesMu because
+	// the session goroutine writes it (during refresh) while NFS handler
+	// goroutines read it via TotalBytes / FreeBytes / StorageForPath.
+	storages   []Storage
+	storagesMu sync.RWMutex
+	requests   chan MTPRequest
+	done       chan struct{}
 }
 
 // TotalBytes returns the sum of MaxCapacity across all storages on the device.
-// Used to populate DAV:quota-used-bytes / quota-available-bytes so Finder's
-// preflight free-space check (statfs(2)) sees a real number. Without this,
-// webdavfs reports zero bytes and Finder refuses copies > a small threshold
-// with "(error code 100060)" — having never sent a single byte to the bridge.
+// Used as the aggregate fallback when FSStat is called at the mount root or
+// against an unknown path; per-storage routing (via StorageForPath) is
+// preferred for any path under a specific storage subtree so that Finder's
+// "X GB available" string is accurate for the storage the user is browsing.
 func (s *Session) TotalBytes() uint64 {
+	s.storagesMu.RLock()
+	defer s.storagesMu.RUnlock()
 	var n uint64
 	for _, st := range s.storages {
 		n += st.MaxBytes
@@ -168,15 +177,58 @@ func (s *Session) TotalBytes() uint64 {
 }
 
 // FreeBytes returns the sum of FreeSpaceInBytes across all storages.
-// Snapshotted at session open; not refreshed mid-session — the cost of a
-// re-query through the libmtp PTP transport (~hundreds of ms) is not worth
-// the precision for a number Finder uses purely as a sanity check.
+// Aggregate fallback; per-storage values come through StorageForPath, which
+// the bridge's FSStat handler uses preferentially. RefreshStorages should
+// be called before reading these if up-to-date numbers matter — the slice
+// is mutated only inside the session goroutine.
 func (s *Session) FreeBytes() uint64 {
+	s.storagesMu.RLock()
+	defer s.storagesMu.RUnlock()
 	var n uint64
 	for _, st := range s.storages {
 		n += st.FreeBytes
 	}
 	return n
+}
+
+// StorageForPath resolves a path's owning Storage, or returns nil if the path
+// is at the mount root or under an unknown first segment. The first non-empty
+// component of `segments` is matched against `sanitizeName(st.Description)`
+// for each known storage — same form initStorages writes into the ObjectMap
+// at `"/" + sanitizeName(st.Description)`.
+//
+// Returns nil for root-level queries (so handlers can fall back to aggregate
+// reporting without surfacing an error to the NFS client).
+func (s *Session) StorageForPath(segments []string) *Storage {
+	first := ""
+	for _, seg := range segments {
+		if seg != "" {
+			first = seg
+			break
+		}
+	}
+	if first == "" {
+		return nil
+	}
+	s.storagesMu.RLock()
+	defer s.storagesMu.RUnlock()
+	for i := range s.storages {
+		if sanitizeName(s.storages[i].Description) == first {
+			return &s.storages[i]
+		}
+	}
+	return nil
+}
+
+// RefreshStorages re-queries libmtp for the device's storage list and replaces
+// the cached slice atomically. Synchronous: blocks the caller until the session
+// goroutine has refreshed. Used on each FSStat call so Finder sees free-space
+// numbers that decrement after a write rather than the snapshot taken at
+// session open. libmtp's LIBMTP_Get_Storage refreshes all storages in one call;
+// per-storage refresh isn't exposed.
+func (s *Session) RefreshStorages() error {
+	resp := s.Do(MTPRequest{Op: OpRefreshStorages})
+	return resp.Err
 }
 
 // NewSession opens a device and populates the root-level storage entries.
@@ -288,18 +340,31 @@ func (s *Session) dispatch(req MTPRequest) MTPResponse {
 	case OpListDir:
 		entries := s.populateDir(req.Path)
 		return MTPResponse{Entries: entries}
+	case OpRefreshStorages:
+		storages, err := s.device.GetStorages()
+		if err != nil {
+			return MTPResponse{Err: err}
+		}
+		s.storagesMu.Lock()
+		s.storages = storages
+		s.storagesMu.Unlock()
+		return MTPResponse{}
 	default:
 		return MTPResponse{Err: fmt.Errorf("unknown op: %d", req.Op)}
 	}
 }
 
 // initStorages fetches storage list and registers them as top-level directories.
+// Runs in NewSession before the session goroutine starts, so no concurrent
+// readers exist yet; the lock here is for consistency with the access pattern.
 func (s *Session) initStorages() error {
 	storages, err := s.device.GetStorages()
 	if err != nil {
 		return err
 	}
+	s.storagesMu.Lock()
 	s.storages = storages
+	s.storagesMu.Unlock()
 
 	log.Printf("Found %d storage(s)", len(storages))
 	for _, st := range storages {

@@ -35,7 +35,9 @@ func (h *NullAuthHandler) Change(fs billy.Filesystem) billy.Change {
 }
 
 // FSStat provides information about a filesystem.
-func (h *NullAuthHandler) FSStat(ctx context.Context, f billy.Filesystem, s *nfs.FSStat) error {
+// Comprador patch (2026-05-11): signature now includes `path` per
+// the multi-storage patch in handler.go.
+func (h *NullAuthHandler) FSStat(ctx context.Context, f billy.Filesystem, path []string, s *nfs.FSStat) error {
 	return nil
 }
 

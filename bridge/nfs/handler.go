@@ -35,7 +35,32 @@ func (h *mtpNFSHandler) Change(_ billy.Filesystem) billy.Change {
 	return noopChange{}
 }
 
-func (h *mtpNFSHandler) FSStat(_ context.Context, _ billy.Filesystem, s *gonfs.FSStat) error {
+// FSStat reports per-storage quota when the requesting path lives under a
+// specific storage subtree, falling back to aggregate when called at the
+// mount root or against an unknown first segment. This matters because
+// macOS's preflight free-space check (statfs(2) under the hood) drives
+// Finder's "X GB available" string and its drop-onto-volume copy gate;
+// aggregate reporting across mixed-size storages produces the cardinal sin
+// in docs/PLAN-MULTI-STORAGE.md — green-lighting a 50 GB drop because
+// "105 GB free" sums Internal + SD, when the user is actually standing in
+// a near-full SD card.
+//
+// Refreshes the storage list on each call. Per docs/PLAN-MULTI-STORAGE.md
+// §3, FSStat is called infrequently enough (~once per Finder focus, once
+// per copy preflight) that the libmtp re-query cost is acceptable in
+// exchange for fresh numbers visible to the user.
+func (h *mtpNFSHandler) FSStat(_ context.Context, _ billy.Filesystem, path []string, s *gonfs.FSStat) error {
+	if err := h.session.RefreshStorages(); err != nil {
+		log.Printf("FSStat: RefreshStorages failed (%v); reporting cached values", err)
+	}
+
+	if storage := h.session.StorageForPath(path); storage != nil {
+		s.TotalSize = storage.MaxBytes
+		s.FreeSize = storage.FreeBytes
+		s.AvailableSize = storage.FreeBytes
+		return nil
+	}
+
 	s.TotalSize = h.session.TotalBytes()
 	s.FreeSize = h.session.FreeBytes()
 	s.AvailableSize = h.session.FreeBytes()
