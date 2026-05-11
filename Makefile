@@ -15,7 +15,7 @@ DIST_DIR   := dist
 # Format: short SHA + "-dirty" if the worktree has uncommitted changes.
 BUILD_ID := $(shell git rev-parse --short HEAD 2>/dev/null)$(shell git diff --quiet 2>/dev/null || echo "-dirty")
 
-.PHONY: bridge helper helper-test nfs-stub ictest1 ictest2 test-md5 icon app app-debug app-signed app-notarized app-swiftc dev dev-nfs run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
+.PHONY: bridge bridge-test helper helper-test nfs-stub ictest1 ictest2 test-md5 icon app app-debug app-signed app-notarized app-swiftc dev dev-nfs run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
 
 ICON_SRC := images/icon.png
 ICON_OUT := MenuBarApp/Resources/Comprador.icns
@@ -53,6 +53,11 @@ helper:
 
 helper-test:
 	cd helper && $(GO) test -v ./...
+
+# Bridge mtp-package tests. cgo flags must be set explicitly because go test
+# doesn't inherit them from the Makefile's `bridge` build rule.
+bridge-test:
+	cd bridge && CGO_CFLAGS="-I$(CURDIR)/bridge/cvendor" CGO_LDFLAGS="-L/opt/homebrew/lib" $(GO) test -v ./...
 
 # Research probe: Test 1 from docs/RESEARCH-IMAGECAPTURECORE.md.
 # Tests whether ICDevice.requestOpenSession coexists with ptpcamerad.

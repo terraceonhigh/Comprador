@@ -25,17 +25,32 @@ type ObjectMeta struct {
 // Directories are lazily populated: a directory exists in the map once its parent
 // has been listed, but its children are only fetched when ListDir is called.
 type ObjectMap struct {
-	mu         sync.RWMutex
-	byPath     map[string]*ObjectMeta
-	byID       map[uint32]*ObjectMeta
-	populated  map[string]bool // tracks which directories have had their children fetched
+	mu        sync.RWMutex
+	byPath    map[string]*ObjectMeta
+	byID      map[uint32]*ObjectMeta
+	// populated maps directory paths to the time their children were last
+	// fetched from the device. A zero time (or missing key) means never
+	// populated. The non-zero time supports a TTL-based staleness check:
+	// EnsurePopulated treats anything older than directoryTTL as in need of
+	// refresh, so phone-side mutations (the user deletes a file via the
+	// phone's Files app) surface on the next directory access through the
+	// NFS mount within a couple seconds. See V0.3.3.md item #1 for the
+	// motivation.
+	populated map[string]time.Time
 }
+
+// directoryTTL bounds how long a directory's enumeration is trusted before
+// the next access forces a re-fetch from the device. 2 s is the spec from
+// V0.3.3.md item #1 — slow enough to amortize the libmtp OpListDir cost
+// across burst Finder reads, fast enough that a phone-side delete surfaces
+// while the user is still looking at the mount.
+const directoryTTL = 2 * time.Second
 
 func NewObjectMap() *ObjectMap {
 	return &ObjectMap{
 		byPath:    make(map[string]*ObjectMeta),
 		byID:      make(map[uint32]*ObjectMeta),
-		populated: make(map[string]bool),
+		populated: make(map[string]time.Time),
 	}
 }
 
@@ -78,18 +93,69 @@ func (m *ObjectMap) InvalidateDir(dirPath string) {
 	delete(m.populated, strings.TrimSuffix(dirPath, "/"))
 }
 
-// IsPopulated returns whether a directory's children have been fetched.
+// IsPopulated returns whether a directory's children have been fetched
+// (at any point — does not consider freshness). For freshness-aware checks
+// use IsFresh.
 func (m *ObjectMap) IsPopulated(dirPath string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.populated[dirPath]
+	return !m.populated[dirPath].IsZero()
 }
 
-// MarkPopulated marks a directory as having had its children fetched.
+// IsFresh returns whether a directory's enumeration is both populated and
+// younger than directoryTTL. Callers should re-enumerate if this returns
+// false. Separate from IsPopulated because the bridge's first-access
+// behaviour ("never seen this directory; fetch its children") and its
+// refresh behaviour ("seen it but cache is stale") want different code
+// paths (the latter has to reconcile new vs old entries to surface
+// phone-side deletes).
+func (m *ObjectMap) IsFresh(dirPath string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	t := m.populated[dirPath]
+	return !t.IsZero() && time.Since(t) < directoryTTL
+}
+
+// MarkPopulated marks a directory as having had its children fetched
+// (timestamp = now). EnsurePopulated will trust this for up to
+// directoryTTL before forcing a re-fetch.
 func (m *ObjectMap) MarkPopulated(dirPath string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.populated[dirPath] = true
+	m.populated[dirPath] = time.Now()
+}
+
+// removeRecursive deletes meta at dirPath plus every descendant entry
+// (anything with dirPath + "/" as a prefix). Used by the staleness-
+// refresh path: when a directory disappears from the device's enumeration
+// (phone-side rmdir), all of its cached descendants are orphans and need
+// to go too — otherwise a subsequent Stat or Open on a deleted descendant
+// returns the cached entry and the bridge tries to read a phone object
+// that no longer exists.
+//
+// Caller must hold m.mu.
+func (m *ObjectMap) removeRecursiveLocked(dirPath string) {
+	if meta, ok := m.byPath[dirPath]; ok {
+		delete(m.byPath, dirPath)
+		delete(m.byID, meta.ID)
+	}
+	delete(m.populated, dirPath)
+	prefix := dirPath + "/"
+	for p, meta := range m.byPath {
+		if strings.HasPrefix(p, prefix) {
+			delete(m.byPath, p)
+			delete(m.byID, meta.ID)
+			delete(m.populated, p)
+		}
+	}
+}
+
+// RemoveRecursive removes a path and all its descendants from the map.
+// See removeRecursiveLocked for rationale.
+func (m *ObjectMap) RemoveRecursive(dirPath string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.removeRecursiveLocked(dirPath)
 }
 
 // ListChildren returns cached children of a directory (does not fetch from device).
@@ -273,10 +339,17 @@ func (s *Session) Do(req MTPRequest) MTPResponse {
 	return <-req.Response
 }
 
-// EnsurePopulated makes sure the children of dirPath have been fetched from the device.
-// This is safe to call from any goroutine — the actual MTP call runs on the session goroutine.
+// EnsurePopulated makes sure the children of dirPath have been fetched from
+// the device and are within directoryTTL of the present. The actual MTP call
+// runs on the session goroutine; this method is safe from any caller.
+//
+// "Fresh" is the load-bearing word: a directory whose enumeration is older
+// than directoryTTL gets re-fetched even though we already have its
+// children cached. That re-fetch reconciles against phone-side mutations
+// (the user deletes a file via the phone's Files app and we surface it in
+// Finder within a couple seconds). See V0.3.3.md item #1.
 func (s *Session) EnsurePopulated(dirPath string) {
-	if s.Objects.IsPopulated(dirPath) {
+	if s.Objects.IsFresh(dirPath) {
 		return
 	}
 	s.Do(MTPRequest{Op: OpListDir, Path: dirPath})
@@ -388,12 +461,20 @@ func (s *Session) initStorages() error {
 	return nil
 }
 
-// populateDir fetches children of a directory from the device and caches them.
-// Must be called from the session goroutine.
+// populateDir fetches children of a directory from the device, caches them,
+// and reconciles against any cached state from a previous enumeration that
+// has aged past directoryTTL. Must be called from the session goroutine.
+//
+// Reconciliation: when called against a directory that's already populated
+// but stale, the new device-side enumeration is treated as ground truth.
+// Entries present in the new enumeration are upserted; entries present in
+// the old cache but absent from the new enumeration are removed
+// recursively (the user deleted them from the phone). This is the
+// mechanism by which phone-side mutations surface in Finder.
 func (s *Session) populateDir(dirPath string) []*ObjectMeta {
 	dirPath = strings.TrimSuffix(dirPath, "/")
 
-	if s.Objects.IsPopulated(dirPath) {
+	if s.Objects.IsFresh(dirPath) {
 		return s.Objects.ListChildren(dirPath)
 	}
 
@@ -423,6 +504,27 @@ func (s *Session) populateDir(dirPath string) []*ObjectMeta {
 		return nil
 	}
 	log.Printf("Lazy enumerate %s: %d entries", dirPath, len(entries))
+
+	// Build the set of paths present in the new enumeration. We'll use this
+	// to find orphans from any prior cached state.
+	newPaths := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		newPaths[dirPath+"/"+sanitizeName(e.Name)] = true
+	}
+
+	// Reconcile: anything in the old cache for this directory that the
+	// device no longer reports is a phone-side delete; remove it (and any
+	// cached descendants) recursively. We only do this when there *was* a
+	// prior enumeration — first-time population has no old state to clean.
+	if s.Objects.IsPopulated(dirPath) {
+		for _, oldChild := range s.Objects.ListChildren(dirPath) {
+			if !newPaths[oldChild.Path] {
+				log.Printf("Reconcile %s: removing %s (no longer on device)",
+					dirPath, oldChild.Path)
+				s.Objects.RemoveRecursive(oldChild.Path)
+			}
+		}
+	}
 
 	var result []*ObjectMeta
 	for _, e := range entries {
