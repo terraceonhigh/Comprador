@@ -58,6 +58,25 @@ for full context.
 
 ---
 
+## Next concrete code work
+
+- [ ] **Multi-device step 4 — bridge `--device-loc-id` CLI flag.**
+      Per
+      [PLAN-MULTI-DEVICE.md §6](docs/PLAN-MULTI-DEVICE.md) option A.
+      Add the flag in `bridge/main.go`; teach
+      `bridge/mtp/binding.go`'s `DetectDevice` to filter libmtp's
+      raw device list to a single matching Location ID rather
+      than picking the first MTP device on the bus. Swift side:
+      `BridgeProcess.start` already receives `seizeForVendor` /
+      `seizeForProduct`; thread `locationID` through similarly
+      and pass it to the bridge. ~30 lines total, but verification
+      needs two phones plugged in simultaneously to confirm each
+      bridge claims the right one. After this lands, step 5
+      (per-device DeviceWatcher wiring) and step 6 (menu UX)
+      become unblocked.
+
+---
+
 ## Verification follow-ups
 
 Carried forward from DECISIONS.md, not blocking but real:
@@ -75,7 +94,11 @@ Carried forward from DECISIONS.md, not blocking but real:
 ## Tidying
 
 Discussed 2026-05-11; deliberately deferred to a focused tidying
-session rather than rolled into a code commit.
+session rather than rolled into a code commit. Organized by
+reversibility — Tier 1 is clearly safe, Tier 3 is real
+architectural cleanup.
+
+### Tier 1 — safe deletions
 
 - [ ] **Delete `bridge/cmd/ictest1/` and `bridge/cmd/ictest2/`**
       plus their Makefile targets (`ictest1`, `ictest2`) and the
@@ -86,24 +109,65 @@ session rather than rolled into a code commit.
       its own" — and it is. Net: ~350 lines of Swift gone, no
       information loss.
 - [ ] **Delete `build/dir-diff.py` and `build/list-phone.py`.**
-      Ad-hoc scripts from the directory-copy investigation,
-      superseded by `test-md5.sh`. Already gitignored
-      (`build/` is gitignored), so this is working-directory
-      hygiene only.
+      Ad-hoc Python scripts from the 2026-05-11 directory-copy
+      investigation, superseded by `test-md5.sh` as the canonical
+      verification tool. Already gitignored (`build/` is
+      gitignored), so this is working-directory hygiene only —
+      `rm` and move on.
+
+### Tier 2 — reasonable, worth a moment first
+
 - [ ] **Consider `docs/V0.4.0.md`** as a single home for items
       slated for v0.4.0 retirement: the privileged helper
       (`helper/` + LaunchDaemon plist + the BUNDLE_HELPER
-      Makefile recipe), the WebDAV mount path (bridge/webdav/,
-      MountManager.mount vs mountNFS, ResumeCompanion, writeseq
-      heuristics), the `com.apple.developer.system-extension.install`
-      entitlement on the production .entitlements file. The
-      items are scattered across SECURITY.md, CHANGELOG, and
-      individual file comments; a single V0.4.0.md would
-      collect them.
+      Makefile recipe), the WebDAV mount path (`bridge/webdav/`,
+      `MountManager.mount` vs `mountNFS`, `ResumeCompanion`,
+      writeseq heuristics), the
+      `com.apple.developer.system-extension.install` entitlement
+      on the production .entitlements file. The items are
+      scattered across SECURITY.md, CHANGELOG, and individual
+      file comments; a single V0.4.0.md would collect them and
+      mirror the V0.3.3.md format (per-release polish list with
+      symptom/fix/cost).
 - [ ] **Trim the "Original spec preserved for reference" tails**
       in shipped V0.3.3.md items. Judgment call — they're useful
       while the change is recent, dead weight in a year. Probably
-      ~100 lines lighter if removed.
+      ~100 lines lighter if removed. Specifically: items #1, #3
+      both grew preservation tails today.
+
+### Tier 3 — real architectural cleanup (bigger, defer to a focused session)
+
+These are substantial PRs, not "tidying." Filed here so they're
+not forgotten when V0.4.0 is in flight.
+
+- [ ] **Retire the WebDAV mount path entirely.** NFS has been
+      the default since v0.3.0 (2026-05-09) and is verified
+      working for the architect's daily use. The WebDAV
+      apparatus is dead code: `bridge/webdav/` package, the
+      `MountManager.mount` (vs `mountNFS`) WebDAV branch in
+      `MenuBarApp/Sources/MountManager.swift`,
+      `ResumeCompanion` and its companion port, the writeseq-
+      cap heuristics, the bridge-side resume endpoint, the
+      WebDAV-specific code paths in BridgeProcess. Likely
+      ~1/3 of the codebase. Removing it shrinks the bundle,
+      simplifies the connect flow, and eliminates the
+      ~90s mount-time hint copy from the menu.
+- [ ] **Retire the privileged helper.** Per SECURITY.md, the
+      single largest privilege-escalation surface in the
+      bundle. NFS doesn't need it for the mount; the only
+      remaining use is the optional cosmetic `.local`
+      hostname rewrite (`MenuBarApp/Sources/HelperClient.swift`).
+      With WebDAV retired (above), the only thing the helper
+      still does is /etc/hosts editing for the
+      Pixel-6.local → Pixel-6 cosmetic. Decide: (a) drop the
+      feature entirely and live with `.local` (V0.3.3 #2's
+      option C); (b) drop the helper, accept the cosmetic
+      via a one-time root prompt at install (option B of #2);
+      (c) keep the helper as a tiny single-purpose daemon.
+      Decision blocks the deletion of `helper/`,
+      `MenuBarApp/Sources/HelperClient.swift`, the
+      `BUNDLE_HELPER` Makefile recipe, the LaunchDaemon
+      plist, and the SMAppService.daemon registration.
 
 ---
 
