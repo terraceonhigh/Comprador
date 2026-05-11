@@ -13,7 +13,35 @@ DIST_DIR   := dist
 # Format: short SHA + "-dirty" if the worktree has uncommitted changes.
 BUILD_ID := $(shell git rev-parse --short HEAD 2>/dev/null)$(shell git diff --quiet 2>/dev/null || echo "-dirty")
 
-.PHONY: bridge helper helper-test nfs-stub app app-debug app-signed app-notarized app-swiftc dev dev-nfs run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
+.PHONY: bridge helper helper-test nfs-stub icon app app-debug app-signed app-notarized app-swiftc dev dev-nfs run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
+
+ICON_SRC := images/icon.png
+ICON_OUT := MenuBarApp/Resources/Comprador.icns
+
+# Generate the .icns from the single committed source PNG. We only commit
+# one icon.png; the .iconset directory and the final .icns are build
+# artifacts (gitignored). Both the swiftc and Xcode paths depend on this
+# target so the .icns exists at build time.
+icon: $(ICON_OUT)
+
+$(ICON_OUT): $(ICON_SRC)
+	@mkdir -p build/Comprador.iconset
+	@for sz in 16 32 64 128 256 512 1024; do \
+		sips -Z $$sz "$(ICON_SRC)" --out "build/Comprador.iconset/_$$sz.png" >/dev/null 2>&1; \
+	done
+	@cp build/Comprador.iconset/_16.png   build/Comprador.iconset/icon_16x16.png
+	@cp build/Comprador.iconset/_32.png   build/Comprador.iconset/icon_16x16@2x.png
+	@cp build/Comprador.iconset/_32.png   build/Comprador.iconset/icon_32x32.png
+	@cp build/Comprador.iconset/_64.png   build/Comprador.iconset/icon_32x32@2x.png
+	@cp build/Comprador.iconset/_128.png  build/Comprador.iconset/icon_128x128.png
+	@cp build/Comprador.iconset/_256.png  build/Comprador.iconset/icon_128x128@2x.png
+	@cp build/Comprador.iconset/_256.png  build/Comprador.iconset/icon_256x256.png
+	@cp build/Comprador.iconset/_512.png  build/Comprador.iconset/icon_256x256@2x.png
+	@cp build/Comprador.iconset/_512.png  build/Comprador.iconset/icon_512x512.png
+	@cp build/Comprador.iconset/_1024.png build/Comprador.iconset/icon_512x512@2x.png
+	@rm build/Comprador.iconset/_*.png
+	iconutil -c icns build/Comprador.iconset -o $(ICON_OUT)
+	@echo "Generated $(ICON_OUT) from $(ICON_SRC)"
 
 bridge:
 	cd bridge && CGO_CFLAGS="-I$(CURDIR)/bridge/cvendor" CGO_LDFLAGS="-L/opt/homebrew/lib" $(GO) build -ldflags="-X main.BuildID=$(BUILD_ID)" -o ../$(BRIDGE_OUT) .
@@ -67,7 +95,7 @@ define BUNDLE_HELPER
 	echo "Bundled helper into $(1)"
 endef
 
-app: bridge
+app: bridge icon
 	xcodebuild -project MenuBarApp/$(APP_NAME).xcodeproj \
 	           -scheme $(APP_NAME) \
 	           -configuration Release \
@@ -77,7 +105,7 @@ app: bridge
 		$(call BUNDLE_BRIDGE,$$APP_DIR); \
 	fi
 
-app-debug: bridge
+app-debug: bridge icon
 	xcodebuild -project MenuBarApp/$(APP_NAME).xcodeproj \
 	           -scheme $(APP_NAME) \
 	           -configuration Debug \
@@ -104,7 +132,7 @@ run: app-debug
 	"$$APP_DIR/Contents/MacOS/$(APP_NAME)"
 
 # Build a distributable .app + zip
-dist: bridge
+dist: bridge icon
 	xcodebuild -project MenuBarApp/$(APP_NAME).xcodeproj \
 	           -scheme $(APP_NAME) \
 	           -configuration Release \
@@ -131,7 +159,7 @@ SWIFT_SRC    := $(wildcard MenuBarApp/Sources/*.swift)
 SWIFT_TARGET := arm64-apple-macosx13.0
 BUILD_INFO_SWIFT := build/BuildInfo.swift
 
-app-swiftc: bridge helper
+app-swiftc: bridge helper icon
 	@mkdir -p build/swift build
 	@printf 'enum BuildInfo { static let id = "%s" }\n' "$(BUILD_ID)" > $(BUILD_INFO_SWIFT)
 	swiftc -target $(SWIFT_TARGET) -O -D DEBUG \

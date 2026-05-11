@@ -92,12 +92,11 @@ square framing the brown eyespot-butterfly perched on the small red
 pomegranate flower (upper-center-left of the original). The
 intruding tip of the Blue Morpho wing in the upper-right corner of
 the crop region was retouched out so the eyespot-butterfly stands
-alone. The crop is then resized to the macOS standard app-icon
-sizes (16, 32, 64, 128, 256, 512, 1024 px) and packaged into both
-a `.icns` and an `Assets.xcassets/AppIcon.appiconset`. The source
-crop is committed at `images/icon-2nd-crop.png`; the working files
-are at `MenuBarApp/Resources/Comprador.icns` and
-`MenuBarApp/Resources/Assets.xcassets/AppIcon.appiconset/`.
+alone. The cropped square is committed as a single PNG at
+`images/icon.png` (1660×1660). The macOS `.icns` and standard
+app-icon size variants are generated at build time by `make icon`
+and are not committed (gitignored under
+`MenuBarApp/Resources/Comprador.icns`).
 
 These modifications introduce no new copyright restrictions; the
 derivative remains in the public domain.

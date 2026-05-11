@@ -18,7 +18,6 @@
 		A1000021 /* WelcomeWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000021 /* WelcomeWindow.swift */; };
 		A1000022 /* ResumeCompanion.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000022 /* ResumeCompanion.swift */; };
 		A1000003 /* VendorIDs.plist in Resources */ = {isa = PBXBuildFile; fileRef = A2000003 /* VendorIDs.plist */; };
-		A1000023 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A2000023 /* Assets.xcassets */; };
 		A1000024 /* Comprador.icns in Resources */ = {isa = PBXBuildFile; fileRef = A2000024 /* Comprador.icns */; };
 		A1000010 /* IOKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000030 /* IOKit.framework */; };
 		A1000011 /* DiskArbitration.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000011 /* DiskArbitration.framework */; };
@@ -36,7 +35,6 @@
 		A2000021 /* WelcomeWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeWindow.swift; sourceTree = "<group>"; };
 		A2000022 /* ResumeCompanion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResumeCompanion.swift; sourceTree = "<group>"; };
 		A2000003 /* VendorIDs.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = VendorIDs.plist; sourceTree = "<group>"; };
-		A2000023 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A2000024 /* Comprador.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = Comprador.icns; sourceTree = "<group>"; };
 		A2000004 /* Comprador.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Comprador.entitlements; sourceTree = "<group>"; };
 		A2000005 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -91,7 +89,6 @@
 			isa = PBXGroup;
 			children = (
 				A2000003 /* VendorIDs.plist */,
-				A2000023 /* Assets.xcassets */,
 				A2000024 /* Comprador.icns */,
 			);
 			path = Resources;
@@ -168,7 +165,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				A1000003 /* VendorIDs.plist in Resources */,
-				A1000023 /* Assets.xcassets in Resources */,
 				A1000024 /* Comprador.icns in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -199,7 +195,6 @@
 		A9000001 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Comprador.debug.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -222,7 +217,6 @@
 		A9000002 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Comprador.debug.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
