@@ -88,81 +88,348 @@ roadmap, and MAS stays out.
 
 ## Empirical tests to run
 
-Each requires a physical phone connected and a small Swift test
-binary. Worth ~half a day of work each.
+Each test below is structured as a small experiment with its own
+hypothesis, design, and (after the test runs) results and
+conclusion sections. The structure is deliberate: write the
+hypothesis *before* the test so the conclusion is not retrofitted
+to whatever happens. Results and Conclusion sections are
+placeholders to be filled in after running each test.
+
+All four tests require a physical phone connected via USB. Each
+needs a small Swift binary; the binaries can share a common
+`ICDeviceBrowserDelegate` skeleton so the marginal cost per test
+after the first is small.
+
+---
 
 ### Test 1: coexistence with ptpcamerad
 
-Goal: confirm that `ICDevice.requestOpenSession` succeeds while
-ptpcamerad is already holding a session.
+**Hypothesis.** `ICDevice.requestOpenSessionWithOptions:completion:`
+will succeed even when `ptpcamerad` is already holding a session
+on behalf of another client (Image Capture). The reasoning:
+ptpcamerad is a userspace XPC broker, not a USB-interface
+exclusive-holder. The `mscamerad-xpc.xpc` coordinator mediates
+between N clients. Image Capture and Photos already coexist on a
+single device today via the same broker; our session should too.
 
-```
-1. Plug phone in. Open Image Capture (which launches
-   ptpcamerad). Verify ptpcamerad is alive: `ps aux | grep
-   ptpcamerad`.
-2. Run a small Swift test that:
-   - Constructs an ICDeviceBrowser
-   - Filters to PTP devices, finds the phone
-   - Calls requestOpenSessionWithOptions:completion:
-   - Logs the success/error in the completion block
-3. Expected: success. The framework brokers, both Image Capture
-   and our session coexist.
-4. Optional confirm: run requestSendPTPCommand to fetch the
-   device info (PTP 0x1001 GetDeviceInfo). Verify it returns
-   without disrupting Image Capture.
-```
+**Experiment design.**
+
+*Setup.*
+- macOS 26.4 (or whatever the current dev machine runs).
+- Phone: Sony Xperia 10 III (the project's primary test device,
+  per [letter 01](../correspondence/01-on-the-finder-handshake/letter.md)),
+  in File Transfer mode, plugged into a USB-C port directly (no
+  hub, to eliminate enumeration variance).
+- `ptpcamerad` running. Confirm with `pgrep -lf ptpcamerad`. If
+  not running, open Image Capture.app once to trigger launch; it
+  stays alive for several minutes after Image Capture is closed.
+- A test binary at `bridge/cmd/ictest1/main.swift` (or similar
+  path) compiled with `swiftc` against `ImageCaptureCore.framework`.
+
+*Procedure.*
+
+1. Test binary instantiates an `ICDeviceBrowser`, sets `self`
+   as delegate, and calls `start`.
+2. In `deviceBrowser:didAddDevice:moreComing:`, log the device's
+   `name`, `usbVendorID`, `usbProductID`, `transportType`,
+   `UUIDString`.
+3. Filter for the phone by matching `usbVendorID == 0x0FCE`
+   (Sony) and `usbProductID` in the Sony range (or by name
+   match `"XQ-BT52"`).
+4. Set the test binary as the device's `delegate`, conforming
+   to `ICDeviceDelegate`.
+5. Call `requestOpenSessionWithOptions:nil completion:` and
+   capture the timestamp before and after the completion block
+   fires.
+6. In the completion block, log: `error == nil`, the error's
+   `code` and `domain` if present, elapsed time from request to
+   completion.
+7. If session opens, call `requestCloseSessionWithOptions:nil
+   completion:` and log the close result.
+
+*Observations to collect.*
+- Whether `requestOpenSession` succeeds (binary).
+- The error code/domain if it fails.
+- Elapsed time from request → completion (informs Test 2's
+  latency expectations).
+- Whether Image Capture continues to function during and after
+  our session is open (manual check: drag a thumbnail in Image
+  Capture while our session is alive).
+- `ptpcamerad` process state before, during, after (does it
+  stay alive? get killed? respawn?).
+
+*Pass criteria.* `requestOpenSession` returns `error == nil`
+*and* Image Capture continues to function normally while our
+session is held.
+
+*Failure modes to watch for.*
+- `error.domain == ICErrorDomain, error.code == ICDeviceErrorXXXX`
+  → framework refuses concurrent sessions; coexistence
+  hypothesis is falsified.
+- `requestOpenSession` completion never fires (>30 s timeout)
+  → framework is hung or our delegate isn't wired correctly.
+  Retry with `IC_AVAILABLE` checks; verify delegate is retained.
+- Image Capture's UI freezes / disconnects → broker refuses to
+  serve two clients; falsifies a weaker version of the
+  hypothesis.
+
+**Results.** *(pending)*
+
+**Conclusion.** *(pending)*
+
+---
 
 ### Test 2: read throughput via requestReadDataFromFile
 
-Goal: confirm we can stream a multi-GB file via
-`requestReadDataFromFile:atOffset:length:` with adequate
-performance for an NFS mount path.
+**Hypothesis.** `ICCameraDevice.requestReadDataFromFile:atOffset:length:`
+will sustain at least 10 MB/s for sequential reads on a USB 2.0
+connection (the project's worst-case transport) and at least
+30 MB/s on USB 3. The reasoning: the underlying PTP transport is
+identical to what libmtp uses, so throughput should be in the
+same order of magnitude as the libmtp baseline we already
+observe. The 10 MB/s floor is the minimum where dragging a
+1 GB file through an NFS mount feels acceptable rather than
+broken (~100 s for 1 GB).
 
-```
-1. Phone has a >1 GB test file in /DCIM/
-2. Test binary opens a session, navigates to the file, calls
-   requestReadDataFromFile in 4 MiB chunks, measures throughput.
-3. Expected baseline: 20-30 MB/s on USB 2.0, 60+ MB/s on USB 3.
-   (Should match libmtp throughput because the underlying PTP
-   transport is identical.)
-4. Acceptable: anything > 10 MB/s end-to-end through an NFS
-   mount surface.
-```
+**Experiment design.**
+
+*Setup.*
+- Phone with a known test file in `/Internal storage/DCIM/`
+  (recommended: `Shrek.2001.1080p.BluRay.x264.YIFY.mp4` from
+  the project's `testfiles/`, sideloaded via Test 3's path or
+  pre-staged via Finder while libmtp still works). File size
+  must be > 256 MB to amortize per-request overhead.
+- Open session from Test 1 already established.
+- USB 3 connection where possible; note USB version in
+  `system_profiler SPUSBDataType | grep -A5 Sony` output so the
+  result is interpretable.
+
+*Procedure.*
+
+1. After session open, request the device's content tree
+   (`device.contents`) — wait for delegate callback
+   `cameraDevice:didReceiveContent:`.
+2. Navigate the tree to find the test file (matching by name).
+3. Record `start = mach_absolute_time()`.
+4. Loop calling `requestReadDataFromFile:` in 4 MiB chunks
+   (offset = 0, 4 MiB, 8 MiB, ...) until end-of-file. Each chunk
+   is delivered to the delegate's
+   `cameraDevice:didReceiveData:fromFile:` selector; chain into
+   the next request from that callback.
+5. Sum total bytes; record `end = mach_absolute_time()`.
+6. Throughput = total_bytes / elapsed_seconds, in MB/s.
+7. Compute MD5 of received bytes; compare to phone-side MD5 (via
+   Test 3 if writes work, or via libmtp pre-staged hash).
+
+*Observations to collect.*
+- Total elapsed time and bytes.
+- Throughput in MB/s.
+- Per-chunk latency (max, p99, p50): if any chunk takes >1 s,
+  the NFS mount will surface as laggy regardless of average
+  throughput.
+- USB transport version (2.0 vs 3.x).
+- Memory footprint of the test binary during the transfer (via
+  `vmmap` or just `ps -o rss=`). The cgo-callback leak that
+  affects the libmtp path
+  ([MISTAKES.md 8a](MISTAKES.md)) should *not* exist here —
+  ImageCaptureCore manages its own buffers — but verify.
+- MD5 round-trip vs. source.
+
+*Pass criteria.* Throughput ≥ 10 MB/s sustained over the entire
+file *and* MD5 round-trip matches *and* no per-chunk latency
+exceeds 2 s.
+
+*Failure modes to watch for.*
+- Throughput < 10 MB/s → coexistence works but reads are too
+  slow for NFS-mount-grade UX. Investigate chunk size (try 16
+  MiB), request pipelining (issue read N+1 before read N
+  completes).
+- MD5 mismatch → framework-level corruption. Bug or feature
+  flag we're missing.
+- Per-chunk latency spikes → request queueing inside the
+  framework; the XPC broker may be round-robining between
+  concurrent clients. Test in isolation (close Image Capture)
+  to see if throughput improves.
+- Memory growth proportional to file size → framework has its
+  own version of the cgo-callback leak; would need to be
+  reported upstream and could disqualify this path for large
+  files.
+
+**Results.** *(pending)*
+
+**Conclusion.** *(pending)*
+
+---
 
 ### Test 3: PTP-level write path via requestSendPTPCommand
 
-Goal: determine whether the macOS 14 sandbox blocks
-`requestUploadFile` selectively or blocks PTP writes uniformly.
+**Hypothesis.** `ICCameraDevice.requestSendPTPCommand:` *will*
+allow PTP-level write commands (specifically `SendObjectInfo`
+0x100C followed by `SendObject` 0x100D) to succeed on macOS 14+
+despite `requestUploadFile`'s deprecation. The reasoning: the
+deprecation text refers to "writing directly to device hardware,"
+which more plausibly describes the abstraction `requestUploadFile`
+exposes than it does the raw PTP transport that
+`requestSendPTPCommand` is named for. Apple deprecated the
+high-level API for product reasons (sandbox-friendly behavior in
+MAS apps) but it would be inconsistent to leave a public escape
+hatch named "send a PTP command" that doesn't actually send PTP
+commands. The hypothesis is contingent and the test is the
+load-bearing one for the whole ImageCaptureCore pivot — if writes
+fail uniformly, the path is read-only.
 
-```
-1. Test binary opens a session, sends a PTP SendObjectInfo
-   command (0x100C) via requestSendPTPCommand to declare a
-   small new file.
-2. If 0x100C succeeds, send SendObject (0x100D) with the data.
-3. Verify the file appears on the phone.
-4. Outcome interpretation:
-   - Both succeed → writes are fine via PTP-command escape
-     hatch; only the high-level upload API is sandboxed.
-   - 0x100C is blocked → writes are uniformly blocked at the
-     framework layer; ImageCaptureCore is read-only for our
-     purposes on macOS 14+.
-```
+**Experiment design.**
+
+*Setup.*
+- Open session from Test 1.
+- A small local file to upload — recommend 1 MiB of `/dev/urandom`
+  saved as `comprador-write-test.bin`. Large enough to exercise
+  the data phase, small enough to be quick.
+- Verify phone-side write target: `/Internal storage/Download/`
+  (writable on Android phones in MTP mode).
+
+*Procedure.*
+
+1. Construct the `SendObjectInfo` (0x100C) PTP command
+   container per PTP 1.0 spec § 5.4.3:
+   - OpCode: 0x100C
+   - Parameter 1: storage ID (from previous `GetStorageIDs`
+     0x1004 call)
+   - Parameter 2: parent object handle (from `GetObjectHandles`
+     0x1007 call against `/Download`)
+   - Data phase: `ObjectInfo` dataset (StorageID, ObjectFormat
+     0x3000 = Undefined Type, ObjectCompressedSize = file size,
+     filename, etc.)
+2. Call `requestSendPTPCommand:outData:completion:` with
+   the command bytes and the ObjectInfo data.
+3. In the completion, parse `responseData` for the new object
+   handle (Parameter 1 of the response).
+4. Construct `SendObject` (0x100D) PTP command:
+   - OpCode: 0x100D
+   - No parameters (the handle is implicit from prior
+     SendObjectInfo)
+   - Data phase: the actual file bytes
+5. Call `requestSendPTPCommand:` with command + 1 MiB data.
+6. Verify the file appears on the phone (manually browse the
+   phone's Downloads in Files app, OR re-read via Test 2's
+   `requestReadDataFromFile` and compare MD5).
+
+*Observations to collect.*
+- Whether `SendObjectInfo` completion fires with `error == nil`
+  and a valid response code (PTP response 0x2001 = OK).
+- Whether `SendObject` completion fires with `error == nil` and
+  PTP response 0x2001.
+- The file's presence and integrity on the phone after.
+- If failure: the exact error code/domain.
+
+*Pass criteria.* Both PTP commands return OK *and* the file is
+present on the phone with matching MD5.
+
+*Failure modes to watch for.*
+- `SendObjectInfo` errors with permission/sandbox shape →
+  framework blocks writes uniformly; ImageCaptureCore is
+  read-only for our purposes.
+- `SendObjectInfo` succeeds, `SendObject` fails → partial
+  state; investigate whether the half-created object can be
+  cleaned up via `DeleteObject` (0x100B).
+- Both succeed, file missing → unlikely but indicates a
+  framework-level filter that drops the data phase.
+- Both succeed, file present, MD5 mismatch → data-phase
+  corruption; could indicate framework chunking interferes.
+
+**Results.** *(pending)*
+
+**Conclusion.** *(pending)*
+
+---
 
 ### Test 4: sandbox-app behavior
 
-Goal: confirm tests 1–3 work from a sandboxed app (`app-sandbox`
-entitlement: true).
+**Hypothesis.** Tests 1–3 will all pass when re-run from a Swift
+binary signed with the App Sandbox entitlement
+(`com.apple.security.app-sandbox = true`) plus
+`com.apple.security.device.usb = true`. The reasoning: SwiftMTP
+ships with exactly this entitlement set
+([SwiftMTP.entitlements](../../SwiftMTP/SwiftMTP/SwiftMTP.entitlements))
+and successfully drives PTP/MTP operations through the same Mac
+that hosts ptpcamerad. The ImageCaptureCore framework is
+expressly designed for sandboxed clients (Image Capture itself
+is sandboxed). If anything, Test 3 is the weak link: the
+sandbox-deprecation-message on `requestUploadFile` suggests
+Apple cares specifically about sandboxed writes, so the
+PTP-command escape hatch may be selectively blocked under
+sandbox even if it works without.
+
+**Experiment design.**
+
+*Setup.*
+- Wrap the test binaries from 1–3 into a single Swift app bundle
+  signed with:
+  - `com.apple.security.app-sandbox` = true
+  - `com.apple.security.device.usb` = true
+  - `com.apple.security.cs.disable-library-validation` = true
+    (only if needed for bundled dylibs)
+  - `com.apple.security.files.user-selected.read-write` = true
+    (so the bundle can read the test write-file from disk)
+- Sign with the Developer ID Application cert and our
+  signing identity.
+- Same phone, same session, same procedure as Tests 1–3.
+
+*Procedure.* Run Tests 1, 2, and 3 in sequence within the
+sandboxed app. Collect the same observations as in each unsandboxed
+counterpart. Compare to the unsandboxed baseline.
+
+*Observations to collect.*
+- For each of 1, 2, 3: does the test pass identically?
+- If any test fails under sandbox but passed unsandboxed: the
+  precise error code/domain.
+- Whether the entitlement set above is sufficient or whether
+  additional entitlements surface as TCC prompts (e.g., USB
+  device access permission dialog on first run).
+
+*Pass criteria.* All three sub-tests pass with the same results
+as their unsandboxed counterparts, with no additional user-
+visible permission prompts beyond the first-launch USB-device
+TCC dialog (if any).
+
+*Failure modes to watch for.*
+- Test 1 fails sandboxed but passed unsandboxed → framework
+  refuses sandboxed clients; MAS distribution is dead via
+  this path.
+- Test 2 fails sandboxed (sustained throughput drops) → sandbox
+  IPC overhead is killing performance. Investigate; may be
+  fixable with bigger chunk sizes.
+- Test 3 fails sandboxed but passed unsandboxed → MAS-readable,
+  not MAS-writable. Hybrid architecture (read via API,
+  write via the helper or out-of-band).
+- An unexpected TCC prompt appears → identify which entitlement
+  it gates on; add to the test bundle and re-run.
+
+**Results.** *(pending)*
+
+**Conclusion.** *(pending)*
+
+---
+
+### Filling in Results and Conclusion
+
+After running each test, replace the `*(pending)*` placeholders
+with the following structure (in the same doc, in place):
 
 ```
-1. Re-run tests 1–3 from a Swift binary signed with the same
-   entitlement set SwiftMTP uses
-   (com.apple.security.app-sandbox + com.apple.security.device.usb +
-   com.apple.security.cs.disable-library-validation).
-2. Outcome interpretation: if all pass sandboxed, MAS is
-   plausible. If test 3 fails sandboxed but passes
-   non-sandboxed, MAS would require direct-distribution for
-   writes.
+**Results.** Concrete observations from running the experiment.
+Numbers (throughput, latency, memory), error codes if any, the
+phone model and macOS version under test, the date. Keep it
+factual — interpretation belongs in Conclusion.
+
+**Conclusion.** What the results mean for the hypothesis (was it
+confirmed, falsified, or partially supported?). What this changes
+about the decision tree below. Any unexpected findings that
+should spawn follow-up tests.
 ```
+
+Each test should be filled in independently as it runs — don't
+wait for all four to complete before recording 1's results.
 
 ## Decision tree from the test outcomes
 
