@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.3.2 — 2026-05-09
+
+The working tag for v0.3.1's entitlements hotfix.
+
+v0.3.1 was pushed against a stale local `origin/master` ref — the
+PR #9 merge had landed on GitHub but the local fetch hadn't picked
+it up, so `git tag -a v0.3.1 origin/master` resolved to the v0.3.0
+commit. CI rebuilt the same broken code under the new tag. v0.3.2
+re-tags the same fix at the correct commit (after `git fetch
+origin`) so the released `.dmg` actually contains it.
+
+No code changes from the v0.3.1 PR. Same NFS pivot as v0.3.0.
+
+Process notes captured in [docs/BUILDING.md § "Process lessons from
+v0.3.1's wrong-commit tag"](docs/BUILDING.md). The CI smoke-test
+proposed there is filed as item #7 in the [v0.3.3 polish
+plan](docs/V0.3.3.md).
+
 ## v0.3.1 — 2026-05-09
 
 Hotfix: v0.3.0's released `.dmg` was rejected at launch by AMFI with
