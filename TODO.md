@@ -117,23 +117,20 @@ architectural cleanup.
 
 ### Tier 2 — reasonable, worth a moment first
 
-- [ ] **Consider `docs/V0.4.0.md`** as a single home for items
-      slated for v0.4.0 retirement: the privileged helper
-      (`helper/` + LaunchDaemon plist + the BUNDLE_HELPER
-      Makefile recipe), the WebDAV mount path (`bridge/webdav/`,
-      `MountManager.mount` vs `mountNFS`, `ResumeCompanion`,
-      writeseq heuristics), the
-      `com.apple.developer.system-extension.install` entitlement
-      on the production .entitlements file. The items are
-      scattered across SECURITY.md, CHANGELOG, and individual
-      file comments; a single V0.4.0.md would collect them and
-      mirror the V0.3.3.md format (per-release polish list with
-      symptom/fix/cost).
-- [ ] **Trim the "Original spec preserved for reference" tails**
-      in shipped V0.3.3.md items. Judgment call — they're useful
-      while the change is recent, dead weight in a year. Probably
-      ~100 lines lighter if removed. Specifically: items #1, #3
-      both grew preservation tails today.
+- [x] **`docs/V0.4.0-DRAFT.md` drafted 2026-05-11.** Collects
+      the v0.4.0 retirement items into one place, mirroring
+      V0.3.3.md format. Architect to review and promote to
+      `V0.4.0.md` (drop the DRAFT markers in filename and inline
+      header) when v0.4.0 work picks up. Five items in the
+      draft: WebDAV retirement, helper retirement, the
+      system-extension entitlement decision, V0.3.3 #2 closure
+      contingent on the helper-retirement choice, and the cgo
+      acceptance-test retake.
+- [x] **Trim the "Original spec preserved for reference" tails**
+      in shipped items. 2026-05-11: V0.3.3.md item #1 trimmed
+      (~30 lines) and TODO.md "Phone-side checksum verification"
+      trimmed (~30 lines). Items #4 and #5 didn't actually grow
+      tails — earlier framing overcounted.
 
 ### Tier 3 — real architectural cleanup (bigger, defer to a focused session)
 
@@ -439,49 +436,17 @@ yet; not blocking.
 
 - [x] **Phone-side checksum verification.** Shipped 2026-05-11 as
       `make test-md5` / `test-md5.sh` per option 1 of the original
-      analysis below. Gated by `COMPRADOR_TESTING_ADB=1` env var so
-      that ADB usage is explicitly developer-only — the shipping
-      product still doesn't require Developer Options enabled on the
-      user's phone. The script does `find <phone_dir> -exec md5sum`
-      via adb shell, computes Mac-side md5 of the source tree, and
-      reports per-file matches / misses / mismatches. AppleDouble
-      `._*` files are excluded (filtered server-side per V0.3.3.md
-      item #3). Verified against the 2026-05-11 ECON101 transfer:
-      430/432 byte-perfect, the 2 deltas are both `.DS_Store` files
-      that Finder legitimately regenerates at the destination.
-
-      ---
-
-      **Original analysis preserved below for context on the
-      alternatives:**
-
-      Without phone-side checksumming we'd be md5'ing the bridge's
-      assembled .partial file before MTP commit and comparing to the
-      Mac source — strong evidence that the bytes went out correctly
-      from the bridge, but not a *true* round-trip check. To catch
-      the rare case where libmtp itself misbehaves (or the device-
-      side filesystem corrupts on write — Android's FUSE-based MTP
-      layer has had bugs historically), we want md5 computed *on the
-      phone*.
-
-      Options that were weighed:
-
-      1. **ADB shell `md5sum /sdcard/Download/<file>`.** (Chosen.)
-         Cheapest by far, single command. ADB is out of scope for
-         the shipping product (CLAUDE.md "Why not ADB?") but
-         gating behind `COMPRADOR_TESTING_ADB=1` keeps it
-         developer-only.
-
-      2. **MTP `LIBMTP_Get_File_To_Handler` with an md5-computing
-         handler.** Bypasses Finder/webdavfs on the read path;
-         streams device → libmtp → md5. Same MTP throughput cost
-         as a normal read; no improvement on the bottleneck. Only
-         useful for verifying MTP-readback specifically rather than
-         "what's stored on the device."
-
-      3. **Companion phone app exposing a "hash this file" intent.**
-         Tiny Android side-loadable. Would also avoid Developer
-         Options. Heavy lift for a testing convenience.
+      ADB-shell-md5 analysis. Gated by `COMPRADOR_TESTING_ADB=1`
+      env var so that ADB usage is explicitly developer-only — the
+      shipping product still doesn't require Developer Options
+      enabled on the user's phone. The script does
+      `find <phone_dir> -exec md5sum` via adb shell, computes
+      Mac-side md5 of the source tree, and reports per-file
+      matches / misses / mismatches. AppleDouble `._*` files are
+      excluded (filtered server-side per V0.3.3.md item #3).
+      Verified against the 2026-05-11 ECON101 transfer: 430/432
+      byte-perfect, the 2 deltas are both `.DS_Store` files that
+      Finder legitimately regenerates at the destination.
 
 ## Low impact (completeness)
 
