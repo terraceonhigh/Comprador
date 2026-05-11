@@ -52,6 +52,21 @@ func cleanPath(p string) string {
 	return p
 }
 
+// isAppleDoubleBasename reports whether the basename of p starts with "._".
+// macOS Finder writes one of these "AppleDouble" companion files alongside
+// every file dropped onto a non-HFS+ filesystem to preserve extended
+// attributes (Finder labels, resource forks, custom icons). Phones have no
+// use for them and the user's "I copied 432 files" expectation is for the
+// data files only — the 432-becomes-702 confusion in the 2026-05-11 ECON101
+// transfer was almost entirely these. See docs/V0.3.3.md item #3.
+//
+// Filter only basenames prefixed with "._" — not all dotfiles, since some
+// legitimate apps create hidden files (and we already pass through
+// non-AppleDouble ones like .git, .hidden_user_doc, etc.).
+func isAppleDoubleBasename(p string) bool {
+	return strings.HasPrefix(filepath.Base(p), "._")
+}
+
 // mtpFileInfo implements os.FileInfo from an ObjectMeta.
 type mtpFileInfo struct {
 	meta *mtp.ObjectMeta
@@ -150,7 +165,16 @@ func (fs *MTPFileSystem) OpenFile(filename string, flag int, perm os.FileMode) (
 
 // Create registers a staging entry and returns a writable billy.File.
 // The file is not sent to MTP until COMMIT.
+//
+// AppleDouble companion files (`._*` basenames) are accepted by returning
+// a discarding handle that silently no-ops writes — the phone never sees
+// them. See isAppleDoubleBasename for the rationale; the user-visible
+// effect is that a Finder drag-drop of N files produces N entries on the
+// phone (not 2N as it did before this filter landed).
 func (fs *MTPFileSystem) Create(filename string) (billy.File, error) {
+	if isAppleDoubleBasename(filename) {
+		return &discardingHandle{name: filename}, nil
+	}
 	p := cleanPath(filename)
 	sf, err := fs.writes.register(p, filename)
 	if err != nil {
@@ -177,6 +201,14 @@ func (fs *MTPFileSystem) Rename(oldpath, newpath string) error {
 	oldP := cleanPath(oldpath)
 	newP := cleanPath(newpath)
 	if oldP == newP {
+		return nil
+	}
+
+	// AppleDouble paths were never staged (Create returned a discarding
+	// handle) and aren't on MTP either. A rename touching one would fall
+	// through to slow-path copy+delete and fail "src not found". Return
+	// success — the file exists nowhere we care about.
+	if isAppleDoubleBasename(oldP) || isAppleDoubleBasename(newP) {
 		return nil
 	}
 
