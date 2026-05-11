@@ -109,18 +109,18 @@ it's worth upstreaming.
 ## What to borrow
 
 - **OpenMTP's per-storage routing pattern**
-  ([FileExplorerKalamDataSource.js:82–110](../../openmtp/app/data/file-explorer/data-sources/FileExplorerKalamDataSource.js)):
+  ([FileExplorerKalamDataSource.js:82–110](../../references/openmtp/app/data/file-explorer/data-sources/FileExplorerKalamDataSource.js)):
   every API call threads `storageId` as a parameter. Our bridge
   already does this through `StorageID` on every `ObjectMeta`.
   Confirmed-and-aligned with their pattern.
 - **OpenMTP's storage description: phone-side verbatim**
-  ([helpers.go:69–80](../../openmtp/ffi/kalam/native/helpers.go)).
+  ([helpers.go:69–80](../../references/openmtp/ffi/kalam/native/helpers.go)).
   They don't relabel. We do `sanitizeName(st.Description)` for
   POSIX safety
   ([session.go:310](../bridge/mtp/session.go)) — keep that, since
   spaces in storage names break some Finder paths.
 - **SwiftMTP's per-storage capacity display**
-  ([SidebarView.swift:178–181](../../SwiftMTP/SwiftMTP/Views/SidebarView.swift)):
+  ([SidebarView.swift:178–181](../../references/SwiftMTP/SwiftMTP/Views/SidebarView.swift)):
   inline progress bar + "X free of Y" text per storage. Our
   equivalent is whatever Finder shows; per-storage `FSStat` gives
   Finder the right numbers to render.
@@ -288,13 +288,13 @@ Reference patterns (what we're borrowing):
 - [docs/OPENMTP-NOTES.md](OPENMTP-NOTES.md) — full forensics.
   Multi-storage section verbatim from 2026-05-10 Explore pass:
   storageId threaded through every API call
-  ([FileExplorerKalamDataSource.js:82–110](../../openmtp/app/data/file-explorer/data-sources/FileExplorerKalamDataSource.js));
+  ([FileExplorerKalamDataSource.js:82–110](../../references/openmtp/app/data/file-explorer/data-sources/FileExplorerKalamDataSource.js));
   storage description used verbatim from phone-side PTP
-  ([helpers.go:69–80](../../openmtp/ffi/kalam/native/helpers.go)).
+  ([helpers.go:69–80](../../references/openmtp/ffi/kalam/native/helpers.go)).
 - [docs/SWIFTMTP-NOTES.md](SWIFTMTP-NOTES.md) — full forensics.
   Multi-storage section verbatim from 2026-05-10 Explore pass:
   per-storage capacity inline
-  ([SidebarView.swift:178–181](../../SwiftMTP/SwiftMTP/Views/SidebarView.swift)).
+  ([SidebarView.swift:178–181](../../references/SwiftMTP/SwiftMTP/Views/SidebarView.swift)).
 
 Vendored go-nfs:
 

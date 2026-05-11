@@ -44,7 +44,7 @@ The current Cryptomator codebase has factored mount providers into
 packages (Maven dependencies). The clone here is the orchestrator,
 not the implementations:
 
-- [src/main/java/org/cryptomator/common/mount/Mounter.java](../../cryptomator/src/main/java/org/cryptomator/common/mount/Mounter.java)
+- [src/main/java/org/cryptomator/common/mount/Mounter.java](../../references/cryptomator/src/main/java/org/cryptomator/common/mount/Mounter.java)
   — picks a provider per OS. Notable: defaults to FUSE-T on Mac,
   not WebDAV. WebDAV is a fallback.
 - The AppleScript mounter and the WebDAV server (`MacAppleScriptMounter.java`,
@@ -68,7 +68,7 @@ entirely."
 ### 2. Production apps default *off* WebDAV on Mac
 
 Cryptomator's default Mac mount is **FUSE-T** (their `FuseTMountProvider`,
-in [Mounter.java](../../cryptomator/src/main/java/org/cryptomator/common/mount/Mounter.java)).
+in [Mounter.java](../../references/cryptomator/src/main/java/org/cryptomator/common/mount/Mounter.java)).
 WebDAV is a fallback for users who can't or won't install FUSE-T.
 
 This is significant: Cryptomator has the same "we ship to non-technical
@@ -82,7 +82,7 @@ Different escape from the same wall.
 
 ### 3. Pluggable mount providers as a code shape
 
-[Mounter.java](../../cryptomator/src/main/java/org/cryptomator/common/mount/Mounter.java)
+[Mounter.java](../../references/cryptomator/src/main/java/org/cryptomator/common/mount/Mounter.java)
 delegates to discoverable `MountService` implementations. Each
 provider declares capabilities (`MOUNT_AS_DRIVE_LETTER`,
 `MOUNT_TO_EXISTING_DIR`, etc.). The orchestrator picks one based on
@@ -136,5 +136,5 @@ The architectural artifact worth carrying:
   [PIVOT-NFS.md](PIVOT-NFS.md), [MVP-NFS.md](MVP-NFS.md),
   CHANGELOG v0.3.0
 - Cryptomator's mount orchestrator:
-  [src/main/java/org/cryptomator/common/mount/Mounter.java](../../cryptomator/src/main/java/org/cryptomator/common/mount/Mounter.java)
+  [src/main/java/org/cryptomator/common/mount/Mounter.java](../../references/cryptomator/src/main/java/org/cryptomator/common/mount/Mounter.java)
 - Cryptomator on GitHub: https://github.com/cryptomator/cryptomator

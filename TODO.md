@@ -203,6 +203,35 @@ DEVICE.md documents this as non-negotiable. Don't reorder.
       before tagging each v0.x.0; bump if a security fix has
       shipped. Captured in [SECURITY.md "Tracked items"](docs/SECURITY.md).
 
+## Morning review — human-facing docs
+
+- [ ] **Walk through human-facing docs in the morning** with fresh
+      eyes after last night's substantial changes. The day generated
+      a lot of new doc surface (SECURITY.md, PRE-LAUNCH.md,
+      RESEARCH-IMAGECAPTURECORE.md, PLAN-MULTI-STORAGE.md,
+      PLAN-MULTI-DEVICE.md, USER.md updates, OPENMTP/SWIFTMTP-NOTES
+      updates, NOTICES.md "Logo" section, CLAUDE.md "Security
+      Invariants" section) and substantial restructuring (sibling
+      repos moved to references/, icon pared to one PNG, multi-device
+      commitment now in the affirmative). Update as necessary:
+      - **README.md** — does the headline still read right? Does
+        "Single device at a time (today)" still match where we are?
+        Is the architecture section consistent with the bridge/icon
+        paring?
+      - **CHANGELOG.md** — anything we want to write before the
+        next tag?
+      - **The forensics docs (OPENMTP/SWIFTMTP/COPYPARTY/CRYPTOMATOR/
+        GO-NFS/LIBNFS-GO NOTES.md)** — references/ paths verified;
+        any stale claims now that the architectural picture has
+        shifted?
+      - **USER.md** — does the "What we are building toward" section
+        still match what we're committing to?
+      - **PRE-LAUNCH.md** — the launch checklist; sanity-check the
+        hard/soft/nice-to-have buckets.
+
+      A morning pass with coffee will catch the inconsistencies a
+      tired late-evening eye missed.
+
 ## Medium impact (reliability)
 
 - [ ] Error recovery — detect bridge crash mid-session, auto-restart

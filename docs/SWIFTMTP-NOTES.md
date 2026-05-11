@@ -11,7 +11,7 @@ under `/tmp/swiftmtp-site/` if it's still there.
 
 A 2,557-line Swift app + a 6.1 MB Go dylib (`kalam.dylib`) called
 via cgo through a 108-line C shim
-([KalamShim/KalamShim.c](../../SwiftMTP/KalamShim/KalamShim.c)). The
+([KalamShim/KalamShim.c](../../references/SwiftMTP/KalamShim/KalamShim.c)). The
 "Kalam" backend is [`github.com/ganeshrvel/go-mtpx`](https://github.com/ganeshrvel/go-mtpx)
 — same author as OpenMTP, the same backend OpenMTP itself uses,
 repackaged as a dylib instead of driven from Electron via Node/N-API.
@@ -42,10 +42,10 @@ pick that fight.
 ## On their "Multiple device connections" claim
 
 Verified 2026-05-10 by direct source-reading
-([KalamMTPManager.swift:1067–1096](../../SwiftMTP/SwiftMTP/Services/KalamMTPManager.swift)):
+([KalamMTPManager.swift:1067–1096](../../references/SwiftMTP/SwiftMTP/Services/KalamMTPManager.swift)):
 SwiftMTP's `switchDevice(to:)` does a **full `Dispose()` then
 `Initialize()`** on each device click. The Go backend uses
-go-mtpx's singleton `container.dev` ([structs.go:14](../../openmtp/ffi/kalam/native/structs.go)
+go-mtpx's singleton `container.dev` ([structs.go:14](../../references/openmtp/ffi/kalam/native/structs.go)
 — same backend OpenMTP uses), so only one device session can
 exist at a time. The README's "Multiple device connections (v1.1)"
 under "Realized" features is detection + UI switching, **not
@@ -110,7 +110,7 @@ Every operation in SwiftMTP:
 
 1. Swift builds a JSON string (input parameters)
 2. Swift calls a C function pointer in
-   [`KalamShim.c`](../../SwiftMTP/KalamShim/KalamShim.c)
+   [`KalamShim.c`](../../references/SwiftMTP/KalamShim/KalamShim.c)
 3. The Go dylib unmarshals JSON via jsoniter, performs the MTP work
 4. Go calls back via three function-pointer callbacks (preprocess,
    progress, done) with a JSON-stringified result envelope
@@ -118,7 +118,7 @@ Every operation in SwiftMTP:
 
 They use a static `CallbackRouter` enum with `weak var manager`
 because C function pointers can't capture Swift closures
-([KalamMTPManager.swift:82](../../SwiftMTP/SwiftMTP/Services/KalamMTPManager.swift#L82)).
+([KalamMTPManager.swift:82](../../references/SwiftMTP/SwiftMTP/Services/KalamMTPManager.swift#L82)).
 This is the canonical pattern for "Go dylib called from Swift" —
 worth knowing if Comprador ever in-processes the bridge.
 
@@ -136,7 +136,7 @@ for our debugging.
 
 ### 4. USB protocol-speed display
 
-[USBMonitor.swift](../../SwiftMTP/SwiftMTP/Services/USBMonitor.swift)
+[USBMonitor.swift](../../references/SwiftMTP/SwiftMTP/Services/USBMonitor.swift)
 walks IOKit to detect USB 2.0/3.0/3.1/3.2 and current negotiated
 speed in Mbps. ~60 lines, no extra entitlements. Cheap UX win for
 "why is my transfer slow" — we could surface "USB 2.0 (480 Mbps)"
@@ -186,7 +186,7 @@ discipline to copy.
 
 ### `lockMtp()` is a no-op masquerading as a mutex
 
-[helpers.go:191](../../SwiftMTP/ffi/kalam/native/helpers.go#L191):
+[helpers.go:191](../../references/SwiftMTP/ffi/kalam/native/helpers.go#L191):
 
 ```go
 func lockMtp() error {
@@ -215,7 +215,7 @@ same property correctly.
 
 SwiftMTP retries USB connect attempts with a 2-second delay and a
 max retry count
-([KalamMTPManager.swift:556+](../../SwiftMTP/SwiftMTP/Services/KalamMTPManager.swift#L556)).
+([KalamMTPManager.swift:556+](../../references/SwiftMTP/SwiftMTP/Services/KalamMTPManager.swift#L556)).
 No queueing of attach events that arrive while a previous teardown
 is still in flight. They don't need it because they don't unmount —
 but if they ever did, they'd re-walk the path we already walked
@@ -268,9 +268,9 @@ Local clone: `~/Labs/SwiftMTP/`. Last fetched 2026-05-09.
 
 Files most worth re-reading if the question comes up again:
 
-- [SwiftMTP/Services/KalamMTPManager.swift](../../SwiftMTP/SwiftMTP/Services/KalamMTPManager.swift) — 1,267 lines, the Swift↔Go callback machinery
-- [SwiftMTP/Services/USBMonitor.swift](../../SwiftMTP/SwiftMTP/Services/USBMonitor.swift) — 566 lines, the USB-protocol-speed detection
-- [KalamShim/KalamShim.c](../../SwiftMTP/KalamShim/KalamShim.c) — 69 lines, the C bridging
-- [ffi/kalam/native/kalam.go](../../SwiftMTP/ffi/kalam/native/kalam.go) — 481 lines, the Go-side `//export` surface
-- [SwiftMTP.entitlements](../../SwiftMTP/SwiftMTP/SwiftMTP.entitlements) — the sandbox-compatible entitlement set
-- [Comparison.md](../../SwiftMTP/Comparison.md) — their pitch in compressed form
+- [SwiftMTP/Services/KalamMTPManager.swift](../../references/SwiftMTP/SwiftMTP/Services/KalamMTPManager.swift) — 1,267 lines, the Swift↔Go callback machinery
+- [SwiftMTP/Services/USBMonitor.swift](../../references/SwiftMTP/SwiftMTP/Services/USBMonitor.swift) — 566 lines, the USB-protocol-speed detection
+- [KalamShim/KalamShim.c](../../references/SwiftMTP/KalamShim/KalamShim.c) — 69 lines, the C bridging
+- [ffi/kalam/native/kalam.go](../../references/SwiftMTP/ffi/kalam/native/kalam.go) — 481 lines, the Go-side `//export` surface
+- [SwiftMTP.entitlements](../../references/SwiftMTP/SwiftMTP/SwiftMTP.entitlements) — the sandbox-compatible entitlement set
+- [Comparison.md](../../references/SwiftMTP/Comparison.md) — their pitch in compressed form

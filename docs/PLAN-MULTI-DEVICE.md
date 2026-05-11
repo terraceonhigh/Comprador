@@ -169,7 +169,7 @@ Icon state in the menu bar:
   over "any mounted" — surface the problem)
 
 Borrows shape from SwiftMTP's
-[SidebarView.swift:36–39](../../SwiftMTP/SwiftMTP/Views/SidebarView.swift)
+[SidebarView.swift:36–39](../../references/SwiftMTP/SwiftMTP/Views/SidebarView.swift)
 which iterates `ForEach(manager.availableDevices) { device in
 deviceSection(device) }`. Same pattern, our menu instead of their
 sidebar.
@@ -256,7 +256,7 @@ in v0.4.0.
 ## What to borrow
 
 - **SwiftMTP's per-device section pattern**
-  ([SidebarView.swift:36–39](../../SwiftMTP/SwiftMTP/Views/SidebarView.swift))
+  ([SidebarView.swift:36–39](../../references/SwiftMTP/SwiftMTP/Views/SidebarView.swift))
   — `ForEach(devices) { deviceSection($0) }`. We adapt to NSMenu.
 - **SwiftMTP's connection-phase state machine** (KalamMTPManager
   has phases: `.disconnected → .connecting → .connected → .error`).
@@ -265,7 +265,7 @@ in v0.4.0.
 - **OpenMTP's device-changed detection by serial** — useful as
   fallback identity check when Location ID flakes
   (`verifyMtpSession` in
-  [helpers.go:10–33](../../openmtp/ffi/kalam/native/helpers.go)).
+  [helpers.go:10–33](../../references/openmtp/ffi/kalam/native/helpers.go)).
 
 ## What *not* to borrow
 
@@ -370,15 +370,15 @@ captured in [SWIFTMTP-NOTES.md](SWIFTMTP-NOTES.md) and
 [OPENMTP-NOTES.md](OPENMTP-NOTES.md)):
 
 - OpenMTP backend singleton (the thing we *don't* want):
-  [structs.go:13–17](../../openmtp/ffi/kalam/native/structs.go),
-  [kalam.go:19](../../openmtp/ffi/kalam/native/kalam.go).
+  [structs.go:13–17](../../references/openmtp/ffi/kalam/native/structs.go),
+  [kalam.go:19](../../references/openmtp/ffi/kalam/native/kalam.go).
 - OpenMTP rejects multi-device-attached:
-  [send_to_js/helpers.go](../../openmtp/ffi/kalam/native/send_to_js/helpers.go)
+  [send_to_js/helpers.go](../../references/openmtp/ffi/kalam/native/send_to_js/helpers.go)
   `ErrorMultipleDevice`.
 - SwiftMTP's switch-on-click implementation:
-  [KalamMTPManager.swift:1067–1096](../../SwiftMTP/SwiftMTP/Services/KalamMTPManager.swift).
+  [KalamMTPManager.swift:1067–1096](../../references/SwiftMTP/SwiftMTP/Services/KalamMTPManager.swift).
 - SwiftMTP's sidebar iteration (the pattern we adapt):
-  [SidebarView.swift:36–39](../../SwiftMTP/SwiftMTP/Views/SidebarView.swift).
+  [SidebarView.swift:36–39](../../references/SwiftMTP/SwiftMTP/Views/SidebarView.swift).
 
 Pre-condition tracked here:
 
