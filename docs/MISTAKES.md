@@ -156,6 +156,17 @@ caretaker workaround.
 
 ## WebDAV / Finder
 
+> **Section status — slated for historical archive once v0.4.0 ships.**
+> NFS has been the default mount path since v0.3.0 (2026-05-09). The
+> WebDAV apparatus is retained in tree for legacy reasons but is no
+> longer exercised by normal use; the v0.4.0 retirement work
+> ([TODO.md "Tidying" Tier 3](../TODO.md)) will remove
+> `bridge/webdav/`, `MountManager.mount`, `ResumeCompanion`, and the
+> writeseq-cap heuristics. At that point, every entry in this section
+> (9, 9a, 10, 11, 11a–11e) becomes a postmortem on code that no longer
+> exists. Keep them — the underlying lessons about Apple's webdavfs
+> quirks generalise — but read them with that frame.
+
 ### 9. `Seek` always returned `(0, nil)`
 
 **What happened:** Our `mtpFile.Seek()` fetched the file into a
@@ -805,6 +816,18 @@ Our stub does this (`hello.txt`). The MTP adapter will naturally satisfy
 this because storage roots always contain at least one child.
 
 ## SMAppService / Helper
+
+> **Section status — helper itself slated for v0.4.0 retirement.**
+> The privileged helper is no longer invoked on the NFS mount path
+> (per the entry below) and the only feature it still serves is the
+> optional cosmetic `.local` hostname rewrite via `/etc/hosts`.
+> [TODO.md "Tidying" Tier 3](../TODO.md) tracks the v0.4.0 decision
+> to either drop that cosmetic entirely or migrate it to a one-shot
+> root prompt at install time. When that lands, `helper/`,
+> `HelperClient.swift`, the BUNDLE_HELPER Makefile recipe, the
+> LaunchDaemon plist, and the SMAppService.daemon registration all
+> go with it. The postmortem below remains the canonical receipt
+> of what we learned designing-then-removing the helper.
 
 ### 1. The privileged helper was load-bearing for nothing
 
