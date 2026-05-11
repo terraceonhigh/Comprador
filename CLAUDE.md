@@ -610,4 +610,4 @@ binding layer.
 
 ## Pre-Launch Checklist
 
-- [ ] Logo needed before public release
+- [x] Logo — Merian/Sluyter 1705 pomegranate plate (PD), see [NOTICES.md](NOTICES.md#logo)

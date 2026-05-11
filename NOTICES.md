@@ -69,6 +69,41 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ---
 
+## Logo
+
+The Comprador app icon is derived from a plate in Maria Sibylla
+Merian's *Metamorphosis Insectorum Surinamensium* (1705), depicting
+the pomegranate (*Punica granatum*) with associated Surinamese
+butterflies and caterpillars. The plate is engraved "P. Sluyter
+Sculp." (Pieter Sluyter).
+
+- **Original work:** Maria Sibylla Merian, *Metamorphosis
+  Insectorum Surinamensium*, 1705
+- **Source institution:** Biodiversity Heritage Library / Smithsonian
+  Libraries and Archives
+- **Source URL:**
+  https://pdimagearchive.org/images/0b96d3ac-8cf3-4ffd-865f-f906a2fd7962/
+- **License of original:** Public Domain Worldwide (no additional
+  rights). The work is well out of copyright by age (Merian d. 1717,
+  Sluyter d. ~1730).
+
+**Modifications for Comprador:** the full plate was cropped to a
+square framing the brown eyespot-butterfly perched on the small red
+pomegranate flower (upper-center-left of the original). The
+intruding tip of the Blue Morpho wing in the upper-right corner of
+the crop region was retouched out so the eyespot-butterfly stands
+alone. The crop is then resized to the macOS standard app-icon
+sizes (16, 32, 64, 128, 256, 512, 1024 px) and packaged into both
+a `.icns` and an `Assets.xcassets/AppIcon.appiconset`. The source
+crop is committed at `images/icon-2nd-crop.png`; the working files
+are at `MenuBarApp/Resources/Comprador.icns` and
+`MenuBarApp/Resources/Assets.xcassets/AppIcon.appiconset/`.
+
+These modifications introduce no new copyright restrictions; the
+derivative remains in the public domain.
+
+---
+
 ## Historical: OpenMTP
 
 Comprador was originally created by forking

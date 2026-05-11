@@ -147,6 +147,7 @@ app-swiftc: bridge helper
 	cp $(SWIFT_BIN) $(SWIFT_APP)/Contents/MacOS/$(APP_NAME)
 	cp MenuBarApp/Info.plist $(SWIFT_APP)/Contents/Info.plist
 	cp MenuBarApp/Resources/VendorIDs.plist $(SWIFT_APP)/Contents/Resources/
+	cp MenuBarApp/Resources/Comprador.icns $(SWIFT_APP)/Contents/Resources/
 	@printf 'APPL????' > $(SWIFT_APP)/Contents/PkgInfo
 	$(call BUNDLE_BRIDGE,$(SWIFT_APP))
 	$(call BUNDLE_HELPER,$(SWIFT_APP))
