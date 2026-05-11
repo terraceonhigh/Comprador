@@ -26,19 +26,28 @@ with a web-feeling UI, lots of users tried it and bounced (see
 ## What Comprador inherited
 
 Comprador's `master` branch is descended from a fork of OpenMTP's
-master at some early point. The ancestry is mostly historical now:
+master at some early point. The ancestry is **historical only** —
+no source code remains:
 
 - **The `openmtp` clone in `~/Labs/` is reference material only.**
   CLAUDE.md is explicit: "Don't modify." We pull from it when we
   need to remember how the upstream solved a particular MTP edge
   case, not to merge upstream changes.
-- **No code is left in Comprador's `bridge/` that traces directly
-  to OpenMTP's main repo.** The bridge was rewritten in Go around
-  `libmtp` (different choice from upstream's `go-mtpx`), and the
-  Swift menu bar app is a clean reimplementation.
-- **What's preserved is the README ancestry note**
-  ([README.md:187](../README.md)) and the LICENSE — we inherited
-  MIT from upstream and stay MIT.
+- **No OpenMTP code remains in Comprador.** Per
+  [NOTICES.md](../NOTICES.md), commit `402f147` ("Remove all
+  legacy OpenMTP code") cleared it out. The bridge was rewritten
+  in Go around `libmtp` (different choice from upstream's
+  `go-mtpx`), and the Swift menu bar app is a clean
+  reimplementation.
+- **The fork relationship was formally severed on GitHub.**
+  Comprador no longer carries OpenMTP's MIT copyright.
+- **Comprador's current license is GPLv3-or-later** ([LICENSE](../LICENSE)),
+  not MIT. The relicense happened with the OpenMTP-code removal,
+  since MIT inheritance no longer applied once the inherited code
+  was gone. NOTICES.md preserves the historical acknowledgement.
+- **What is preserved is the README ancestry note**
+  ([README.md:187](../README.md)) — a courtesy beyond what GPL or
+  CC-BY would require.
 
 ## Architectural divergence at a glance
 
@@ -160,27 +169,30 @@ ones we've intentionally rejected. The exceptions are minor:
 
 OpenMTP is upstream-active (last commit Aug 2025). They will
 continue to ship. Comprador is no longer in any meaningful sense
-"OpenMTP plus Finder integration" — we share lineage and license,
-but the shape of the product, the backend, and the integration
-strategy are all ours. We don't track upstream. We don't backport.
+"OpenMTP plus Finder integration" — we share lineage but not
+license, code, or product shape. We don't track upstream. We
+don't backport.
 
 What we owe upstream:
 
-- Attribution in README and LICENSE (already done)
+- Historical attribution in README and NOTICES.md (already done)
 - An honest distinguishing position when describing the project in
   any public forum
 
-What we don't owe upstream:
+What we don't owe upstream (since the fork was severed and no
+OpenMTP code remains):
 
+- License continuity (Comprador is GPLv3-or-later; OpenMTP is MIT)
 - Engineering compatibility
 - Backporting bug fixes
-- Naming continuity beyond LICENSE
+- Naming continuity
 - Adopting their architectural decisions
 
 ## Receipts
 
 - README ancestry note: [README.md:187](../README.md)
-- License inheritance: [LICENSE](../LICENSE) (root of Comprador)
+- Comprador's current license (GPLv3-or-later, not MIT): [LICENSE](../LICENSE)
+- The fork-severance record: [NOTICES.md](../NOTICES.md) "Historical: OpenMTP" section
 - The reason "Why not just OpenMTP?" framing exists in
   [CLAUDE.md](../CLAUDE.md) project intro and in
   [USER.md](USER.md) (the user who tried OpenMTP and bounced)
