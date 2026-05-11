@@ -37,6 +37,24 @@ pick that fight.
 | Notarized | Yes, since v0.2.3 | No — README tells the user to `xattr -rd com.apple.quarantine` |
 | Distribution | Standalone .dmg from GitHub Releases | Standalone .dmg from GitHub Releases |
 | Languages | English only (README has a Chinese counterpart) | en, zh-Hans, zh-Hant, ja, es, ar |
+| Multi-device | **Concurrent N (planned, gated on cgo fix)** — see [PLAN-MULTI-DEVICE.md](PLAN-MULTI-DEVICE.md) | N-detected, 1-active, switch-on-click (not concurrent) |
+
+## On their "Multiple device connections" claim
+
+Verified 2026-05-10 by direct source-reading
+([KalamMTPManager.swift:1067–1096](../../SwiftMTP/SwiftMTP/Services/KalamMTPManager.swift)):
+SwiftMTP's `switchDevice(to:)` does a **full `Dispose()` then
+`Initialize()`** on each device click. The Go backend uses
+go-mtpx's singleton `container.dev` ([structs.go:14](../../openmtp/ffi/kalam/native/structs.go)
+— same backend OpenMTP uses), so only one device session can
+exist at a time. The README's "Multiple device connections (v1.1)"
+under "Realized" features is detection + UI switching, **not
+concurrent session management.**
+
+Comprador's planned multi-device is structurally different:
+N subprocess bridges, N libmtp sessions, N NFS mounts. Both
+references would need to fork or replace go-mtpx to match. The
+moat is real.
 
 ## Things worth stealing
 

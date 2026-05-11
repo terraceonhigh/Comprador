@@ -49,8 +49,27 @@ master at some early point. The ancestry is mostly historical now:
 | Surface | Own app window | Finder volume mount |
 | Size | ~360 MB | ~7 MB |
 | Notarized | Yes | Yes (since v0.2.3) |
-| Multi-device | Yes | One device at a time |
+| Multi-device | **No** — rejects with `ErrorMultipleDevice` | **Concurrent N (planned, gated on cgo fix)** — see [PLAN-MULTI-DEVICE.md](PLAN-MULTI-DEVICE.md) |
 | Integration ceremony | Open the app | Plug in, tap File Transfer |
+
+## On the "Multi-device: Yes" line that used to live here
+
+An earlier version of this comparison table said OpenMTP supported
+multi-device. **It doesn't.** Verified 2026-05-10 by direct
+source-reading: OpenMTP's `Initialize()` returns
+`ErrorMultipleDevice` ("Multiple MTP devices found") if more than
+one MTP device is attached
+([send_to_js/helpers.go](../../openmtp/ffi/kalam/native/send_to_js/helpers.go),
+user-facing message in
+[processBufferOutput.js](../../openmtp/app/helpers/processBufferOutput.js)).
+The user has to physically disconnect extras before OpenMTP works
+at all. The backend uses a singleton `container.dev`
+([structs.go:13–17, kalam.go:19](../../openmtp/ffi/kalam/native/structs.go))
+and provides no path to N sessions.
+
+This makes Comprador's planned concurrent multi-device a genuine
+differentiator — the architectural cost is one OpenMTP can't pay
+without forking or replacing go-mtpx.
 
 ## What's still useful as reference
 
