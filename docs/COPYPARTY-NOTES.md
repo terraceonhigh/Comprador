@@ -35,7 +35,7 @@ memory [feedback_verify_agent_claims.md](file:///Users/terrace/.claude/projects/
 
 ## What we found in the source
 
-[copyparty/httpcli.py:1885–1886](../../copyparty/copyparty/httpcli.py)
+[copyparty/httpcli.py:1885–1886](../../references/copyparty/copyparty/httpcli.py)
 is the load-bearing line:
 
 ```python
@@ -50,7 +50,7 @@ copyparty tells "this is Finder" apart from "this is a non-Finder
 client."
 
 When the test passes (Finder asking for quota), copyparty *still
-emits real quota numbers* ([httpcli.py:1914–1915](../../copyparty/copyparty/httpcli.py)):
+emits real quota numbers* ([httpcli.py:1914–1915](../../references/copyparty/copyparty/httpcli.py)):
 
 ```python
 "quota-available-bytes": str(bfree),
@@ -128,7 +128,7 @@ The transferable artifacts are conceptual:
 - The lesson:
   [feedback_verify_agent_claims.md](file:///Users/terrace/.claude/projects/-Users-terrace-Labs-Comprador/memory/feedback_verify_agent_claims.md)
 - The actual quota-handling code:
-  [copyparty/copyparty/httpcli.py:1885–1915](../../copyparty/copyparty/httpcli.py)
+  [copyparty/copyparty/httpcli.py:1885–1915](../../references/copyparty/copyparty/httpcli.py)
 - copyparty issue #1242 (the thread that started this):
   https://github.com/9001/copyparty/issues/1242
 - Comprador's parallel quota work:

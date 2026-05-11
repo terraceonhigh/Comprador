@@ -47,7 +47,7 @@ Mostly nothing for Comprador's current path. The clone is
 referential ("did we miss something?" can be re-checked here without
 fetching again). Files of incidental interest:
 
-- [memfs/](../../libnfs-go/memfs/) — an in-memory filesystem
+- [memfs/](../../references/libnfs-go/memfs/) — an in-memory filesystem
   reference implementation. Cleaner Go style than go-nfs's
   equivalent if we ever need to teach the patterns. But our adapter
   pattern in [bridge/nfs/](../../bridge/nfs/) is already in flight

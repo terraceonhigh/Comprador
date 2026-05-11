@@ -350,7 +350,7 @@ binary signed with the App Sandbox entitlement
 (`com.apple.security.app-sandbox = true`) plus
 `com.apple.security.device.usb = true`. The reasoning: SwiftMTP
 ships with exactly this entitlement set
-([SwiftMTP.entitlements](../../SwiftMTP/SwiftMTP/SwiftMTP.entitlements))
+([SwiftMTP.entitlements](../../references/SwiftMTP/SwiftMTP/SwiftMTP.entitlements))
 and successfully drives PTP/MTP operations through the same Mac
 that hosts ptpcamerad. The ImageCaptureCore framework is
 expressly designed for sandboxed clients (Image Capture itself

@@ -68,12 +68,12 @@ multi-device. **It doesn't.** Verified 2026-05-10 by direct
 source-reading: OpenMTP's `Initialize()` returns
 `ErrorMultipleDevice` ("Multiple MTP devices found") if more than
 one MTP device is attached
-([send_to_js/helpers.go](../../openmtp/ffi/kalam/native/send_to_js/helpers.go),
+([send_to_js/helpers.go](../../references/openmtp/ffi/kalam/native/send_to_js/helpers.go),
 user-facing message in
-[processBufferOutput.js](../../openmtp/app/helpers/processBufferOutput.js)).
+[processBufferOutput.js](../../references/openmtp/app/helpers/processBufferOutput.js)).
 The user has to physically disconnect extras before OpenMTP works
 at all. The backend uses a singleton `container.dev`
-([structs.go:13–17, kalam.go:19](../../openmtp/ffi/kalam/native/structs.go))
+([structs.go:13–17, kalam.go:19](../../references/openmtp/ffi/kalam/native/structs.go))
 and provides no path to N sessions.
 
 This makes Comprador's planned concurrent multi-device a genuine
@@ -87,15 +87,15 @@ that someone actually ships." When we hit an MTP corner that libmtp
 doesn't handle gracefully and we suspect `go-mtpx` does it
 differently, this is where we look:
 
-- [`ffi/kalam/`](../../openmtp/ffi/kalam/) — the cgo Go MTP backend.
+- [`ffi/kalam/`](../../references/openmtp/ffi/kalam/) — the cgo Go MTP backend.
   Same codebase that SwiftMTP also uses. Read this when our libmtp
   binding hits an edge case (e.g. the `LIBMTP_FILES_AND_FOLDERS_ROOT`
   constant gotcha, MISTAKES.md §2 — `go-mtpx`'s equivalent walks the
   flat handle space differently).
-- [`app/main.dev.js`](../../openmtp/app/main.dev.js) — Electron main
+- [`app/main.dev.js`](../../references/openmtp/app/main.dev.js) — Electron main
   process and IPC plumbing. Useful only as a "this is what the
   Electron-wrapped pattern looks like." Comprador doesn't use this.
-- [`app/containers/HomePage/`](../../openmtp/app/containers/HomePage)
+- [`app/containers/HomePage/`](../../references/openmtp/app/containers/HomePage)
   (likely path) — the file-manager UI logic. Not relevant to us
   since we don't have a UI; potentially useful if we ever need
   reference for "how did OpenMTP handle MTP errors in user-visible
