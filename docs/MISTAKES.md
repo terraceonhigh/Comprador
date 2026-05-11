@@ -714,6 +714,71 @@ Commit() hook to the Handler interface so write completion triggers MTP upload.
 
 **Reference:** `~/Labs/go-nfs/nfs_oncreate.go:43`
 
+### 1a. Per-storage FSStat: macOS may FSSTAT against the root file handle regardless of statfs(2) path (investigation pending)
+
+**Symptom (2026-05-11):** With the multi-storage FSStat patch landed
+(commit `5bfd2462`, [PLAN-MULTI-STORAGE.md](PLAN-MULTI-STORAGE.md)
+steps 1–3), `df -h` against two distinct storages on the Xperia
+returns identical numbers for both:
+
+```
+terrace@gala comprador % df -h ./Internal\ shared\ storage
+Filesystem         Size    Used   Avail Capacity ...
+XQ-BT52.local:/   134Gi    18Gi   116Gi    14%   ...
+terrace@gala comprador % df -h ./SD\ card
+Filesystem         Size    Used   Avail Capacity ...
+XQ-BT52.local:/   134Gi    18Gi   116Gi    14%   ...
+```
+
+Both report what looks like the **aggregate** (or the Internal-only
+total, hard to tell without phone-side reference numbers). The
+patched go-nfs handler forwards `path` to `Handler.FSStat`; our
+handler matches `path[0]` against `sanitizeName(st.Description)`
+for each storage. If both df calls hit the aggregate fallback,
+`path` was empty on both invocations — i.e., macOS's NFSv3 client
+sent the **root** file handle for both FSSTAT RPCs, regardless of
+which subpath statfs(2) was invoked against.
+
+**Hypothesis.** macOS optimizes FSSTAT by always sending the root
+FH (since FSSTAT is semantically a filesystem-wide query). The
+path we resolve from the handle is therefore always `[]`. The
+patch is mechanically correct but doesn't get the information it
+needs from the kernel.
+
+**Diagnostic added (same commit, follow-up):** the FSStat handler
+now logs `path=...` on every call; the storage-init log prints
+`Description → sanitized` so we can compare verbatim. Re-run with
+`make dev-nfs 2>&1 | tee build/dev-nfs.log` and we'll see what
+macOS actually sends.
+
+**If the hypothesis holds**, plan option 1 (path-via-FSStat-arg)
+is structurally insufficient and we have to fall back to plan
+option 2 (encode storage in the NFS file handle so `FromHandle`
+yields path-and-storage). Option 2 is more invasive but doesn't
+depend on the client's FSSTAT-path behavior.
+
+**Status:** awaiting diagnostic log from a re-run.
+
+### 1b. Directory copy: some files do not make the jump (investigation pending)
+
+**Symptom (2026-05-11):** Architect copied a directory tree into
+the NFS-mounted phone. A single image read and a single image
+write both worked. The directory copy partially succeeded —
+"some files did not make the jump." Specific files affected,
+their characteristics, and whether the failure was on Mac side
+(NFS RPC error), bridge side (libmtp send error), or phone side
+(file appears in MTP enumeration but not on phone) are all TBD
+until we have the bridge log.
+
+**Existing log surface that should help diagnose:** `idle-flush
+%s: %v` (errors), `idle-flush %s: committed` (successes), and
+`COMMIT %s: %v` errors are all already logged in `bridge/nfs/`.
+A pre-/post-comparison of which files appear in successive
+READDIR responses, combined with these log lines, should pin
+the failure mode.
+
+**Status:** awaiting bridge log from a re-run of the same copy.
+
 ### 2. In-tree `helpers/memfs` root acknowledgement
 
 **What happened:** The go-nfs test suite has a comment:

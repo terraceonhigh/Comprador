@@ -58,12 +58,16 @@ func (h *mtpNFSHandler) FSStat(_ context.Context, _ billy.Filesystem, path []str
 		s.TotalSize = storage.MaxBytes
 		s.FreeSize = storage.FreeBytes
 		s.AvailableSize = storage.FreeBytes
+		log.Printf("FSStat path=%v → storage=%q free=%d/total=%d",
+			path, storage.Description, storage.FreeBytes, storage.MaxBytes)
 		return nil
 	}
 
 	s.TotalSize = h.session.TotalBytes()
 	s.FreeSize = h.session.FreeBytes()
 	s.AvailableSize = h.session.FreeBytes()
+	log.Printf("FSStat path=%v → aggregate (no storage match) free=%d/total=%d",
+		path, s.FreeSize, s.TotalSize)
 	return nil
 }
 

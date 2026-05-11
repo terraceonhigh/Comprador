@@ -368,8 +368,8 @@ func (s *Session) initStorages() error {
 
 	log.Printf("Found %d storage(s)", len(storages))
 	for _, st := range storages {
-		log.Printf("  Storage %d: %s (%.1f GB free / %.1f GB total)",
-			st.ID, st.Description,
+		log.Printf("  Storage %d: %q → sanitized %q (%.1f GB free / %.1f GB total)",
+			st.ID, st.Description, sanitizeName(st.Description),
 			float64(st.FreeBytes)/1e9, float64(st.MaxBytes)/1e9)
 
 		storagePath := "/" + sanitizeName(st.Description)
