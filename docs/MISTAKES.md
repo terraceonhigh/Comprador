@@ -759,25 +759,38 @@ depend on the client's FSSTAT-path behavior.
 
 **Status:** awaiting diagnostic log from a re-run.
 
-### 1b. Directory copy: some files do not make the jump (investigation pending)
+### 1b. Directory copy: some files do not make the jump (resolved — wrong destination path)
 
-**Symptom (2026-05-11):** Architect copied a directory tree into
-the NFS-mounted phone. A single image read and a single image
-write both worked. The directory copy partially succeeded —
-"some files did not make the jump." Specific files affected,
-their characteristics, and whether the failure was on Mac side
-(NFS RPC error), bridge side (libmtp send error), or phone side
-(file appears in MTP enumeration but not on phone) are all TBD
-until we have the bridge log.
+**Symptom (2026-05-11):** Architect copied a 432-file ECON101
+directory tree from Mac to phone and reported "some files did
+not make the jump." Initial diff against
+`/tmp/comprador/SD card/Download/ECON101` showed only 36 of 432
+files present — catastrophic loss on the face of it.
 
-**Existing log surface that should help diagnose:** `idle-flush
-%s: %v` (errors), `idle-flush %s: committed` (successes), and
-`COMMIT %s: %v` errors are all already logged in `bridge/nfs/`.
-A pre-/post-comparison of which files appear in successive
-READDIR responses, combined with these log lines, should pin
-the failure mode.
+**Actual cause:** the destination was `Internal shared storage`,
+not `SD card`. The directory copy succeeded in full; the
+verification diff was reading the wrong storage. Re-running
+against `/tmp/comprador/Internal shared storage/Download/ECON101`
+showed **430 files matching by sha256 byte-perfect**, 1 file
+missing (`iclicker_quizzes/.DS_Store` — a Finder metadata file,
+not user content), and 1 hash mismatch (the top-level
+`.DS_Store` — Finder legitimately regenerates this for the
+destination directory).
 
-**Status:** awaiting bridge log from a re-run of the same copy.
+The 270 "extra" files on the phone were all `._*`-prefixed
+AppleDouble companion files Finder writes to non-HFS+ targets
+to preserve extended attributes. This noise is a known polish
+item — see [V0.3.3.md item #3](V0.3.3.md) "Filter `._xattr` /
+`.AppleDouble` companion files" — but not a transfer fault.
+
+**Lesson.** Verify destination paths explicitly before drawing
+conclusions about transfer fidelity. A 432→36 mismatch is
+dramatic enough to look like a deep bug, but the actual cause
+was reading a different storage entirely. Pair "what files
+appeared at X" with "what path is X" — they're not always the
+path the user thinks.
+
+**Status:** closed.
 
 ### 2. In-tree `helpers/memfs` root acknowledgement
 
