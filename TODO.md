@@ -1,5 +1,112 @@
 # Comprador — TODO
 
+## Navigation — where work lives
+
+This file is the central backlog. Several adjacent docs track
+specific kinds of work that don't belong here verbatim; check
+all of them before assuming "is there nothing else?"
+
+| Doc | Holds |
+|---|---|
+| [TODO.md](TODO.md) (this file) | Open items not tied to a specific release or plan. The default place for new work. |
+| [docs/V0.3.3.md](docs/V0.3.3.md) | Per-release polish list. Item-numbered, ✓ marks shipped. When v0.3.3 cuts, create `docs/V0.4.0.md` for the next cycle. |
+| [docs/PLAN-MULTI-STORAGE.md](docs/PLAN-MULTI-STORAGE.md) | Multi-storage feature plan. The §Sequence section is its TODO. |
+| [docs/PLAN-MULTI-DEVICE.md](docs/PLAN-MULTI-DEVICE.md) | Multi-device feature plan. Same shape — §Sequence enumerates remaining steps. |
+| [docs/MISTAKES.md](docs/MISTAKES.md) | Numbered failure receipts. Entries marked "investigation pending" are implicit TODOs. |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | Dated decision journal. Each entry's "Verification plan" line is a forward-looking item. |
+| [docs/PRE-LAUNCH.md](docs/PRE-LAUNCH.md) | Launch checklist for the public announcement. |
+| [~/Labs/TODO.md](../TODO.md) | Cross-project backlog (secrets handling, Forgejo migration, project renames). Different scope. |
+| `correspondence/*/letter.md` | Letters end with "Recommendation for tomorrow" lists. **Ephemeral** — a snapshot of one writer's view, not authoritative. Don't promote from here without re-considering. |
+
+**Code-level `TODO`/`FIXME` comments are pointer comments only** —
+they reference this file or another doc, not unsynced items. If
+you find yourself wanting to leave a TODO in code, write it here
+or in the appropriate doc above instead.
+
+---
+
+## On-return pickups — autonomous session 2026-05-11
+
+Items the autonomous afternoon session surfaced but couldn't
+close without hands on the bridge. See
+[correspondence/12-autonomous-afternoon-2026-05-11/letter.md](correspondence/12-autonomous-afternoon-2026-05-11/letter.md)
+for full context.
+
+- [ ] **Clean up the stale NFS mount** at `/private/tmp/comprador`.
+      The bridge process (PID 79411) was killed mid-session per
+      the architect's instruction; the mount entry on the kernel
+      side persists. `sudo umount /private/tmp/comprador` to
+      drop it before the next `make dev-nfs` cycle.
+- [ ] **Diagnostic verification of MISTAKES 1a** (per-storage
+      FSStat returning aggregate). Restart bridge with the
+      diagnostic build (already at HEAD on `claude/multi-storage`):
+      `make dev-nfs 2>&1 | tee build/dev-nfs.log`, mount, df both
+      storages, grep the log for `FSStat path=`. Outcome
+      determines whether plan option 1 sufficed or we need
+      option 2 (encode storage in the NFS file handle). Detail
+      in [MISTAKES.md entry 1a](docs/MISTAKES.md).
+- [ ] **End-to-end verification of V0.3.3 #1** (TTL directory
+      refresh / phone-side mutation surfacing). With the new
+      bridge, `adb shell rm <file>` on the phone, wait ~2s,
+      list the parent directory through the mount, confirm the
+      file is gone. Logic is unit-tested
+      (`make bridge-test`); the wire-up isn't.
+- [ ] **Decide PR shape on `claude/multi-storage`.** 11 commits
+      ahead of master. Each commit is independently reviewable;
+      letter 12 has the chronological summary. Push and merge
+      at the architect's pace.
+
+---
+
+## Verification follow-ups
+
+Carried forward from DECISIONS.md, not blocking but real:
+
+- [ ] **9 GiB Attenborough.mkv vmmap retake on the cgo-fix
+      bridge.** [DECISIONS.md "Vanquishing the per-callback
+      VM_ALLOCATE leak"](docs/DECISIONS.md) lists this as the
+      proper acceptance criterion (physical footprint < 1 GB,
+      VM_ALLOCATE regions < ~50 vs the pre-fix 409). Today's
+      partial confirmation was 49.6 MB transfer → 8.4 MB RSS —
+      directional evidence but not the spec'd test.
+
+---
+
+## Tidying
+
+Discussed 2026-05-11; deliberately deferred to a focused tidying
+session rather than rolled into a code commit.
+
+- [ ] **Delete `bridge/cmd/ictest1/` and `bridge/cmd/ictest2/`**
+      plus their Makefile targets (`ictest1`, `ictest2`) and the
+      `ICTEST1_OUT` / `ICTEST2_OUT` variables.
+      [DECISIONS.md "ImageCaptureCore investigation"](docs/DECISIONS.md)
+      explicitly marks these "deletable in a single commit once
+      the receipt in RESEARCH-IMAGECAPTURECORE.md is sufficient on
+      its own" — and it is. Net: ~350 lines of Swift gone, no
+      information loss.
+- [ ] **Delete `build/dir-diff.py` and `build/list-phone.py`.**
+      Ad-hoc scripts from the directory-copy investigation,
+      superseded by `test-md5.sh`. Already gitignored
+      (`build/` is gitignored), so this is working-directory
+      hygiene only.
+- [ ] **Consider `docs/V0.4.0.md`** as a single home for items
+      slated for v0.4.0 retirement: the privileged helper
+      (`helper/` + LaunchDaemon plist + the BUNDLE_HELPER
+      Makefile recipe), the WebDAV mount path (bridge/webdav/,
+      MountManager.mount vs mountNFS, ResumeCompanion, writeseq
+      heuristics), the `com.apple.developer.system-extension.install`
+      entitlement on the production .entitlements file. The
+      items are scattered across SECURITY.md, CHANGELOG, and
+      individual file comments; a single V0.4.0.md would
+      collect them.
+- [ ] **Trim the "Original spec preserved for reference" tails**
+      in shipped V0.3.3.md items. Judgment call — they're useful
+      while the change is recent, dead weight in a year. Probably
+      ~100 lines lighter if removed.
+
+---
+
 ## ✓ Closed — cgo callback buffer reuse
 
 Shipped 2026-05-06 in commit `90fb7216` ("mtp: reuse one buffer
