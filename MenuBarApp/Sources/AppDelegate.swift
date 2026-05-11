@@ -6,10 +6,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var deviceWatcher: DeviceWatcher!
     private var welcomeController: WelcomeWindowController?
 
-    /// The currently connected device's session, or nil if no device is
-    /// attached. PLAN-MULTI-DEVICE.md step 2: single optional now; step 3
-    /// will widen this to `[DeviceID: DeviceSession]`.
-    private var session: DeviceSession?
+    /// Active device sessions keyed by USB Location ID. PLAN-MULTI-DEVICE.md
+    /// step 3: data structure widened from a single optional to a dictionary,
+    /// even though step-3 behavior is still effectively single-device — the
+    /// existing already-connecting / already-mounted guards in
+    /// handleDeviceAttached keep the dict's size at 0 or 1 until step 5
+    /// rewires the attach handler to genuinely accept multiple devices.
+    private var sessions: [UInt32: DeviceSession] = [:]
+
+    /// Convenience for step-3 callers that still assume single-device. The
+    /// existing guards mean at most one session is active; returning the
+    /// first dict value matches the old `session` semantics exactly.
+    /// Step 5 will replace these call sites with per-device wiring (menu
+    /// items knowing which session they target, etc.).
+    private var currentSession: DeviceSession? {
+        return sessions.values.first
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSLog("Comprador build: %@", BuildInfo.id)
@@ -27,7 +39,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         Task {
-            await teardownCurrentSession()
+            await teardownAllSessions()
         }
     }
 
@@ -41,7 +53,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func rebuildMenu() {
         let menu = NSMenu()
 
-        if let session = session {
+        if let session = currentSession {
             let deviceItem = NSMenuItem(title: session.displayName, action: nil, keyEquivalent: "")
             deviceItem.isEnabled = false
             menu.addItem(deviceItem)
@@ -267,24 +279,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleDeviceAttached(_ device: USBDevice) {
-        NSLog("Comprador: Device attached — \(device.displayName) (vendor: 0x%04X, product: 0x%04X)",
-              device.vendorID, device.productID)
+        NSLog("Comprador: Device attached — \(device.displayName) (vendor: 0x%04X, product: 0x%04X, locID: 0x%08X)",
+              device.vendorID, device.productID, device.locationID)
 
-        // Ignore attach events while we're already connecting or mounted
-        if let existing = session, existing.isConnecting {
-            NSLog("Comprador: Ignoring attach — connection already in progress")
-            return
-        }
-        if let existing = session, existing.isMounted {
-            NSLog("Comprador: Reattach while unmount in flight — queuing (entry 19a)")
-            existing.pendingAttach = device
+        // Step-3 semantics: at most one session at a time. If the same
+        // device's session exists and is in flight or mounted, treat as a
+        // reattach race; if any *other* session exists, suppress new
+        // attaches the same way (matches the pre-refactor singleton
+        // behavior). Step 5 will relax this to genuinely accept new
+        // devices alongside existing ones.
+        if let existing = sessions[device.locationID] {
+            if existing.isConnecting {
+                NSLog("Comprador: Ignoring attach — connection already in progress")
+                return
+            }
+            if existing.isMounted {
+                NSLog("Comprador: Reattach while unmount in flight — queuing (entry 19a)")
+                existing.pendingAttach = device
+                return
+            }
+            // Same locID, existing session is errored or torn down — fall
+            // through to replace it with a fresh attempt.
+            sessions.removeValue(forKey: device.locationID)
+        } else if !sessions.isEmpty {
+            // Different locID, but we already have a session for some other
+            // device. Preserve step-3 single-device semantics by ignoring.
+            NSLog("Comprador: Ignoring attach — another session is active (step-3 single-device guard)")
             return
         }
 
         let newSession = DeviceSession(device: device)
         newSession.delegate = self
         newSession.isConnecting = true
-        session = newSession
+        sessions[device.locationID] = newSession
         updateIcon(state: .connecting)
         rebuildMenu()
 
@@ -294,12 +321,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleDeviceDetached(_ device: USBDevice) {
-        NSLog("Comprador: Device detached — \(device.displayName) (vendor: 0x%04X, product: 0x%04X)",
-              device.vendorID, device.productID)
+        NSLog("Comprador: Device detached — \(device.displayName) (vendor: 0x%04X, product: 0x%04X, locID: 0x%08X)",
+              device.vendorID, device.productID, device.locationID)
 
-        guard let active = session else {
-            updateIcon(state: .idle)
-            rebuildMenu()
+        guard let active = sessions[device.locationID] else {
+            // Detach for a device we never sessioned (or already cleared) —
+            // if the dict is now empty, drop to idle.
+            if sessions.isEmpty {
+                updateIcon(state: .idle)
+                rebuildMenu()
+            }
             return
         }
 
@@ -312,8 +343,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Only tear down if we're actually mounted or the bridge is running
         guard active.isMounted || active.bridge?.isRunning == true else {
-            session = nil
-            updateIcon(state: .idle)
+            sessions.removeValue(forKey: device.locationID)
+            if sessions.isEmpty {
+                updateIcon(state: .idle)
+            }
             rebuildMenu()
             return
         }
@@ -322,8 +355,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             await active.teardown()
             await MainActor.run {
                 let pending = active.pendingAttach
-                session = nil
-                updateIcon(state: .idle)
+                sessions.removeValue(forKey: device.locationID)
+                if sessions.isEmpty {
+                    updateIcon(state: .idle)
+                }
                 rebuildMenu()
                 if let queued = pending {
                     handleDeviceAttached(queued)
@@ -333,21 +368,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showInFinder() {
-        guard let path = session?.mountPath else { return }
+        guard let path = currentSession?.mountPath else { return }
         NSWorkspace.shared.open(path)
     }
 
     @objc private func ejectDevice() {
         NSLog("Comprador: Eject requested")
-        guard let active = session else { return }
+        guard let active = currentSession else { return }
         active.isConnecting = false
         active.pendingAttach = nil
         active.stopConnectTimer()
+        let locID = active.device.locationID
         Task {
             await active.teardown()
             await MainActor.run {
-                session = nil
-                updateIcon(state: .idle)
+                sessions.removeValue(forKey: locID)
+                if sessions.isEmpty {
+                    updateIcon(state: .idle)
+                }
                 rebuildMenu()
             }
         }
@@ -355,17 +393,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quitApp() {
         Task {
-            await teardownCurrentSession()
+            await teardownAllSessions()
             await MainActor.run {
                 NSApplication.shared.terminate(nil)
             }
         }
     }
 
-    private func teardownCurrentSession() async {
-        guard let active = session else { return }
-        await active.teardown()
-        session = nil
+    private func teardownAllSessions() async {
+        // Snapshot keys + sessions so we don't mutate while iterating.
+        let snapshot = Array(sessions.values)
+        for s in snapshot {
+            await s.teardown()
+        }
+        sessions.removeAll()
     }
 
 #if DEBUG
@@ -374,7 +415,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// and returns; handleDeviceAttached runs before that Task executes, sees
     /// isMounted == true, and should queue via pendingAttach rather than discarding.
     @objc private func syntheticFlutter() {
-        guard let device = session?.device else { return }
+        guard let device = currentSession?.device else { return }
         NSLog("Comprador: ⚡ synthetic flutter — firing detach+reattach on \(device.displayName)")
         handleDeviceDetached(device)
         handleDeviceAttached(device)
