@@ -431,6 +431,128 @@ should spawn follow-up tests.
 Each test should be filled in independently as it runs — don't
 wait for all four to complete before recording 1's results.
 
+## If Test 3 fails: supported alternatives to investigate
+
+`ICCameraDevice.requestUploadFile` is the only obviously-named
+write API; it's the deprecated one. If Test 3 (or Test 4) shows
+that `requestSendPTPCommand` is blocked for write opcodes,
+Comprador's write path is dead through ImageCaptureCore as-is.
+Before concluding the pivot is read-only, the following
+supported-but-non-obvious alternatives deserve a research pass.
+None has been verified; they are listed in rough order of
+plausibility.
+
+### 1. User-initiated transfers via NSItemProvider / drag-drop
+
+System-mediated, user-initiated transfers may bypass the
+"writing directly to device hardware" sandbox restriction
+*because* the user dragging a file onto an `ICDevice` UI counts
+as authorization. Apple's pattern across other sandbox-
+constrained APIs (file access, contacts, calendar) has been
+"user-mediated actions are allowed where direct programmatic
+ones aren't." Worth checking whether Image Capture's own
+drag-to-camera flow (which obviously works under sandbox)
+exposes any public API.
+
+*Where to look:* `NSItemProvider`-based `ICDevice` extensions,
+`NSDraggingDestination` protocols on `ICDevice` UIs, WWDC
+2024/2025 sessions on Image Capture (if any).
+
+### 2. File Provider extension — revisited
+
+Rejected in [CLAUDE.md](../CLAUDE.md) "Why not File Provider
+API?" on the basis that USB device access from a File Provider
+extension is heavily sandbox-restricted. But two things may
+have changed: (a) macOS 14/15 may have relaxed File Provider
+sandbox shape; (b) routing the **write** path through a File
+Provider while keeping reads through `ICCameraDevice` could be
+a hybrid that works. Worth ~half a day reading Apple's File
+Provider 2024 release notes before committing to a verdict.
+
+*Where to look:* `FileProvider.framework` docs for macOS 14+,
+WWDC 2024 "What's new in File Provider," whether
+`NSFileProviderExtension` can now host non-cloud backends.
+
+### 3. XPC service bundled with the app
+
+Standard sandbox-relaxation pattern: a helper XPC service that
+runs outside the app's sandbox does the privileged operation.
+Apple supports this explicitly; many MAS apps use it. The XPC
+service would be the one calling `requestSendPTPCommand` write
+opcodes (or talking directly to libmtp), with the main app
+sandboxed.
+
+Tradeoff: re-introduces a privileged helper-shaped surface we
+were trying to remove
+([SECURITY.md](SECURITY.md) helper section,
+[TODO.md "Security cleanup — v0.4.0 priority"](../TODO.md)).
+Different from the current `SMAppService.daemon` because XPC
+services bundle with the app (no separate registration, no
+Login Items approval) and run with the user's privilege (not
+root) — much smaller surface than the current helper. But
+still a surface.
+
+*Where to look:* `NSXPCConnection`, `XPCService` Info.plist
+keys, Apple's "Daemons and Services" Programming Guide for
+sandbox-XPC patterns.
+
+### 4. Scripting bridge / AppleScript-driven Image Capture
+
+Image Capture itself can be scripted via AppleScript and the
+old Scripting Bridge framework. If we can drive Image Capture
+(which works under sandbox today, since it ships with macOS) to
+perform the upload, we sidestep the deprecation entirely. The
+user wouldn't see Image Capture's UI; we'd drive it
+programmatically.
+
+*Tradeoff:* depends on Image Capture continuing to support
+scriptable uploads (Apple has been retiring AppleScript
+surfaces for years). Brittle.
+
+*Where to look:* `osascript -e 'tell app "Image Capture" to ...'`
+exploratory shell, the Image Capture scripting dictionary
+(`open -a "Image Capture"` then "File → Open Scripting
+Dictionary").
+
+### 5. A private entitlement Apple grants on request
+
+Apple sometimes grants restricted entitlements to specific
+developers via the Developer Program (camera/HEIC playback,
+certain CarPlay surfaces, etc.). It's possible there's a
+`com.apple.developer.image-capture.write` or similar that
+Apple grants for "we sell a third-party MTP file-transfer
+tool, please" requests. Long shot, but the cost of asking is
+an email.
+
+*Where to look:* Apple Developer Forums, Apple's "Request
+restricted entitlement" page in the Developer Portal.
+
+### 6. The deprecation was overstated — re-read it
+
+The deprecation text is `"Sandbox restrictions prohibit writing
+directly to device hardware"`. This may be Apple's policy
+guidance for *new* sandboxed apps, not a runtime block. The
+API may still function for legacy apps and direct-distribution.
+**Test 3 itself answers this in part** — if it works
+unsandboxed, the deprecation is advisory, not enforced.
+
+If Test 3 *and* Test 4 both succeed (writes work, sandboxed
+or not), this section becomes obsolete. If only Test 3 works,
+the alternative is "ship direct-distribution only and don't
+pursue MAS for writes" — which is approximately our current
+posture anyway.
+
+### Research pass scope
+
+A single ~half-day pass should cover items 1–4. Item 5 is an
+email to Apple, owed in parallel. Item 6 falls out of Test 3
+automatically.
+
+If the research surfaces a viable path, document it as a
+follow-up in `RESEARCH-IMAGECAPTURECORE-ALTERNATIVES.md` (don't
+balloon this doc). If nothing viable surfaces, the pivot is
+either read-only or doesn't happen.
+
 ## Decision tree from the test outcomes
 
 ```
