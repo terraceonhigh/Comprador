@@ -1,50 +1,23 @@
 # Comprador — TODO
 
-## ⚠ Roadmap imperative — cgo callback buffer reuse
+## ✓ Closed — cgo callback buffer reuse
 
-**This is the single fix that gates Comprador's strategic
-differentiator.** Treat it as a hard prerequisite, not a
-"nice to have."
+Shipped 2026-05-06 in commit `90fb7216` ("mtp: reuse one buffer
+per session in cgo callbacks"). Multi-device's hard prerequisite
+is met; the work in [PLAN-MULTI-DEVICE.md](docs/PLAN-MULTI-DEVICE.md)
+is unblocked. Implementation is in
+[bridge/mtp/binding_callbacks.go](bridge/mtp/binding_callbacks.go)
+(reuses `entry.buf` from the registry instead of `make([]byte, ...)`
+per callback) and [bridge/mtp/binding.go](bridge/mtp/binding.go)
+(`readerEntry` / `writerEntry` hold the buffer alongside the
+io.Reader/io.Writer). Receipt and the alternatives considered are
+in [DECISIONS.md "Vanquishing the per-callback VM_ALLOCATE
+leak"](docs/DECISIONS.md).
 
-The cgo MTP callback path
-([bridge/mtp/binding_callbacks.go](bridge/mtp/binding_callbacks.go))
-calls `make([]byte, wantlen)` on every libmtp invocation. A 9 GiB
-transfer generates ~400 allocations of ~22 MiB each; on macOS
-`MADV_FREE` keeps them in the process's address space until
-kernel reclaim. Detailed receipt at [MISTAKES.md entry 8a](docs/MISTAKES.md).
-
-**Why this is now load-bearing, not just an open bug:**
-
-[PLAN-MULTI-DEVICE.md](docs/PLAN-MULTI-DEVICE.md) commits us to
-**true concurrent multi-device** — N phones plugged in, N Finder
-sidebar entries, all browseable simultaneously. The forensics
-revealed that **no other macOS MTP app does this:** OpenMTP
-refuses multi-attached devices, SwiftMTP detects-many-but-mounts-one,
-Image Capture isn't a filesystem, Android File Transfer was
-single-device. Shipping this makes Comprador the only Mac app
-that treats two phones as two filesystems concurrently. The moat
-is the subprocess-per-bridge architecture we already paid for.
-
-**But:** two devices plugged in means two bridges in memory.
-Two simultaneous multi-GiB transfers means **18 GiB of leaked
-`VM_ALLOCATE` regions** on an 8 GiB Mac. The system thrashes,
-swaps, and either OOMs the bridges or kicks the user into
-unbearable lag. That's not a degraded experience — it's an
-unshippable one.
-
-**Until this fix lands, multi-device cannot ship.** Not "shouldn't,"
-not "would be nicer if." Cannot. The single most strategically
-valuable feature on Comprador's roadmap is gated on ~30 lines of
-Go. Hold a single `[]byte` buffer in the registry entry alongside
-the `io.Reader`/`io.Writer`; reuse across callbacks; grow once if
-a `wantlen` exceeds current capacity. Caps Go-side memory at one
-chunk (~22 MiB) per concurrent MTP operation. Sister entry
-preserved below in the High impact section for the technical
-breakdown; this section is the imperative framing.
-
-**Sequence consequence:** the cgo fix is the *first* item to land
-before any multi-device implementation work begins. PLAN-MULTI-
-DEVICE.md documents this as non-negotiable. Don't reorder.
+Empirical confirmation is the next missing piece — the original
+9 GiB Attenborough vmmap reading should be re-taken on the fixed
+bridge to verify physical footprint stays under 1 GB. Not done
+yet; not blocking.
 
 ---
 
@@ -131,22 +104,13 @@ DEVICE.md documents this as non-negotiable. Don't reorder.
 
 ## High impact (correctness / UX friction)
 
-- [ ] **cgo MTP callback: reuse buffer per session instead of
-      allocating per call.** `bridge/mtp/binding_callbacks.go`'s
-      `goDataGetFunc` and `goDataPutFunc` each call
-      `make([]byte, int(wantlen))` on every invocation. For a 9 GiB
-      transfer that's ~400 allocations of ~22 MiB each, all 9 GiB
-      of which Go's runtime hands back to the OS via `MADV_FREE`
-      but stays attributed to the process (visible as 409
-      `VM_ALLOCATE` regions in `vmmap`) until kernel reclaim.
-      On low-RAM Macs the OS pages it to swap and the system
-      thrashes. Fix: hold a single `[]byte` buffer in the registry
-      entry alongside the io.Reader/io.Writer; reuse across
-      callbacks, grow once if a wantlen exceeds current capacity.
-      Caps Go-side memory at one chunk (~22 MiB) per concurrent
-      MTP operation. Receipt + analysis in MISTAKES.md entry 8a.
-      After the fix, profile to confirm and to surface any
-      remaining C-side libmtp allocations.
+- [x] **cgo MTP callback: reuse buffer per session instead of
+      allocating per call.** Shipped 2026-05-06 in `90fb7216`. See
+      the closed roadmap-imperative section above and
+      [DECISIONS.md "Vanquishing the per-callback VM_ALLOCATE
+      leak"](docs/DECISIONS.md) for the rationale and alternatives
+      considered. Verification by `vmmap` re-take on a multi-GiB
+      transfer is the open follow-up.
 
 - [ ] **Make GETs cancellable (revisit longstanding TODO).** Tied
       to MISTAKES.md entries 11d (deadlock under read pressure)

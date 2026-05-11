@@ -231,15 +231,16 @@ allocation issue: each multi-GiB transfer leaks ~one file-size's
 worth of `VM_ALLOCATE` regions until the bridge dies. With N
 devices, N transfers can be in flight, each leaking.
 
-**Pre-condition for shipping multi-device:** the cgo-callback
-buffer-reuse fix
-([TODO.md "cgo MTP callback: reuse buffer per session"](../TODO.md))
-should land first. Without it, two simultaneous large transfers
-on two devices on an 8 GiB Mac will OOM the bridges.
+**Status (2026-05-11):** the cgo callback buffer-reuse fix
+shipped on 2026-05-06 in commit `90fb7216`. The leak is closed
+at the binding layer; each transfer now reuses a single
+per-session buffer (~22 MiB) regardless of file size.
+Empirical re-verification with a multi-GiB transfer + vmmap
+read is the remaining follow-up but is not a hard gate.
 
-**Decision:** treat the cgo buffer-reuse fix as a hard prerequisite
-for shipping multi-device. The plan above is for the
-post-cgo-fix world. Sequence in §10.
+The original framing in this section ("pre-condition for
+shipping multi-device") is preserved for posterity; the
+condition is met.
 
 ### 9. ResumeCompanion: shared or per-device?
 
@@ -311,10 +312,11 @@ in v0.4.0.
 
 ## Sequence
 
-1. **(Prerequisite)** Land the cgo callback buffer-reuse fix from
-   [TODO.md](../TODO.md) "cgo MTP callback: reuse buffer per
-   session." Without it, the memory cliff with two simultaneous
-   large transfers makes multi-device unshippable.
+1. **(Prerequisite — DONE 2026-05-06, commit `90fb7216`)** The
+   cgo callback buffer-reuse fix has landed. Multi-device is
+   unblocked. Verification by `vmmap` retake on a multi-GiB
+   transfer is the open follow-up but not a hard gate for
+   refactor work below.
 2. **Refactor: introduce `DeviceSession`** as a class
    encapsulating the current per-device state. Keep
    `AppDelegate`'s API surface unchanged externally; internally,

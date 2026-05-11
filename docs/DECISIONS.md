@@ -96,6 +96,18 @@ the simpler approach demonstrably fails.
   (vs. the current 10 GB), `VM_ALLOCATE` regions count stays under
   ~50 (vs. 409).
 
+- **Partial empirical confirmation (2026-05-11).** After a
+  full ECON101 directory transfer through the bridge (432 files,
+  49.6 MB total), the bridge process RSS sat at 8.4 MB and total
+  VSZ at the Go-runtime baseline. Pre-fix arithmetic would have
+  predicted ~50 MB of `VM_ALLOCATE` regions accumulated from the
+  per-callback allocations across hundreds of WriteThrough cycles;
+  the absence of that accumulation is direct evidence that buffer
+  reuse is doing what it should. The full 9 GiB stress test
+  remains the proper acceptance check (this was 49 MB across
+  smaller chunks, not a single multi-GiB transfer), but the early
+  signal is unambiguous.
+
 - **If insufficient:** profile again, look for residual C-side
   allocations inside libmtp's PTP transaction layer; revisit #2
   (C-side buffer) or escalate to #4/#5 if libmtp itself is the
