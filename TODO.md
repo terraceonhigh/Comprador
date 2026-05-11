@@ -266,46 +266,51 @@ yet; not blocking.
 
 ## Testing infrastructure
 
-- [ ] **Phone-side checksum verification.** Currently we md5 the bridge's
-      assembled .partial file before MTP commit (see `resume.commit` in
-      `bridge/webdav/resume_endpoint.go`) and compare to a Mac-side md5
-      of the source. This catches assembly bugs (wrong byte offsets,
-      truncated POSTs, etc.) without paying the 5-10 minute MTP read-back
-      cost per multi-GiB file. PTP/USB carry CRCs, so md5(local-partial)
-      == md5(source) is strong evidence that md5(phone) == md5(source).
+- [x] **Phone-side checksum verification.** Shipped 2026-05-11 as
+      `make test-md5` / `test-md5.sh` per option 1 of the original
+      analysis below. Gated by `COMPRADOR_TESTING_ADB=1` env var so
+      that ADB usage is explicitly developer-only — the shipping
+      product still doesn't require Developer Options enabled on the
+      user's phone. The script does `find <phone_dir> -exec md5sum`
+      via adb shell, computes Mac-side md5 of the source tree, and
+      reports per-file matches / misses / mismatches. AppleDouble
+      `._*` files are excluded (filtered server-side per V0.3.3.md
+      item #3). Verified against the 2026-05-11 ECON101 transfer:
+      430/432 byte-perfect, the 2 deltas are both `.DS_Store` files
+      that Finder legitimately regenerates at the destination.
 
-      But it's not a *true* round-trip check. To catch the rare case
-      where libmtp itself misbehaves (or the device-side filesystem
-      corrupts on write — Android's FUSE-based MTP layer has had bugs
-      historically), we'd want md5 computed *on the phone*.
+      ---
 
-      Options worth weighing if/when this becomes worth doing:
+      **Original analysis preserved below for context on the
+      alternatives:**
 
-      1. **ADB shell `md5sum /sdcard/Download/<file>`.** Cheapest by far,
-         single command. But ADB is explicitly out of scope for the
-         shipping product (CLAUDE.md "Why not ADB?" — requires Developer
-         Options + USB Debugging, which is the friction we're avoiding).
-         For the test harness only, gating ADB usage behind a
-         `COMPRADOR_TESTING_ADB=1` env var would be acceptable: we don't
-         need the user to enable Developer Options to use Comprador, only
-         the developer running tests.
+      Without phone-side checksumming we'd be md5'ing the bridge's
+      assembled .partial file before MTP commit and comparing to the
+      Mac source — strong evidence that the bytes went out correctly
+      from the bridge, but not a *true* round-trip check. To catch
+      the rare case where libmtp itself misbehaves (or the device-
+      side filesystem corrupts on write — Android's FUSE-based MTP
+      layer has had bugs historically), we want md5 computed *on the
+      phone*.
+
+      Options that were weighed:
+
+      1. **ADB shell `md5sum /sdcard/Download/<file>`.** (Chosen.)
+         Cheapest by far, single command. ADB is out of scope for
+         the shipping product (CLAUDE.md "Why not ADB?") but
+         gating behind `COMPRADOR_TESTING_ADB=1` keeps it
+         developer-only.
 
       2. **MTP `LIBMTP_Get_File_To_Handler` with an md5-computing
-         handler.** Bypasses Finder/webdavfs entirely on the read path;
-         streams device → libmtp → md5. Same MTP throughput cost as the
-         WebDAV round-trip, no improvement on the bottleneck. Only useful
-         if we want to verify *MTP-readback* specifically rather than
+         handler.** Bypasses Finder/webdavfs on the read path;
+         streams device → libmtp → md5. Same MTP throughput cost
+         as a normal read; no improvement on the bottleneck. Only
+         useful for verifying MTP-readback specifically rather than
          "what's stored on the device."
 
-      3. **Companion phone app exposing a "hash this file" intent.** A
-         tiny Android side-loadable that listens for an intent and
-         returns md5. Would also avoid Developer Options. Heavy lift for
-         a testing convenience.
-
-      Recommendation: ship option 1 as a `make test-md5` target
-      (developer-side only, never bundled into the user-facing app)
-      whenever we next have a reason to suspect MTP write integrity. For
-      now, the bridge-side md5-on-commit log is sufficient.
+      3. **Companion phone app exposing a "hash this file" intent.**
+         Tiny Android side-loadable. Would also avoid Developer
+         Options. Heavy lift for a testing convenience.
 
 ## Low impact (completeness)
 

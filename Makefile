@@ -15,7 +15,7 @@ DIST_DIR   := dist
 # Format: short SHA + "-dirty" if the worktree has uncommitted changes.
 BUILD_ID := $(shell git rev-parse --short HEAD 2>/dev/null)$(shell git diff --quiet 2>/dev/null || echo "-dirty")
 
-.PHONY: bridge helper helper-test nfs-stub ictest1 ictest2 icon app app-debug app-signed app-notarized app-swiftc dev dev-nfs run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
+.PHONY: bridge helper helper-test nfs-stub ictest1 ictest2 test-md5 icon app app-debug app-signed app-notarized app-swiftc dev dev-nfs run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
 
 ICON_SRC := images/icon.png
 ICON_OUT := MenuBarApp/Resources/Comprador.icns
@@ -63,6 +63,22 @@ ictest1:
 		bridge/cmd/ictest1/main.swift -o $(ICTEST1_OUT)
 	@echo "Built: $(ICTEST1_OUT)"
 	@echo "Run:   ./$(ICTEST1_OUT)"
+
+# Phone-side md5 verification of a directory transfer. Developer-only
+# (uses ADB; never bundled into the user-facing app). Compares Mac
+# source against on-phone md5sums computed by adb shell, bypassing the
+# bridge entirely — so a bridge-side bug can't mask itself by being
+# self-consistent. Pass MAC_DIR and PHONE_DIR as args.
+#
+#   make test-md5 MAC_DIR=~/Documents/ECON101 PHONE_DIR=/storage/emulated/0/Download/ECON101
+test-md5:
+	@if [ -z "$(MAC_DIR)" ] || [ -z "$(PHONE_DIR)" ]; then \
+	  echo "Usage: make test-md5 MAC_DIR=<path> PHONE_DIR=<path>"; \
+	  echo "  example:"; \
+	  echo "    make test-md5 MAC_DIR=~/Documents/ECON101 PHONE_DIR=/storage/emulated/0/Download/ECON101"; \
+	  exit 64; \
+	fi
+	@COMPRADOR_TESTING_ADB=1 ./test-md5.sh "$(MAC_DIR)" "$(PHONE_DIR)"
 
 # Research probe: Test 2 from docs/RESEARCH-IMAGECAPTURECORE.md.
 # Measures sequential read throughput via requestReadDataFromFile.
