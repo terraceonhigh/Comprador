@@ -20,6 +20,9 @@ DerivedData/
 *~
 *-autosave.*
 
+# Generated icon (built from images/icon.png by `make icon`)
+MenuBarApp/Resources/Comprador.icns
+
 # Logs
 *.log
 
@@ -32,3 +35,9 @@ DerivedData/
 correspondence/
 Correspondance/
 testfiles/
+
+# Local worktrees / scheduled-task state (per-machine, not in git)
+.claude/
+
+# Cross-agent coordination scratch files
+forGPT.md
