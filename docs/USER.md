@@ -178,10 +178,34 @@ back on them, the assumption is open for revision.
   that "I dragged it and it didn't make it" is worse than "I
   dragged it and waited longer than I expected." Probably right;
   not measured.
-- **Whether multi-device mounting matters.** Currently single device
-  at a time. SwiftMTP supports multi-device. We've assumed our user
-  has one phone; a user with a phone and a tablet, or a phone and a
-  camera plugged simultaneously, is unaccounted for.
+## What we are building toward
+
+These are commitments — decisions we have made, even though the
+implementation hasn't landed yet. They shape near-term roadmap.
+
+- **Multi-device, concurrent.** Two phones plugged in
+  simultaneously means two Finder Locations sidebar entries,
+  both browseable in parallel — no switching, no "active device"
+  modality. A user with a phone and a tablet, or a phone and a
+  camera, treats both as independent volumes. Plan in
+  [PLAN-MULTI-DEVICE.md](PLAN-MULTI-DEVICE.md). This is unique
+  in the macOS MTP-app niche: OpenMTP refuses multi-attached,
+  SwiftMTP detects-many-but-mounts-one, AFT/Image Capture don't
+  apply. Comprador's subprocess-per-bridge architecture makes
+  this tractable where the references' singleton designs don't.
+  Pre-condition: the cgo callback buffer-reuse fix
+  ([TODO.md "Roadmap imperative"](../TODO.md)) must land first —
+  without it, two concurrent multi-GiB transfers OOM on an 8 GiB
+  Mac.
+
+- **Per-storage quota visibility.** Phones with SD cards get
+  per-storage `statfs(2)` numbers, not the aggregate that today
+  misleads Finder's "X GB available" preflight. Plan in
+  [PLAN-MULTI-STORAGE.md](PLAN-MULTI-STORAGE.md). Cardinal-sin
+  framing: aggregate quota can green-light a copy that fails
+  partway through, which is the worst class of failure for our
+  user (silent-corruption-of-trust per the "What breaks the
+  trust" section above).
 
 ## How to update this document
 

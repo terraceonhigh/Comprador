@@ -52,7 +52,10 @@ just a double-click — no Gatekeeper warning, no right-click dance.
   The proper fix is a DriverKit extension, which is on the roadmap.
   Workaround for now: launch Comprador *before* plugging in.
 - **Apple Silicon only** — no Intel build yet.
-- **Single device at a time.**
+- **Single device at a time** *(today)*. Concurrent multi-device
+  is the next major feature on the roadmap: N phones plugged in,
+  N Finder sidebar entries, all browseable in parallel. Plan
+  documented in [docs/PLAN-MULTI-DEVICE.md](docs/PLAN-MULTI-DEVICE.md).
 
 ## Building from Source
 

@@ -1,5 +1,53 @@
 # Comprador — TODO
 
+## ⚠ Roadmap imperative — cgo callback buffer reuse
+
+**This is the single fix that gates Comprador's strategic
+differentiator.** Treat it as a hard prerequisite, not a
+"nice to have."
+
+The cgo MTP callback path
+([bridge/mtp/binding_callbacks.go](bridge/mtp/binding_callbacks.go))
+calls `make([]byte, wantlen)` on every libmtp invocation. A 9 GiB
+transfer generates ~400 allocations of ~22 MiB each; on macOS
+`MADV_FREE` keeps them in the process's address space until
+kernel reclaim. Detailed receipt at [MISTAKES.md entry 8a](docs/MISTAKES.md).
+
+**Why this is now load-bearing, not just an open bug:**
+
+[PLAN-MULTI-DEVICE.md](docs/PLAN-MULTI-DEVICE.md) commits us to
+**true concurrent multi-device** — N phones plugged in, N Finder
+sidebar entries, all browseable simultaneously. The forensics
+revealed that **no other macOS MTP app does this:** OpenMTP
+refuses multi-attached devices, SwiftMTP detects-many-but-mounts-one,
+Image Capture isn't a filesystem, Android File Transfer was
+single-device. Shipping this makes Comprador the only Mac app
+that treats two phones as two filesystems concurrently. The moat
+is the subprocess-per-bridge architecture we already paid for.
+
+**But:** two devices plugged in means two bridges in memory.
+Two simultaneous multi-GiB transfers means **18 GiB of leaked
+`VM_ALLOCATE` regions** on an 8 GiB Mac. The system thrashes,
+swaps, and either OOMs the bridges or kicks the user into
+unbearable lag. That's not a degraded experience — it's an
+unshippable one.
+
+**Until this fix lands, multi-device cannot ship.** Not "shouldn't,"
+not "would be nicer if." Cannot. The single most strategically
+valuable feature on Comprador's roadmap is gated on ~30 lines of
+Go. Hold a single `[]byte` buffer in the registry entry alongside
+the `io.Reader`/`io.Writer`; reuse across callbacks; grow once if
+a `wantlen` exceeds current capacity. Caps Go-side memory at one
+chunk (~22 MiB) per concurrent MTP operation. Sister entry
+preserved below in the High impact section for the technical
+breakdown; this section is the imperative framing.
+
+**Sequence consequence:** the cgo fix is the *first* item to land
+before any multi-device implementation work begins. PLAN-MULTI-
+DEVICE.md documents this as non-negotiable. Don't reorder.
+
+---
+
 ## Architecture risk — partially mitigated, still open
 
 - [ ] **Reconsider the architecture if RAM is a binding constraint.**
@@ -129,6 +177,31 @@
       as a fallback when the helper isn't approved.
 - [x] Device name shows "Android Device" — fall back to `LIBMTP_Get_Modelname` when friendly name is empty (already in `binding.go`)
 - [x] Login item registration — offer to start at login on first launch via `SMAppService`
+
+## Security cleanup — v0.4.0 priority
+
+- [ ] **Remove the privileged helper (`comprador-helper`,
+      `SMAppService.daemon`).** Per
+      [CHANGELOG v0.3.0](CHANGELOG.md), the helper is no longer
+      invoked on the NFS mount path — it remains bundled only
+      for legacy WebDAV cosmetic features (hostname rewriting
+      via `/etc/hosts` to drop the `.local` suffix). It is the
+      **single largest privilege-escalation surface in the
+      bundle** ([SECURITY.md](docs/SECURITY.md)). Removal blocks
+      on retiring the WebDAV mount path entirely; bump it from
+      "slated for v0.4.0" to "the v0.4.0 priority cleanup item."
+      Helper code in [helper/](helper/), bundled in
+      `$(SWIFT_APP)/Contents/MacOS/comprador-helper` per the
+      `BUNDLE_HELPER` Makefile recipe.
+
+- [ ] **Subscribe to upstream libmtp / libusb releases.** No
+      formal cadence today. Manual check per Comprador release
+      cycle: hit
+      [libmtp upstream](https://sourceforge.net/projects/libmtp/files/libmtp/)
+      and
+      [libusb releases](https://github.com/libusb/libusb/releases)
+      before tagging each v0.x.0; bump if a security fix has
+      shipped. Captured in [SECURITY.md "Tracked items"](docs/SECURITY.md).
 
 ## Medium impact (reliability)
 
