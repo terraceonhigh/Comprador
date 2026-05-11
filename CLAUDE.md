@@ -636,4 +636,9 @@ is a deliberate threat-model review, not a technical exception.
 
 ## Pre-Launch Checklist
 
-- [ ] Logo needed before public release
+Now substantially fleshed out in [docs/PRE-LAUNCH.md](docs/PRE-LAUNCH.md)
+— go/no-go items for the Reddit/HN announcement, what the pitch
+says, what we disclose as known issues, what we defer. Read that
+before adding to the launch surface here.
+
+- [x] Logo — Merian/Sluyter 1705 pomegranate plate (PD), see [NOTICES.md](NOTICES.md#logo)
