@@ -173,9 +173,104 @@ session is held.
   serve two clients; falsifies a weaker version of the
   hypothesis.
 
-**Results.** *(pending)*
+**Results.** *(2026-05-11, gala, macOS 26.4, ictest1 binary built
+via `make ictest1` from `bridge/cmd/ictest1/main.swift`.)*
 
-**Conclusion.** *(pending)*
+Two phones available: a Sony Xperia 10 III (XQ-BT52) and a Google
+Pixel 6. The Xperia turned out not to expose a PTP / Photo
+Transfer mode on its USB-mode picker — only File Transfer (MTP).
+The Pixel 6 exposes both.
+
+Pre-test ICDeviceBrowser visibility check (the input to the
+test):
+
+| Phone | USB mode | Visible to ICDeviceBrowser? |
+|---|---|---|
+| Pixel 6 | File Transfer (MTP) | **No** — `deviceBrowserDidEnumerateLocalDevices` fires with no `didAdd` calls |
+| Xperia 10 III | File Transfer (MTP) | **No** — same |
+| Xperia 10 III | PTP | n/a — phone doesn't expose this mode |
+| Pixel 6 | PTP | **Yes** — `didAdd` fires synchronously during `browser.start()`, device classes as `ICCameraDevice`, vid=0x18D1 pid=0x4EE5 |
+
+Test 1 proper, run against the Pixel 6 in PTP mode (verbatim
+binary output):
+
+```
+[browser] +device  name='Pixel 6'  vid=0x18D1  pid=0x4EE5
+          transport=Optional("ICTransportTypeUSB")
+          uuid=00003143-3032-3146-4446-363030374E38
+[target] using: 'Pixel 6'  class=ICCameraDevice
+[ptpcamerad] before requestOpenSession: 28161 /usr/libexec/ptpcamerad
+[session] calling requestOpenSession(options: nil)...
+[session] PASS  error=nil  elapsed=0ms
+[ptpcamerad] after open: 28161 /usr/libexec/ptpcamerad
+[session] requesting close...
+[session] close OK
+[ptpcamerad] after close: 28161 /usr/libexec/ptpcamerad
+```
+
+Manual Image Capture check while our session was held: Image
+Capture remained responsive — the Pixel 6 was still visible in
+its sidebar and the architect was able to interact with it
+normally. No UI freeze, no device disappearance.
+
+`ptpcamerad` PID 28161 unchanged across the full lifecycle
+(startup → before-open → after-open → after-close). No respawn,
+no kill, no broker churn.
+
+(Note on the 0ms elapsed time for `requestOpenSession`: plausible.
+ImageCaptureCore session-open is likely a userspace-only
+handshake with the ptpcamerad broker; the actual USB I/O wouldn't
+happen until a read/write operation runs. Test 2 will verify the
+session is functional, not just nominal.)
+
+**Conclusion.** Hypothesis **supported** for PTP-mode devices.
+`ICDevice.requestOpenSession` returns `nil` while ptpcamerad
+holds an active broker context; the two clients coexist; Image
+Capture remains functional during our session.
+
+But with a meaningful caveat that the framing in
+[letter 09](../correspondence/09-ptpcamerad-was-a-broker/letter.md)
+under-weighted: **ICDeviceBrowser does not enumerate Android
+phones in File Transfer (MTP) mode.** Tested against two
+different Android vendors (Google, Sony); neither surfaces. This
+narrows the pivot story significantly from "ImageCaptureCore
+replaces libmtp wholesale" to "ImageCaptureCore is a PTP-only
+window."
+
+The shape this leaves us in:
+
+- For users whose phones expose PTP and who select PTP mode:
+  ImageCaptureCore-coexistence is viable; the seizure race
+  disappears for that codepath.
+- For users on File Transfer (MTP) — which is the default on
+  every Android phone the project has tested, and on the Sony
+  is the *only* option — ImageCaptureCore doesn't see the
+  device. We still need libmtp + the seizure race + the helper
+  for the MTP path.
+
+This doesn't kill the architectural pivot, but it does change
+its character. It's no longer "delete libmtp, delete the dext,
+delete the helper, ship via MAS." It's "build a PTP-mode path
+as an opt-in coexistence story while keeping the MTP path as
+the default." The seizure race, the dext, and the helper all
+stay in their current places for users who don't switch their
+phone to PTP — which, given the UX cost of "find the USB mode
+picker and pick the non-default option", is most users.
+
+A consolation: the PTP path may still be the right *internal*
+plumbing for specific subsystems (e.g. multi-device read paths
+where two phones are plugged in simultaneously — if both are
+switched to PTP, we avoid two libusb claims racing two
+ptpcamerad respawns), even if it's not the user-facing default.
+Worth holding in mind as multi-device work proceeds.
+
+Tests 2, 3, 4 retain their value only conditional on the user
+being in PTP mode — so the cost-benefit of running them shifts.
+Test 2 (throughput) is still worth running: if PTP-mode reads
+through ImageCaptureCore are throughput-competitive with our
+libmtp path, that opens "use ICCore for PTP-mode-eligible
+users" as a real option. Tests 3 (writes via SendPTPCommand)
+and 4 (sandbox / MAS) become contingent on Test 2.
 
 ---
 
@@ -255,13 +350,245 @@ exceeds 2 s.
   reported upstream and could disqualify this path for large
   files.
 
-**Results.** *(pending)*
+**Results.** *(2026-05-11, gala, macOS 26.4, ictest2 binary from
+`bridge/cmd/ictest2/main.swift`. Pixel 6 in PTP mode, Image
+Capture.app open before the run to ensure ptpcamerad alive.)*
 
-**Conclusion.** *(pending)*
+Verbatim binary output (final report; progress lines elided to
+every 16th chunk during the read):
+
+```
+[browser] +device  name='Pixel 6'  vid=0x18D1  pid=0x4EE5
+[session] open OK  elapsed=0ms
+[catalog] deviceDidBecomeReady(withCompleteContentCatalog:) fired
+[catalog] 2351 items, 2351 ICCameraFile
+[catalog]   'PXL_20260405_233348324.LS.mp4'  size=1446425792 (1379 MiB)
+[catalog]   'PXL_20260307_054003976.LS.mp4'  size=415455011 (396 MiB)
+[catalog]   'PXL_20260328_031847726.TS.mp4'  size=277888823 (265 MiB)
+[catalog]   'PXL_20260307_052919573.LS.mp4'  size=204547007 (195 MiB)
+[catalog]   'PXL_20260418_045211394.TS.mp4'  size=202189443 (192 MiB)
+[read] target: 'PXL_20260405_233348324.LS.mp4'  size=1446425792 bytes
+[read] chunks of 4 MiB (strict sequential)
+... (16-chunk progress lines, 18.7–19.0 MB/s, rss steady 26 MiB) ...
+
+[result] file:           PXL_20260405_233348324.LS.mp4
+[result] expected:       1446425792 bytes
+[result] read:           1446425792 bytes (1379 MiB)
+[result] chunks:         345 × 4 MiB
+[result] elapsed:        72.6 s
+[result] throughput:     19.00 MB/s
+[result] chunk_ms:       min=135 p50=197 p99=215 max=244
+[result] md5:            267dcc0dffcc3f4ecd127ac6be62ccd6
+[result] rss:            end=26320 KiB  peak=30016 KiB
+[verdict] PASS  bytes=ok  thrpt=ok  chunk=ok
+[ptpcamerad] after read: 28161 ptpcamerad
+[session] close OK
+[ptpcamerad] after close: 28161 ptpcamerad
+```
+
+Three things to highlight:
+
+1. **Chunk latency is extraordinarily tight.** Min 135 ms, p99
+   215 ms, max 244 ms across 345 chunks. The distribution is
+   nearly flat — no outliers, no garbage-collection pauses, no
+   framework round-trip stalls. Every chunk takes about 200 ms,
+   reproducibly.
+
+2. **RSS stays flat across a 1.4 GiB read.** Peak 30 MiB, end
+   26 MiB. ImageCaptureCore's read path **does not have the
+   cgo-callback allocation leak** that the libmtp path suffers
+   ([MISTAKES.md 8a](MISTAKES.md)). Framework manages its own
+   buffers; the Swift binding doesn't need to.
+
+3. **ptpcamerad PID 28161 is unchanged** across the full
+   lifecycle: startup → before-open → after-open → after-read
+   → after-close. The broker doesn't churn under sustained read
+   load. Coexistence holds throughout the test, not just at
+   session-open.
+
+**Conclusion.** Hypothesis **supported**. For the PTP-mode
+path, ImageCaptureCore reads are:
+
+- **Throughput-competitive.** 19 MB/s sustained is comfortably
+  above the 10 MB/s NFS-acceptability floor and within the
+  same order of magnitude as what libmtp delivers on the same
+  hardware. The user-perceived experience of dragging a phone
+  video into Finder via this path is "fast enough."
+- **Latency-predictable.** Tight distribution, no spikes. The
+  NFS mount surface (which we tuned for chunk-level
+  predictability after the WebDAV writeseq saga) will get
+  along with this comfortably.
+- **Memory-clean.** No accumulation, no leak. The architectural
+  hazard that
+  [PLAN-MULTI-DEVICE.md](PLAN-MULTI-DEVICE.md) gates on
+  (multi-device transfers OOMing the host) does not apply to
+  this path. Two concurrent ImageCaptureCore sessions reading
+  large files would, by this evidence, hold steady at ~50 MiB
+  RSS combined, not the ~18 GiB the libmtp path would burn.
+
+Together with Test 1, this establishes the PTP-mode pivot as
+**empirically real, not just architecturally appealing**:
+session opens coexist with ptpcamerad, reads sustain useful
+throughput with bounded memory, and the broker remains stable
+under load. For phones that expose PTP and users who switch
+to it, ImageCaptureCore is a viable read backend.
+
+What remains open:
+
+- **Tests 3 and 4.** Writes (Test 3) and sandbox/MAS
+  compatibility (Test 4) are the load-bearing experiments for
+  whether the PTP path can be a complete *substitute* (vs.
+  read-only complement) for libmtp.
+- **The MTP-mode default.** Nothing in Tests 1 or 2 changes
+  the structural fact established in Test 1's setup: phones in
+  File Transfer (MTP) mode are invisible to ImageCaptureCore.
+  For default-mode users — most users, and all Xperia users —
+  the libmtp path remains load-bearing.
+
+If Test 3 also passes, we have a credible *opt-in* PTP-mode
+product story (and a credible internal substrate for concurrent
+multi-device reads, where two PTP sessions through the broker
+would dodge the libusb-claim race entirely). If Test 3 fails,
+the PTP path is read-only and Comprador's role for those users
+is "browse and copy off the phone, but not onto it" — still
+useful, but a different shape of feature.
+
+---
+
+## Scope correction — what Tests 1 and 2 did NOT measure
+
+*Added 2026-05-11, after the architect asked the question that
+broke the framing above.*
+
+The Conclusions of Tests 1 and 2 sketch a "dual-backend,
+mode-aware Comprador" product direction. That sketch is wrong,
+because it elides the protocol-level distinction between PTP
+and MTP. This section records the correction.
+
+**PTP exposes camera content only.** PTP is *Picture* Transfer
+Protocol — designed for digital cameras, standardized around
+media file objects, no native concept of arbitrary
+directories or non-media files. MTP (Media Transfer Protocol)
+is Microsoft's extension of PTP that adds folder hierarchies
+and arbitrary file types. Android's "File Transfer" mode is
+MTP precisely so the phone can expose its entire shared
+storage (Music, Downloads, Documents, app data, etc.). Its
+"PTP" / "Photo Transfer" mode, by design, exposes only the
+camera-content subset (DCIM, sometimes Pictures).
+
+**ICDeviceBrowser binds to the PTP path.** Test 1 established
+that ICDeviceBrowser enumerates phones in PTP mode and does
+not enumerate phones in File Transfer (MTP) mode. The reason
+is upstream of macOS: the phone, when in MTP mode, exposes a
+USB interface descriptor that the PTP framework does not
+match. ImageCaptureCore is the front door to the PTP
+descriptor, not to the MTP one.
+
+**The intersection is small.** What ImageCaptureCore *can*
+address is the camera-roll subset of the filesystem on phones
+that the user has switched to PTP mode. What Comprador
+*exists to address* is the phone's general filesystem (Music,
+Downloads, app data, ringtones, the user's actual non-camera
+content). The two overlap on "browse and import photos" —
+which Image Capture.app already serves natively.
+
+**What this invalidates upstream in this doc:**
+
+- The phrase "ImageCaptureCore is a PTP-only window" in
+  Test 1's Conclusion was correct as literal text but
+  underweighted in implication. A "PTP-only window" is not
+  "ImageCaptureCore minus MTP-mode users" — it is
+  "ImageCaptureCore minus non-camera content, for all users."
+- The phrase "dual backend, mode-aware" in Test 2's
+  Conclusion was wrong. Mode-aware routing between libmtp
+  and ImageCaptureCore would only help users whose desired
+  content happens to be in the camera-roll subset.
+- The "credible internal substrate for concurrent
+  multi-device reads" framing in Test 2 holds only for the
+  multi-camera-roll case, not for the general multi-device
+  feature that
+  [PLAN-MULTI-DEVICE.md](PLAN-MULTI-DEVICE.md)
+  is committed to. The general feature still wants
+  phones-as-Finder-volumes, which still wants MTP, which
+  still wants libmtp, which still wants the cgo-callback
+  buffer-reuse fix per [TODO.md](../TODO.md).
+
+**What this leaves intact:**
+
+- The empirical findings themselves. ImageCaptureCore session
+  coexistence with ptpcamerad is real (Test 1). PTP-mode read
+  throughput at ~19 MB/s with flat memory profile is real
+  (Test 2). Those are accurate measurements of what was
+  measured. The Conclusion paragraphs are where the
+  measurement-to-implication step went wrong, not the
+  measurements themselves.
+- The realization that ptpcamerad is a userspace XPC broker
+  rather than a USB exclusive-claim adversary
+  ([letter 09](../correspondence/09-ptpcamerad-was-a-broker/letter.md)).
+  That's still true. It just doesn't have the architectural
+  consequences letter 09 reached for, because joining the
+  broker only buys access to the broker's scope, and the
+  broker's scope is too small for the product.
+
+**Tests 3 and 4 are no longer interesting.** They would
+measure write functionality and sandbox behavior, but in a
+scope (camera roll only) that doesn't substitute for what
+Comprador does for users. The cost of building them isn't
+justified by what the result would tell us. The investigation
+closes here.
+
+**Residual value:**
+
+1. A potential read-only optimization for camera-content
+   browsing specifically. Small, niche, probably not worth the
+   code surface — but recorded so the next person who wonders
+   "could we use ImageCaptureCore for X?" has the receipt of
+   what we found.
+2. A demo-only path for "concurrent multi-device works"
+   without the cgo-callback fix landing first. Not a product,
+   a credibility exhibit if we ever need one.
+
+**Methodological note.** This correction is the third recast
+in a single investigation:
+
+- Letter 08 → letter 09 (one Claude to another): "ptpcamerad
+  is a broker we should join, not an adversary we should
+  kill." Correct framing of the protocol-level relationship.
+- Letter 11 part one (2026-05-11 morning): "The pivot is
+  opt-in, not wholesale — MTP-mode phones are invisible to
+  ICDeviceBrowser." Correct narrowing of the user base.
+- This section (2026-05-11 after Test 2): "The pivot is
+  scope-limited, not user-limited — even where it works it
+  only addresses camera content." Correct identification of
+  the protocol's content ceiling.
+
+Each recast was triggered by an empirical observation that the
+previous framing failed to predict. The pattern is worth
+flagging: when an architectural enthusiasm survives one
+empirical surprise, that doesn't mean it has been *de-risked*
+— it may just mean the next surprise hasn't arrived yet. Run
+the test that would falsify the *biggest* claim first, not
+the easiest one.
+
+The biggest claim in letter 09 was: "ImageCaptureCore could
+replace libmtp." The cheapest falsification of that claim is
+the question the architect asked in eleven words: *"with PTP,
+how can we read/write non-image files?"* — a question about
+the *scope of access*, not the *quality of access*. We ran
+Tests 1 and 2 first because they were easier to design,
+not because they were the load-bearing falsifications.
+
+For the next investigation: enumerate the candidate
+falsifications before writing test code, and order them by
+how *broadly* they would invalidate the architectural claim,
+not by how *cheaply* they would.
 
 ---
 
 ### Test 3: PTP-level write path via requestSendPTPCommand
+*(skipped per the scope correction above — recording the spec
+for archival completeness but not running it)*
+
 
 **Hypothesis.** `ICCameraDevice.requestSendPTPCommand:` *will*
 allow PTP-level write commands (specifically `SendObjectInfo`

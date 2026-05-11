@@ -1,6 +1,8 @@
 BRIDGE_OUT   := build/bridge
 HELPER_OUT   := build/comprador-helper
 NFS_STUB_OUT := build/nfsstub
+ICTEST1_OUT  := build/ictest1
+ICTEST2_OUT  := build/ictest2
 APP_NAME   := Comprador
 GO         := /opt/homebrew/bin/go
 DERIVED    := $(HOME)/Library/Developer/Xcode/DerivedData
@@ -13,7 +15,7 @@ DIST_DIR   := dist
 # Format: short SHA + "-dirty" if the worktree has uncommitted changes.
 BUILD_ID := $(shell git rev-parse --short HEAD 2>/dev/null)$(shell git diff --quiet 2>/dev/null || echo "-dirty")
 
-.PHONY: bridge helper helper-test nfs-stub icon app app-debug app-signed app-notarized app-swiftc dev dev-nfs run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
+.PHONY: bridge helper helper-test nfs-stub ictest1 ictest2 icon app app-debug app-signed app-notarized app-swiftc dev dev-nfs run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
 
 ICON_SRC := images/icon.png
 ICON_OUT := MenuBarApp/Resources/Comprador.icns
@@ -51,6 +53,25 @@ helper:
 
 helper-test:
 	cd helper && $(GO) test -v ./...
+
+# Research probe: Test 1 from docs/RESEARCH-IMAGECAPTURECORE.md.
+# Tests whether ICDevice.requestOpenSession coexists with ptpcamerad.
+# Output goes into RESEARCH-IMAGECAPTURECORE.md §Test 1 Results.
+ictest1:
+	@mkdir -p build
+	swiftc -framework ImageCaptureCore -framework Foundation \
+		bridge/cmd/ictest1/main.swift -o $(ICTEST1_OUT)
+	@echo "Built: $(ICTEST1_OUT)"
+	@echo "Run:   ./$(ICTEST1_OUT)"
+
+# Research probe: Test 2 from docs/RESEARCH-IMAGECAPTURECORE.md.
+# Measures sequential read throughput via requestReadDataFromFile.
+ictest2:
+	@mkdir -p build
+	swiftc -framework ImageCaptureCore -framework Foundation -framework CryptoKit \
+		bridge/cmd/ictest2/main.swift -o $(ICTEST2_OUT)
+	@echo "Built: $(ICTEST2_OUT)"
+	@echo "Run:   ./$(ICTEST2_OUT)"
 
 # Phase 1 NFS pivot verification: memfs-backed NFS server with no MTP dependency.
 # Run this, then use the printed sudo mount command to verify macOS mounts
