@@ -130,6 +130,31 @@
 - [x] Device name shows "Android Device" — fall back to `LIBMTP_Get_Modelname` when friendly name is empty (already in `binding.go`)
 - [x] Login item registration — offer to start at login on first launch via `SMAppService`
 
+## Security cleanup — v0.4.0 priority
+
+- [ ] **Remove the privileged helper (`comprador-helper`,
+      `SMAppService.daemon`).** Per
+      [CHANGELOG v0.3.0](CHANGELOG.md), the helper is no longer
+      invoked on the NFS mount path — it remains bundled only
+      for legacy WebDAV cosmetic features (hostname rewriting
+      via `/etc/hosts` to drop the `.local` suffix). It is the
+      **single largest privilege-escalation surface in the
+      bundle** ([SECURITY.md](docs/SECURITY.md)). Removal blocks
+      on retiring the WebDAV mount path entirely; bump it from
+      "slated for v0.4.0" to "the v0.4.0 priority cleanup item."
+      Helper code in [helper/](helper/), bundled in
+      `$(SWIFT_APP)/Contents/MacOS/comprador-helper` per the
+      `BUNDLE_HELPER` Makefile recipe.
+
+- [ ] **Subscribe to upstream libmtp / libusb releases.** No
+      formal cadence today. Manual check per Comprador release
+      cycle: hit
+      [libmtp upstream](https://sourceforge.net/projects/libmtp/files/libmtp/)
+      and
+      [libusb releases](https://github.com/libusb/libusb/releases)
+      before tagging each v0.x.0; bump if a security fix has
+      shipped. Captured in [SECURITY.md "Tracked items"](docs/SECURITY.md).
+
 ## Medium impact (reliability)
 
 - [ ] Error recovery — detect bridge crash mid-session, auto-restart

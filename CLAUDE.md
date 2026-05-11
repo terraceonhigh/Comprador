@@ -608,6 +608,32 @@ binding layer.
 
 ---
 
+## Security Invariants
+
+Before merging any PR that touches USB device access, NFS bind
+addresses, the privileged helper, library loading, or subprocess
+spawning: **read [docs/SECURITY.md](docs/SECURITY.md)**. It
+captures the invariants we maintain and the surfaces we track.
+
+The load-bearing invariants in particular:
+
+1. **NFS server binds to `127.0.0.1` only.** Never `0.0.0.0`,
+   never a routable interface. A regression that loosened this
+   would expose phone files to the LAN.
+2. **No outbound network connections from any Comprador binary.**
+   The bridge's loopback NFS server is the only listener we
+   maintain. No phone-home, no telemetry, no auto-update.
+3. **Helper RPC surfaces are minimal and strict-validated.** The
+   helper is being removed in v0.4.0; until then, do not add new
+   helper methods without a threat-model review.
+4. **Subprocess argv is array-form.** Never shell-interpolate
+   user-supplied strings.
+
+If a PR conflicts with an invariant, the threshold for merging
+is a deliberate threat-model review, not a technical exception.
+
+---
+
 ## Pre-Launch Checklist
 
 - [ ] Logo needed before public release
