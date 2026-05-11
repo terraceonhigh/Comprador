@@ -4,20 +4,12 @@ import ServiceManagement
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var deviceWatcher: DeviceWatcher!
-    private var bridge: BridgeProcess?
-    private var mountManager = MountManager()
-    private var resumeCompanion: ResumeCompanion?
-
-    // Current state
-    private var connectedDevice: USBDevice?
-    private var isConnecting = false  // lock out spurious events during connection
-    private var pendingAttach: USBDevice?  // reattach queued while unmount was in flight (entry 19a)
-    private var connectStatus: String = ""  // human-readable phase shown in menu while connecting
-    private var connectStartedAt: Date?     // anchor for elapsed-time display; nil means timer is idle
-    private var connectTimer: Timer?         // 1s tick that re-renders the menu while isConnecting
-    private weak var connectingStatusItem: NSMenuItem?  // mutated in place so the elapsed counter updates while menu is open
-    private var registeredHostname: String?  // hostname currently in /etc/hosts via helper
     private var welcomeController: WelcomeWindowController?
+
+    /// The currently connected device's session, or nil if no device is
+    /// attached. PLAN-MULTI-DEVICE.md step 2: single optional now; step 3
+    /// will widen this to `[DeviceID: DeviceSession]`.
+    private var session: DeviceSession?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSLog("Comprador build: %@", BuildInfo.id)
@@ -35,7 +27,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         Task {
-            await teardown()
+            await teardownCurrentSession()
         }
     }
 
@@ -49,16 +41,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func rebuildMenu() {
         let menu = NSMenu()
 
-        if let device = connectedDevice {
-            let deviceItem = NSMenuItem(title: device.displayName, action: nil, keyEquivalent: "")
+        if let session = session {
+            let deviceItem = NSMenuItem(title: session.displayName, action: nil, keyEquivalent: "")
             deviceItem.isEnabled = false
             menu.addItem(deviceItem)
 
-            if mountManager.isMounted {
+            if session.isMounted {
                 menu.addItem(NSMenuItem(title: "Show in Finder",
                                         action: #selector(showInFinder),
                                         keyEquivalent: "f"))
-                menu.addItem(NSMenuItem(title: "Eject \(device.displayName)",
+                menu.addItem(NSMenuItem(title: "Eject \(session.displayName)",
                                         action: #selector(ejectDevice),
                                         keyEquivalent: "e"))
 #if DEBUG
@@ -67,17 +59,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                                         action: #selector(syntheticFlutter),
                                         keyEquivalent: ""))
 #endif
-            } else if isConnecting {
-                let statusLine = NSMenuItem(title: connectingStatusTitle(),
+            } else if session.isConnecting {
+                let statusLine = NSMenuItem(title: session.connectingStatusTitle(),
                                             action: nil, keyEquivalent: "")
                 statusLine.isEnabled = false
                 menu.addItem(statusLine)
-                connectingStatusItem = statusLine
+                session.connectingStatusItem = statusLine
 
                 // Hint only shown on the WebDAV path where the ~90s
-                // NetFSMountURLSync wait dominates the cycle.  NFS connects
+                // NetFSMountURLSync wait dominates the cycle. NFS connects
                 // in a few seconds, so the hint would be misleading there.
-                if bridge?.proto != "nfs" {
+                if session.bridgeProto != "nfs" {
                     let hint = NSMenuItem(title: "Finder takes about 90 seconds to attach the volume",
                                           action: nil, keyEquivalent: "")
                     hint.isEnabled = false
@@ -279,23 +271,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
               device.vendorID, device.productID)
 
         // Ignore attach events while we're already connecting or mounted
-        if isConnecting {
+        if let existing = session, existing.isConnecting {
             NSLog("Comprador: Ignoring attach — connection already in progress")
             return
         }
-        if mountManager.isMounted {
+        if let existing = session, existing.isMounted {
             NSLog("Comprador: Reattach while unmount in flight — queuing (entry 19a)")
-            pendingAttach = device
+            existing.pendingAttach = device
             return
         }
 
-        connectedDevice = device
-        isConnecting = true
+        let newSession = DeviceSession(device: device)
+        newSession.delegate = self
+        newSession.isConnecting = true
+        session = newSession
         updateIcon(state: .connecting)
         rebuildMenu()
 
         Task {
-            await connectDevice(device)
+            await newSession.connect()
         }
     }
 
@@ -303,29 +297,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSLog("Comprador: Device detached — \(device.displayName) (vendor: 0x%04X, product: 0x%04X)",
               device.vendorID, device.productID)
 
+        guard let active = session else {
+            updateIcon(state: .idle)
+            rebuildMenu()
+            return
+        }
+
         // Ignore spurious detach events during connection — USB re-enumeration
         // causes rapid detach/attach cycles when the phone switches to MTP mode
-        if isConnecting {
+        if active.isConnecting {
             NSLog("Comprador: Ignoring detach — connection in progress (USB re-enumeration)")
             return
         }
 
-        // Only tear down if we're actually mounted
-        guard mountManager.isMounted || bridge?.isRunning == true else {
-            connectedDevice = nil
+        // Only tear down if we're actually mounted or the bridge is running
+        guard active.isMounted || active.bridge?.isRunning == true else {
+            session = nil
             updateIcon(state: .idle)
             rebuildMenu()
             return
         }
 
         Task {
-            await teardown()
+            await active.teardown()
             await MainActor.run {
-                connectedDevice = nil
+                let pending = active.pendingAttach
+                session = nil
                 updateIcon(state: .idle)
                 rebuildMenu()
-                if let queued = pendingAttach {
-                    pendingAttach = nil
+                if let queued = pending {
                     handleDeviceAttached(queued)
                 }
             }
@@ -333,20 +333,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showInFinder() {
-        guard let path = mountManager.mountPath else { return }
+        guard let path = session?.mountPath else { return }
         NSWorkspace.shared.open(path)
     }
 
     @objc private func ejectDevice() {
         NSLog("Comprador: Eject requested")
-        isConnecting = false
-        pendingAttach = nil
-        stopConnectTimer()
-        connectStatus = ""
+        guard let active = session else { return }
+        active.isConnecting = false
+        active.pendingAttach = nil
+        active.stopConnectTimer()
         Task {
-            await teardown()
+            await active.teardown()
             await MainActor.run {
-                connectedDevice = nil
+                session = nil
                 updateIcon(state: .idle)
                 rebuildMenu()
             }
@@ -355,224 +355,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quitApp() {
         Task {
-            await teardown()
+            await teardownCurrentSession()
             await MainActor.run {
                 NSApplication.shared.terminate(nil)
             }
         }
     }
 
-    // MARK: - Bridge + Mount Lifecycle
-
-    private func setConnectStatus(_ s: String) {
-        NSLog("Comprador: [status] %@", s)
-        let isFirstCall = connectStartedAt == nil
-        connectStatus = s
-        if isFirstCall {
-            // First status update of a connect cycle: start the elapsed-time
-            // clock and rebuild the menu (structural transition idle →
-            // connecting). The 1s tick + .eventTracking run loop mode keeps
-            // the counter advancing while the user has the menu open.
-            connectStartedAt = Date()
-            let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
-                self?.tickConnectingStatus()
-            }
-            RunLoop.main.add(t, forMode: .common)
-            RunLoop.main.add(t, forMode: .eventTracking)
-            connectTimer = t
-            rebuildMenu()
-        } else {
-            // Subsequent status changes during the same cycle: mutate the
-            // visible item in place. Replacing statusItem.menu does NOT
-            // redraw an already-open menu, so any rebuild here would leave
-            // the user staring at stale text until they close and reopen.
-            connectingStatusItem?.title = connectingStatusTitle()
-        }
-    }
-
-    private func stopConnectTimer() {
-        connectTimer?.invalidate()
-        connectTimer = nil
-        connectStartedAt = nil
-    }
-
-    /// Builds the connecting status line text. Pulled out of rebuildMenu so the
-    /// timer tick can update the visible NSMenuItem in place — replacing the
-    /// whole menu via rebuildMenu() does not redraw an already-open menu, so
-    /// the elapsed counter only ticked when the user closed and reopened.
-    private func connectingStatusTitle() -> String {
-        let phase = connectStatus.isEmpty ? "Connecting…" : connectStatus
-        guard let start = connectStartedAt else { return phase }
-        let s = Int(-start.timeIntervalSinceNow)
-        return String(format: "%@  %d:%02d", phase, s / 60, s % 60)
-    }
-
-    private func tickConnectingStatus() {
-        guard isConnecting, let item = connectingStatusItem else { return }
-        item.title = connectingStatusTitle()
-    }
-
-    private func connectDevice(_ device: USBDevice) async {
-        // Ensure any previous bridge is fully stopped
-        await teardown()
-
-        // Wait for USB to fully settle — the phone does multiple
-        // detach/reattach cycles when switching to MTP mode
-        try? await Task.sleep(nanoseconds: 5_000_000_000)
-
-        // Retry with increasing delay
-        let retryDelays: [UInt64] = [0, 3, 5] // seconds before each attempt
-
-        for (attempt, delaySec) in retryDelays.enumerated() {
-            guard isConnecting else { return } // cancelled
-
-            if delaySec > 0 {
-                try? await Task.sleep(nanoseconds: delaySec * 1_000_000_000)
-            }
-
-            let bp = BridgeProcess()
-            self.bridge = bp
-
-            do {
-                await MainActor.run { setConnectStatus("Starting bridge…") }
-
-                // Surface key bridge-side milestones in the menu while connecting.
-                bp.onStatusLine = { [weak self] msg in
-                    DispatchQueue.main.async { self?.setConnectStatus(msg) }
-                }
-
-                // Start the bridge with no preferred host. The bridge does
-                // its own mDNS dance and prints PORT/HOST/DEVICE on stdout.
-                // Pass the device IDs so BridgeProcess can run the IOKit
-                // preflight (seize + re-enumerate) and break the kernel's
-                // bind on the USB interface before libusb's claim attempt.
-                //
-                // NFS is now the default mount path. The privileged helper
-                // is no longer a gate: macOS allows unprivileged
-                // `mount -t nfs` to localhost (verified 2026-05-08), so
-                // MountManager.mountNFS shells out to /sbin/mount directly
-                // and the helper layer is vestigial for the mount path.
-                // Eliminates the ~90s WebDAV mount-time wait unconditionally.
-                let useNFS = true
-                let port = try await bp.start(
-                    useNFS: useNFS,
-                    seizeForVendor: device.vendorID,
-                    seizeForProduct: device.productID
-                )
-
-                // Prefer the libmtp-derived friendly name (Android's
-                // Settings.Global.DEVICE_NAME → MTP DeviceFriendlyName →
-                // LIBMTP_Get_Friendlyname). Falls back to the IOKit USB
-                // product string only if libmtp gave us nothing.
-                let displayName = bp.deviceName ?? device.displayName
-
-                // If the helper is approved, override the bridge's
-                // mDNS-derived `.local` hostname with a clean single-label
-                // name pulled from /etc/hosts. Falls back to bp.host on
-                // any failure, which still gives the user the .local form.
-                var mountHost = bp.host
-                if HelperClient.isEnabled,
-                   let cleanLabel = registerCleanHostname(named: displayName) {
-                    mountHost = cleanLabel
-                }
-
-                await MainActor.run { setConnectStatus("Mounting…") }
-
-                let mountedURL: URL
-                if bp.proto == "nfs" {
-                    // NFS path: unprivileged `/sbin/mount` with the bridge's
-                    // mDNS-registered hostname as the source. No helper, no
-                    // resumable-upload companion (NFS isn't subject to
-                    // WebDAVFS's writeseq cap).
-                    let volName = AppDelegate.sanitizeHostname(displayName)
-                    guard !volName.isEmpty else {
-                        throw MountError.mountFailed(-1)
-                    }
-                    mountedURL = try await mountManager.mountNFS(
-                        host: bp.host,
-                        port: port,
-                        volumeName: volName
-                    )
-                } else {
-                    // WebDAV path (helper absent or NFS unavailable).
-                    mountedURL = try await mountManager.mount(host: mountHost, port: port, displayName: displayName)
-
-                    // Start the resumable-upload companion. It polls the bridge's
-                    // /_comprador/sessions endpoint and, when the bridge reports
-                    // a chunked-PUT truncation, finds the source file via
-                    // NSMetadataQuery and streams the missing tail back through
-                    // /_comprador/sessions/<id>/append.
-                    let bridgeURL = URL(string: "http://\(bp.host):\(port)/")!
-                    let companion = ResumeCompanion(bridgeURL: bridgeURL)
-                    companion.start()
-                    self.resumeCompanion = companion
-                }
-
-                await MainActor.run {
-                    NSLog("Comprador: Device mounted as volume")
-                    stopConnectTimer()
-                    connectStatus = ""
-                    isConnecting = false
-                    updateIcon(state: .mounted)
-                    rebuildMenu()
-                    NSWorkspace.shared.open(mountedURL)
-                }
-                return // success
-            } catch let bridgeErr as BridgeError where bridgeErr == .timeout {
-                NSLog("Comprador: Bridge timeout — prompting user")
-                BridgeProcess.postFileTransferNotification()
-                bp.stop()
-                self.bridge = nil
-                await MainActor.run {
-                    stopConnectTimer()
-                    connectStatus = ""
-                    isConnecting = false
-                    updateIcon(state: .error)
-                    rebuildMenu()
-                }
-                return // don't retry timeouts
-            } catch let err {
-                bp.stop()
-                self.bridge = nil
-                if attempt < retryDelays.count - 1 {
-                    NSLog("Comprador: Attempt %d failed (%@), retrying...", attempt + 1, err.localizedDescription)
-                } else {
-                    NSLog("Comprador: All attempts failed — %@", err.localizedDescription)
-                    // Same recovery hint as the timeout path — we still
-                    // can't claim the USB interface, almost always because
-                    // the descriptor is stale (PTP) even though the phone
-                    // shows MTP, and macOS daemons hold the interface.
-                    BridgeProcess.postFileTransferNotification()
-                    await MainActor.run {
-                        stopConnectTimer()
-                        connectStatus = ""
-                        isConnecting = false
-                        updateIcon(state: .error)
-                        rebuildMenu()
-                    }
-                }
-            }
-        }
-    }
-
-    private func teardown() async {
-        resumeCompanion?.stop()
-        resumeCompanion = nil
-        if mountManager.isMounted {
-            await mountManager.unmount()
-        }
-        bridge?.stop()
-        bridge = nil
-
-        if let host = registeredHostname {
-            do {
-                try HelperClient.removeHost(host)
-            } catch {
-                NSLog("Comprador: helper removeHost(%@) failed: %@",
-                      host, error.localizedDescription)
-            }
-            registeredHostname = nil
-        }
+    private func teardownCurrentSession() async {
+        guard let active = session else { return }
+        await active.teardown()
+        session = nil
     }
 
 #if DEBUG
@@ -581,32 +374,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// and returns; handleDeviceAttached runs before that Task executes, sees
     /// isMounted == true, and should queue via pendingAttach rather than discarding.
     @objc private func syntheticFlutter() {
-        guard let device = connectedDevice else { return }
+        guard let device = session?.device else { return }
         NSLog("Comprador: ⚡ synthetic flutter — firing detach+reattach on \(device.displayName)")
         handleDeviceDetached(device)
         handleDeviceAttached(device)
     }
 #endif
-
-    /// Sanitises a friendly device name into a DNS label and asks the
-    /// privileged helper to point it at 127.0.0.1 in /etc/hosts. Returns
-    /// the hostname on success, or nil if the name didn't yield a valid
-    /// label or the helper rejected it (in which case the caller should
-    /// fall back to whatever the bridge advertised — typically mDNS).
-    private func registerCleanHostname(named friendlyName: String) -> String? {
-        let label = AppDelegate.sanitizeHostname(friendlyName)
-        guard !label.isEmpty else { return nil }
-        do {
-            try HelperClient.addHost(label)
-            registeredHostname = label
-            NSLog("Comprador: registered hostname %@ via helper", label)
-            return label
-        } catch {
-            NSLog("Comprador: helper addHost(%@) failed: %@",
-                  label, error.localizedDescription)
-            return nil
-        }
-    }
 
     /// Convert a friendly device name into a single-label DNS hostname
     /// matching the helper's regex `^[A-Za-z][A-Za-z0-9-]{0,62}$`.
@@ -649,5 +422,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             s = String(s.prefix(63)).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
         }
         return s
+    }
+}
+
+// MARK: - DeviceSessionDelegate
+
+extension AppDelegate: DeviceSessionDelegate {
+    func deviceSessionDidChangeMenuStructure(_ session: DeviceSession) {
+        rebuildMenu()
+    }
+
+    func deviceSessionDidMount(_ session: DeviceSession, mountedURL: URL) {
+        updateIcon(state: .mounted)
+        rebuildMenu()
+        NSWorkspace.shared.open(mountedURL)
+    }
+
+    func deviceSession(_ session: DeviceSession, didFailWith error: Error) {
+        updateIcon(state: .error)
+        rebuildMenu()
     }
 }
