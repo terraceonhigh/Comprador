@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Comprador v0.4.0 — DRAFT preview</title>
+<meta name="robots" content="noindex,nofollow">
+<style>
+  :root {
+    --text: #1a1a1a;
+    --muted: #5f5f5f;
+    --link: #0a4d8a;
+    --bg: #fffdf8;
+    --card: #f4efe3;
+    --rule: #c8b88a;
+    --draft: #c0271d;
+  }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+               font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+               line-height: 1.55; }
+  body {
+    border: 8px solid var(--draft);
+    box-sizing: border-box;
+    min-height: 100vh;
+    padding: 0;
+  }
+  .draft-banner {
+    position: sticky; top: 0; z-index: 10;
+    background: var(--draft);
+    color: white;
+    text-align: center;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    padding: 8px 12px;
+    text-transform: uppercase;
+    font-size: 13px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  }
+  .draft-banner em { font-style: normal; opacity: 0.85; font-weight: 400; }
+  main {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 32px 28px 96px;
+  }
+  h1 { font-size: 2.4em; margin: 0.3em 0 0.1em; }
+  h2 { font-size: 1.5em; margin-top: 2em; padding-top: 0.4em;
+       border-top: 1px solid var(--rule); }
+  h3 { font-size: 1.15em; margin-top: 1.8em; }
+  p { margin: 0.6em 0; }
+  a { color: var(--link); }
+  a:hover { text-decoration: underline; }
+  hr { border: none; border-top: 1px solid var(--rule); margin: 2em 0; }
+  ul { padding-left: 1.4em; }
+  li { margin: 0.25em 0; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+              font-size: 0.92em; }
+  pre { background: var(--card); padding: 14px 16px; border-radius: 6px;
+        overflow-x: auto; line-height: 1.4; }
+  code { background: var(--card); padding: 0.08em 0.32em; border-radius: 3px; }
+  pre code { background: transparent; padding: 0; }
+  img { max-width: 100%; height: auto; border-radius: 4px; }
+  table { border-collapse: collapse; margin: 1em 0; }
+  th, td { border: 1px solid var(--rule); padding: 6px 12px; text-align: left; }
+  th { background: var(--card); }
+  blockquote { border-left: 3px solid var(--rule); margin: 1em 0; padding: 0.3em 1em;
+               color: var(--muted); background: var(--card); border-radius: 0 4px 4px 0; }
+  .placeholder {
+    display: block;
+    margin: 1.2em auto;
+    padding: 24px 22px;
+    background: repeating-linear-gradient(
+      45deg,
+      #fef7e6, #fef7e6 12px,
+      #fff2d0 12px, #fff2d0 24px
+    );
+    border: 2px dashed var(--draft);
+    border-radius: 6px;
+    color: #4a3a10;
+    max-width: 700px;
+  }
+  .placeholder-tag {
+    display: block;
+    font-weight: 700;
+    font-size: 0.78em;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--draft);
+    margin-bottom: 4px;
+  }
+  .placeholder-body {
+    display: block;
+    font-size: 0.92em;
+    line-height: 1.4;
+  }
+</style>
+</head>
+<body>
+<div class="draft-banner">DRAFT &nbsp;·&nbsp; Comprador v0.4.0 preview — <em>image placeholders pending validation captures</em></div>
+<main>
+<!--
+🚧 DRAFT — v0.4.0 website landing page 🚧
+
+Filename + this top comment marked DRAFT for a reason: content assumes
+v0.4.0's features as currently planned (per V0.4.0-DRAFT.md) and uses
+image placeholders that need real screenshots once the v0.4.0
+validation work is done. Promote to `WEBSITE.md` (or render to HTML at
+`docs/site/index.html` if we're going the GitHub Pages route) when
+v0.4.0 ships.
+
+Structural inspiration: SwiftMTP's README serves as their landing page
+(<https://github.com/Neighbor-Z/SwiftMTP>). The shape borrowed —
+center-aligned logo, badge row, hero intro, features list, screenshot
+grid, architecture sketch, Realized checklist, FAQ. Copy is original.
+
+Image placeholders are marked with HTML comments so they're easy to
+find. Each names what the shot needs to show.
+-->
+
+<p align="center">
+  <img height="128" src="images/icon.png" alt="Comprador app icon — a Merian 1705 pomegranate plate, a brown butterfly with eyespots on a red bloom">
+</p>
+
+<h1 align="center">Comprador</h1>
+
+<p align="center">
+  Your Android phone, mounted in Finder. No kernel extensions. No subscriptions. No Developer Options.
+</p>
+
+<p align="center">
+  <a href="https://github.com/terraceonhigh/Comprador/releases/latest">Download</a> ·
+  <a href="https://github.com/terraceonhigh/Comprador">Source</a> ·
+  <a href="#faq">FAQ</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/terraceonhigh/Comprador/releases/latest"><div class="placeholder"><span class="placeholder-tag">📷 image placeholder</span><span class="placeholder-body">Latest release (filename reserved: release-v0.4.0-blue.svg?style=flat)</span></div></a>
+  <a href="https://github.com/terraceonhigh/Comprador/blob/master/LICENSE"><div class="placeholder"><span class="placeholder-tag">📷 image placeholder</span><span class="placeholder-body">License: GPLv3-or-later (filename reserved: license-GPLv3--or--later-green.svg?style=flat)</span></div></a>
+  <div class="placeholder"><span class="placeholder-tag">📷 image placeholder</span><span class="placeholder-body">Platform: macOS 13+ (filename reserved: macOS-13%2B-blue.svg?style=flat)</span></div>
+  <div class="placeholder"><span class="placeholder-tag">📷 image placeholder</span><span class="placeholder-body">Apple Silicon (filename reserved: arch-Apple%20Silicon-lightgrey.svg?style=flat)</span></div>
+</p>
+
+<div class="placeholder"><span class="placeholder-tag">📷 image placeholder</span><span class="placeholder-body">hero shot. A Finder window showing the Pixel 6 (or Xperia) mounted as a sidebar entry with the device's friendly name; Internal storage and SD card both visible at the root; the window shows DCIM/Camera with a few real photos. ~720px wide.</span></div>
+<p align="center">
+  <img src="images/demo.png" alt="Phone mounted as a Finder volume" width="720">
+</p>
+
+<hr />
+<h2 id="whats-new-in-v040">What's new in v0.4.0</h2>
+<p>Plug in. Pull down the notification shade. Tap <strong>File
+Transfer</strong>. Your phone is in Finder.</p>
+<p>That part hasn't changed since v0.1.0. But v0.4.0 is the release
+where the mount path got <em>quiet</em> — fewer prompts, fewer running
+daemons, fewer surprises.</p>
+<h3 id="true-concurrent-multi-device">True concurrent multi-device</h3>
+<p>Plug in two phones (or a phone and a camera). Both appear in the
+Locations sidebar at once. Browse one while the other transfers. No
+"switch active device" dance, no per-app device picker, no arbitrary
+one-at-a-time limit. Each device gets its own subprocess, its own mount,
+its own quota — the architecture has been building toward this for three
+releases.</p>
+<div class="placeholder"><span class="placeholder-tag">📷 image placeholder</span><span class="placeholder-body">two devices in Finder sidebar simultaneously. Show a Pixel and an Xperia (or any two distinct Android devices) as separate Locations entries, both browseable. Demonstrate that each has its own /Volumes/<DeviceName> path. ~720px wide.</span></div>
+<p align="center">
+  <div class="placeholder"><span class="placeholder-tag">📷 image placeholder</span><span class="placeholder-body">Two phones mounted at once (filename reserved: v040-multi-device.png)</span></div>
+</p>
+
+<h3 id="honest-free-space-numbers">Honest free-space numbers</h3>
+<p>Phones with an SD card report two quotas — one for Internal storage,
+one for the SD card. Finder's "X GB available" string now reflects which
+storage you're standing in, not a misleading sum. A 50 GB drag onto a
+near-full SD card gets refused at the gate instead of failing partway
+through.</p>
+<div class="placeholder"><span class="placeholder-tag">📷 image placeholder</span><span class="placeholder-body">get-info or df-h showing different "available" numbers for Internal storage vs SD card on the same phone. Side-by-side screenshots, ~360px wide each.</span></div>
+<p align="center">
+  <div class="placeholder"><span class="placeholder-tag">📷 image placeholder</span><span class="placeholder-body">Per-storage free space (filename reserved: v040-per-storage-quota.png)</span></div>
+</p>
+
+<h3 id="phone-side-changes-surface-in-real-time">Phone-side changes
+surface in real time</h3>
+<p>Delete a file on the phone — through its own Files app, through a
+camera app, through anything — and Finder catches up within a couple of
+seconds. The mount used to freeze its view at session start; now it
+reconciles against the device on every directory access.</p>
+<h3 id="no-phantom-files">No phantom files</h3>
+<p>macOS Finder writes <code>._&lt;name&gt;</code> "AppleDouble"
+companion files alongside every file you drop onto a non-HFS+
+filesystem. Other mount-as-volume tools commit them straight to the
+phone, so the phone's Files app ends up showing two entries for every
+file you transferred. Comprador silently accepts and discards them
+server-side. Phone's view stays clean.</p>
+<h3 id="cleaner-first-launch">Cleaner first launch</h3>
+<p>The privileged helper that v0.2 used for cosmetic Finder labels is
+gone. v0.4.0 mounts the phone with <code>mount -t nfs</code> to a
+loopback port — no LaunchDaemon, no Login Items approval prompt on first
+launch, no <code>/etc/hosts</code> editing. The first time you open
+Comprador after install: the icon appears in the menu bar and that's the
+entire onboarding.</p>
+<hr />
+<h2 id="how-it-works">How it works</h2>
+<p><strong>For Android phones</strong></p>
+<ol type="1">
+<li>Plug in your phone via USB</li>
+<li>Pull down the notification shade → tap <strong>File
+Transfer</strong></li>
+<li>Phone appears in Finder sidebar</li>
+</ol>
+<p><strong>For cameras (DSLRs, mirrorless — Canon, Nikon, Sony, Fuji,
+etc.)</strong></p>
+<ol type="1">
+<li>Plug in the camera via USB</li>
+<li>If the camera asks, choose <strong>PC / Computer</strong> mode
+(sometimes called <em>MTP</em> or <em>PTP</em>)</li>
+<li>Camera appears in Finder sidebar</li>
+</ol>
+<p>That's it. No menu to find, no settings to configure, no right-click
+ritual.</p>
+<hr />
+<h2 id="features">Features</h2>
+<ul>
+<li><strong>Mounts as a Finder volume</strong> — open Finder windows,
+drag files, use Quick Look, run command-line tools. Same affordances as
+any other mounted volume.</li>
+<li><strong>Bi-directional transfer</strong> — copy onto the phone, copy
+off it, via drag-and-drop, copy-paste, the <code>cp</code> command,
+anything else that talks to Finder.</li>
+<li><strong>Per-storage free space</strong> — Internal and SD card
+report separately. Drag-onto-near-full-SD is refused at the gate, not
+partway through.</li>
+<li><strong>Phone-side change reflection</strong> — delete a file via
+the phone's Files app and Finder catches up within seconds.</li>
+<li><strong>Concurrent multi-device</strong> — two phones in the sidebar
+at once; parallel browsing and parallel transfers.</li>
+<li><strong>No phantom companion files</strong> — AppleDouble
+<code>._*</code> writes are filtered at the mount layer; the phone never
+sees them.</li>
+<li><strong>Camera support</strong> — any PTP-class device libmtp
+recognizes shows up the same way an Android phone does.</li>
+<li><strong>Signed and notarized</strong> — first launch is a
+double-click; no Gatekeeper warning.</li>
+<li><strong>No kernel extension</strong> — no SIP changes, no Gatekeeper
+approval, no privileged helper installation. The bridge is a userland
+binary that speaks NFSv3 to localhost.</li>
+<li><strong>No telemetry</strong> — the bridge binds to the loopback
+interface and nowhere else. Nothing leaves your machine.</li>
+</ul>
+<hr />
+<h2 id="screenshots">Screenshots</h2>
+<div class="placeholder"><span class="placeholder-tag">📷 image placeholder</span><span class="placeholder-body">menu bar icon states in a grid. Four cells: - idle: no device (basic externaldrive icon) - connecting: animated externaldrive (capture mid-pulse) - mounted: filled externaldrive - error: externaldrive with badge.xmark Each cell ~120px square; assemble into a 2x2 grid ~480px wide.</span></div>
+| Idle | Connecting | Mounted | Error |
+|------|------------|---------|-------|
+| <div class="placeholder"><span class="placeholder-tag">📷 image placeholder</span><span class="placeholder-body">menu_idle.png ~120px</span></div> | <div class="placeholder"><span class="placeholder-tag">📷 image placeholder</span><span class="placeholder-body">menu_connecting.png ~120px</span></div> | <div class="placeholder"><span class="placeholder-tag">📷 image placeholder</span><span class="placeholder-body">menu_mounted.png ~120px</span></div> | <div class="placeholder"><span class="placeholder-tag">📷 image placeholder</span><span class="placeholder-body">menu_error.png ~120px</span></div> |
+
+<div class="placeholder"><span class="placeholder-tag">📷 image placeholder</span><span class="placeholder-body">menu open showing connected device with Show in Finder / Eject menu items. Capture with a phone actually mounted and the menu dropped. ~360px wide.</span></div>
+
+<p align="center">
+  <div class="placeholder"><span class="placeholder-tag">📷 image placeholder</span><span class="placeholder-body">Menu bar dropdown with a phone mounted (filename reserved: v040-menu-mounted.png)</span></div>
+</p>
+
+<div class="placeholder"><span class="placeholder-tag">📷 image placeholder</span><span class="placeholder-body">a Finder window with the phone mounted, browsing DCIM/Camera, sidebar showing the phone as a Locations entry. ~720px wide.</span></div>
+
+<p align="center">
+  <div class="placeholder"><span class="placeholder-tag">📷 image placeholder</span><span class="placeholder-body">Browsing the phone in Finder (filename reserved: v040-finder-browsing.png)</span></div>
+</p>
+
+<hr />
+<h2 id="architecture">Architecture</h2>
+<p>Three components, simpler in v0.4.0 than any release before it.</p>
+<pre class="text"><code>Phone ←USB→ libmtp ←cgo→ Go bridge ←NFSv3 (localhost)→ Finder
+                                ↑
+                         hostname from
+                       Settings.Global.DEVICE_NAME
+                       (via libmtp friendly name)</code></pre>
+<p><strong>Go NFS Bridge</strong> — a standalone binary that talks to
+the phone via libmtp (cgo) and serves its filesystem over NFSv3 on a
+random loopback port. macOS speaks NFSv3 natively, so no kernel
+extension, no FUSE, no driver-signing dance. The bridge is the
+<em>only</em> moving part that has to know about MTP.</p>
+<p><strong>Swift Menu Bar App</strong> — watches for USB devices via
+IOKit, spawns a bridge per connected phone or camera, and mounts each
+bridge's NFS endpoint as a Finder volume via <code>mount -t nfs</code>.
+Per-device subprocesses mean two phones can coexist without sharing
+state.</p>
+<p>That's the whole stack. No privileged helper. No kernel extension. No
+WebDAV layer. No File Provider extension. No daemon to keep alive when
+you quit the app.</p>
+<p>See <a href="ARCHITECTURE.md"><code>docs/ARCHITECTURE.md</code></a>
+for the detailed component diagram.</p>
+<hr />
+<h2 id="get-it">Get it</h2>
+<p><a
+href="https://github.com/terraceonhigh/Comprador/releases/latest"><strong>Download
+the latest release.</strong></a> Open the <code>.dmg</code>, drag
+<code>Comprador.app</code> to Applications, eject the disk image. First
+launch is a double-click.</p>
+<h3 id="requirements">Requirements</h3>
+<ul>
+<li>macOS 13 (Ventura) or later</li>
+<li>Apple Silicon Mac (M1 or newer)</li>
+<li>A data-capable USB cable (charge-only cables won't work — if your
+phone doesn't appear at all, swap the cable first)</li>
+<li>An Android phone, or a camera that exposes itself as a USB MTP/PTP
+device</li>
+</ul>
+<h3 id="build-from-source">Build from source</h3>
+<pre class="bash"><code>brew install libmtp go
+
+# With full Xcode installed:
+make dist
+
+# With only Command Line Tools (no Xcode):
+make dist-swiftc
+
+# Output: dist/Comprador.zip</code></pre>
+<p>See <a href="BUILDING.md"><code>docs/BUILDING.md</code></a> for the
+full build matrix.</p>
+<hr />
+<h2 id="realized">Realized</h2>
+<p>What's actually shipped, accumulated across releases:</p>
+<ul class="task-list">
+<li><label><input type="checkbox" checked="" />Mount Android phones as
+Finder volumes (v0.1.0)</label></li>
+<li><label><input type="checkbox" checked="" />Bi-directional file
+transfer via Finder drag-and-drop (v0.1.0)</label></li>
+<li><label><input type="checkbox" checked="" />Create folders on the
+phone (v0.1.0)</label></li>
+<li><label><input type="checkbox" checked="" />Delete files and folders
+on the phone (v0.1.0)</label></li>
+<li><label><input type="checkbox" checked="" />Automatic mount on
+plug-in, unmount on unplug (v0.1.0)</label></li>
+<li><label><input type="checkbox" checked="" />Volume named after the
+device's friendly name (v0.1.0)</label></li>
+<li><label><input type="checkbox" checked="" />Camera support via PTP
+class match (v0.1.0)</label></li>
+<li><label><input type="checkbox" checked="" />"Start at Login" toggle
+(v0.2.0)</label></li>
+<li><label><input type="checkbox" checked="" />Apple-signed and
+notarized distribution (v0.2.3)</label></li>
+<li><label><input type="checkbox" checked="" />NFS mount path replaces
+WebDAV — sub-second mount time (v0.3.0)</label></li>
+<li><label><input type="checkbox" checked="" />Live re-enumeration: drag
+a file, see it appear without manual refresh (v0.3.0)</label></li>
+<li><label><input type="checkbox" checked="" />Recursive folder copies
+handled deeply (v0.3.0)</label></li>
+<li><label><input type="checkbox" checked="" />Per-storage quota for
+phones with SD cards (v0.4.0)</label></li>
+<li><label><input type="checkbox" checked="" />Phone-side change
+reflection within ~2 seconds (v0.4.0)</label></li>
+<li><label><input type="checkbox" checked="" />AppleDouble
+companion-file filtering (v0.4.0)</label></li>
+<li><label><input type="checkbox" checked="" />Concurrent multi-device
+support (v0.4.0)</label></li>
+<li><label><input type="checkbox" checked="" />Cleaner first launch — no
+privileged helper, no Login Items prompt (v0.4.0)</label></li>
+<li><label><input type="checkbox" checked="" />WebDAV mount path retired
+(v0.4.0)</label></li>
+</ul>
+<hr />
+<h2 id="faq">FAQ</h2>
+<p><strong>Where do my files actually live?</strong> On your phone.
+Comprador mounts a <em>view</em> — nothing is copied to your Mac unless
+you drag a file into a local Finder window. Closing the volume doesn't
+lose anything; opening it again shows the current state of the
+phone.</p>
+<p><strong>Does Comprador see my files? Are they uploaded
+anywhere?</strong> No. Everything is local: your phone over USB,
+Comprador as a small NFS server bound to <code>localhost</code>, Finder
+as the NFS client. The bridge binds only to the loopback interface — it
+can't be reached from the LAN, let alone the public internet. No cloud,
+no telemetry, no internet round-trips.</p>
+<p><strong>Does it work over Wi-Fi?</strong> No. USB only. Wireless MTP
+exists but isn't widely supported on the Android side, and adding it
+would roughly double the project's attack surface for very little
+gain.</p>
+<p><strong>Does it work with iPhones?</strong> No. iPhones don't speak
+MTP — they speak Apple's proprietary mobile device protocol, handled by
+Image Capture / Photos / Finder sync. Comprador is for
+<em>non</em>-Apple phones and PTP/MTP cameras.</p>
+<p><strong>How do I uninstall?</strong> Drag <code>Comprador.app</code>
+from <code>/Applications</code> to the Trash. The Login Item
+registration goes with it. No leftover daemons, no
+<code>/etc/hosts</code> entries, no kernel state — v0.4.0 removed all of
+those.</p>
+<p><strong>Finder shows the volume but no files (or transfers
+stall).</strong> The MTP session has gotten into a bad state, usually
+because the phone slept or the cable wiggled. Menu bar icon →
+<strong>Eject the device</strong>, unplug, replug. Comprador mounts
+fresh.</p>
+<p><strong>Two phones with the same name?</strong> If you plug in two
+unconfigured Pixel 6s, both want to be <code>Pixel-6.local</code> and
+macOS would normally complain. Comprador disambiguates: the second
+device's mount gets a <code>-2</code> suffix and the menu shows both
+with the suffix as well, so you can tell them apart at a glance.</p>
+<p><strong>How do I update?</strong> Download the latest
+<code>.dmg</code> from <a
+href="https://github.com/terraceonhigh/Comprador/releases/latest">Releases</a>
+and replace the app in Applications. Sparkle-style auto-update is on the
+roadmap; not in v0.4.0.</p>
+<hr />
+<h2 id="why-not">Why not...</h2>
+<p><strong>ADB?</strong> Requires enabling Developer Options (Settings →
+About → tap the build number seven times). Too much friction for
+non-technical users.</p>
+<p><strong>macFUSE?</strong> Requires a kernel extension, which means
+either disabling SIP or navigating Gatekeeper approval flows that shift
+with each macOS release. Not acceptable for a consumer app.</p>
+<p><strong>Android File Transfer?</strong> Abandoned by Google, buggy, 4
+GiB file-size limit, last meaningful update in years.</p>
+<p><strong>File Provider API?</strong> Designed for cloud storage
+backends with pull-based REST flows. MTP's stateful, session-locked
+protocol doesn't map well; sandboxing restrictions make USB device
+access from a File Provider extension painful.</p>
+<hr />
+<h2 id="support">Support</h2>
+<p>Comprador is free, GPL, and will stay that way. If it's saved you the
+cost of a paid alternative, or just made your day slightly less
+annoying:</p>
+<ul>
+<li><strong>Interac e-Transfer</strong> (Canadian banking only) →
+<code>terrace@terrace.zone</code>. Auto-deposit is on, so no security
+question needed. Any amount is welcome and goes to ongoing project costs
+(Apple Developer Program renewal, code-signing, the domain).</li>
+</ul>
+<p>To contribute code or testing, see <a
+href="../CONTRIBUTING.md"><code>CONTRIBUTING.md</code></a>.</p>
+<hr />
+<h2 id="license">License</h2>
+<p><a href="../LICENSE">GNU General Public License, version 3 or
+later</a>.</p>
+<p>Third-party components and their licenses (libmtp,
+<code>golang.org/x/net</code>, the vendored <code>go-nfs</code>) are
+noted in <a href="../NOTICES.md"><code>NOTICES.md</code></a>.</p>
+<p>Comprador began as a fork of <a
+href="https://github.com/ganeshrvel/openmtp">OpenMTP</a> by Ganesh
+Rathinavel, but no source from that project remains — the current
+codebase is a clean reimplementation with a different architecture (Go
+NFS bridge + Swift menu bar app, in place of OpenMTP's Electron +
+Node.js).</p>
+<hr />
+<p align="center">
+  <sub>
+    Need help? <a href="https://github.com/terraceonhigh/Comprador/issues">Open an issue.</a>
+    Found a bug? Same place.
+  </sub>
+</p>
+
+</main>
+</body>
+</html>
