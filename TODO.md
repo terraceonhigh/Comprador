@@ -313,6 +313,61 @@ assumes have shipped before Day 0. Block the v0.4.0 tag.
       from the previous. Discipline: ship the modest version, refuse
       additions. The Odometer is honest mileage, not a dashboard.
 
+- [ ] **Website CSS — Apple-clean composition with period flavor.**
+      The body copy in
+      [docs/WEBSITE-v0.4.0-DRAFT.md](docs/WEBSITE-v0.4.0-DRAFT.md)
+      and the gh-pages preview at
+      <https://terraceonhigh.github.io/Comprador/> currently render
+      via `build/render-website.py`'s clinical-modern template. That
+      template fights the comprador frame — the body copy honours the
+      metaphor structurally but the typography and colour palette
+      don't. The CSS layer needs a pass that takes the Merian/Sluyter
+      pomegranate icon as seriously as the icon already takes itself:
+
+      - Cream paper background (not pure white)
+      - Deep crimson — seal-wax / merchant-chop register — as the
+        single accent. The bloom in the existing logo plate is
+        already roughly this red; color-pick from there.
+      - Transitional serif typography (Caslon, Baskerville, EB
+        Garamond, Source Serif — anything that belongs to the same
+        century as the engraving)
+      - Ornamental hairline rules between sections (hairline +
+        small ornament + hairline, not the modern flat HR)
+      - Period-marginalia treatment for the etymology / fine-print
+        ("Apple Silicon, macOS 13 or later. No iPhone support.")
+      - Bordered-engraving frame around the hero image, period
+        convention rather than modern edge-to-edge
+      - The sign-off (`Comprador. At your service.`) gets small caps
+        + the seal-red, sitting on a hairline ornament — the page's
+        single explicit period inscription, in keeping with the
+        Apple-with-period-flavor distribution we agreed
+      - Body copy stays Apple-clean throughout; the CSS does the
+        period work without the prose committing to the register
+
+      **Blocker: needs the architect to spend a few hours on
+      Pinterest** (or equivalent moodboard) gathering visual
+      references they actually like — period commercial broadsides,
+      18th-century natural-history engravings, modern reissues of
+      the same (the Merian/Sluyter plate's own milieu), Wes
+      Anderson title cards if relevant, museum-collection
+      letterpress samples. Without that reference set, any CSS pass
+      is guessing at what *feels right* and risks landing somewhere
+      twee or LARP-y. Once the moodboard exists, the CSS is a
+      bounded afternoon of work — typeface licensing decisions,
+      colour values, hairline-ornament SVG sourcing, then layout.
+
+      Risk to flag once unblocked: period treatment done halfway
+      reads as costume. The discipline mirrors the Odometer's: commit
+      fully to the period register in the visual layer, or stay
+      clinical-modern. The middle is the bad place.
+
+      Cross-references:
+      [docs/COLLEAGUE-COPY-DRAFT.md](docs/COLLEAGUE-COPY-DRAFT.md)
+      (positioning context),
+      [docs/APPLE-COPY-CONVENTIONS-DRAFT.md](docs/APPLE-COPY-CONVENTIONS-DRAFT.md)
+      (the body-copy register the visual is supposed to support),
+      and the gh-pages preview as the current baseline.
+
 ---
 
 ## Verification follow-ups
@@ -685,6 +740,44 @@ yet; not blocking.
       Verified against the 2026-05-11 ECON101 transfer: 430/432
       byte-perfect, the 2 deltas are both `.DS_Store` files that
       Finder legitimately regenerates at the destination.
+
+- [ ] **End-to-end test harness (`test-e2e.sh`).** Builds on
+      [docs/AUTOMATED-TESTING-DRAFT.md](docs/AUTOMATED-TESTING-DRAFT.md)'s
+      survey of Mac automation surfaces and the recommended
+      shell-first architecture. ~90 lines, no new dependencies.
+      Composes with existing `test-md5.sh` for bulk-transfer
+      verification.
+
+      Flow: precondition the phone to MTP mode (via `adb shell svc
+      usb setFunction`), wait up to 120s for the Comprador-mounted
+      volume to appear under `/Volumes/`, smoke-list it, do a
+      random-payload write+verify (`cp` + ADB md5 round-trip),
+      do a read+verify (`cp` back + diff), clean up the phone-side
+      artifact, eject via `diskutil unmount`. Report pass/fail.
+
+      Key design decisions from the survey:
+
+      - **Shell beats AppleScript for almost everything.** Five of
+        six test needs are pure filesystem ops. `osascript` is only
+        worth invoking if we later want to verify Finder's
+        drag-and-drop verb *specifically* (which exercises the
+        same bridge path as `cp`, so probably not).
+      - **`diskutil unmount` beats `osascript`** for eject —
+        no Automation permission prompt.
+      - **No sudo needed.** `mount -t nfs` to localhost is
+        unprivileged (Comprador's helper-free path).
+      - **GUI session required** for any AX-based variants —
+        rules out headless CI Macs, but the pure-shell pipeline
+        runs fine without a logged-in session.
+      - **Gate behind `COMPRADOR_TESTING_ADB=1`** matching the
+        existing `test-md5.sh` convention.
+
+      Makefile target: `make test-e2e` mirroring `make test-md5`.
+      Expected duration: ~30 seconds per run if the phone is
+      already in MTP mode + plugged in; longer if the mount has
+      to be re-established. Suitable for pre-merge gates once
+      stabilized, possibly with a `make test-quick` subset that
+      skips the bulk transfer.
 
 ## Low impact (completeness)
 
