@@ -368,6 +368,66 @@ assumes have shipped before Day 0. Block the v0.4.0 tag.
       (the body-copy register the visual is supposed to support),
       and the gh-pages preview as the current baseline.
 
+- [ ] **Documentation sweep before v0.4.0 primetime.** The README
+      is the first surface most GitHub-arriving users see; secondary
+      docs (USER.md, PRE-LAUNCH.md, ARCHITECTURE.md, FAQ entries
+      across multiple files) are where curious users dig in next.
+      All of these were touched in the 2026-05-11 staleness audit
+      (commit `ccf324fe`) which fixed the WebDAV-still-mentioned
+      bugs but did not rewrite for marketing or post-v0.4.0 feature
+      set. A careful pre-tag pass is needed.
+
+      Items to address in the README specifically:
+
+      - **Headline and tagline** — confirm they still read right
+        after the marketing arc (composite copy + Apple-conventions
+        + colleague survey + Soduto footer + SEO subhead all settled
+        today, but only on the website draft; the README hasn't
+        been updated to match).
+      - **"Known issues" section** — multi-device shipped (drop the
+        *"Single device at a time (today)"* line), AppleDouble
+        filter shipped, TTL refresh shipped. The "first-plug-after-
+        app-start may fail" section needs honest update against
+        whatever v0.4.0 actually does about it.
+      - **Support section moved above License** per the donation
+        infrastructure TODO.
+      - **"What works" enumerates v0.4.0 features** — per-storage
+        quota, phone-side change reflection, AppleDouble filtering,
+        concurrent multi-device, helper retirement.
+      - **FAQ stale-claim sweep** — especially anything mentioning
+        WebDAV, the helper, or the privileged-mount path that's
+        gone.
+      - **Code-fenced commands** still resolve correctly
+        (`make app-swiftc`, `make test-md5`, `make bridge-test`,
+        the new `make test-e2e` if it lands).
+      - **Download / release-link URLs** point at the v0.4.0
+        release page once it exists.
+
+      Other documentation surfaces that should sweep in the same
+      pass:
+
+      - **USER.md** — does the user model still match the actual
+        v0.4.0 user (now that some "future" items are present-tense)?
+      - **PRE-LAUNCH.md** — go/no-go items, what's disclosed, what's
+        deferred. Several items shipped today; the checklist needs
+        a pass.
+      - **ARCHITECTURE.md** — WebDAV retirement may have left stale
+        references; the per-device subprocess shape of multi-device
+        wasn't documented when this was written.
+      - **DECISIONS.md** — confirm no decisions were invalidated by
+        v0.4.0's shape that aren't already noted.
+      - **MISTAKES.md** — entries whose underlying code retires
+        with v0.4.0 (WebDAV-section already tagged with the
+        sign-of-life header; helper-section similarly). Spot-check.
+      - **NOTICES.md** — third-party-licence accounting, especially
+        if any vendored dependency moved.
+
+      Budget: half a day of careful reading + writing. The v0.4.0
+      ship blocks on this not being stale. A blog post / Show HN
+      / Mac-press article from the launch playbook will quote from
+      whatever's at the top of the README; getting the wording
+      right *here* is the marketing channel that matters most.
+
 ---
 
 ## Verification follow-ups
@@ -381,6 +441,66 @@ Carried forward from DECISIONS.md, not blocking but real:
       VM_ALLOCATE regions < ~50 vs the pre-fix 409). Today's
       partial confirmation was 49.6 MB transfer → 8.4 MB RSS —
       directional evidence but not the spec'd test.
+
+---
+
+## Post-v0.4.0 backlog — durable corpus stewardship
+
+Forward-looking items that wait until v0.4.0 has shipped and the
+project is a stable reference point an external essay could
+plausibly cite.
+
+- [ ] **Externalize the methodological corpus.** Raised during the
+      2026-05-11 evening reflection on whether `correspondence/`
+      and the meta-docs have value beyond the project. Four
+      candidate threads identified, each is a real piece of writing,
+      pick one and do well rather than try to harvest all at once:
+
+      1. **AI-pair-programming methodology essay** drawing on the
+         `correspondence/` archive. The thinnest existing supply in
+         the public discourse; most published material on
+         working-with-AI is hype, demos, or manifestos rather than
+         working examples over real time. Comprador has the rare
+         primary-source material — a month of disciplined
+         architect-to-agent correspondence on a real product, with
+         methodological lessons captured *in the moment they were
+         learned* rather than retrospectively.
+      2. **Three to five distilled methodological essays** on the
+         generalizable lessons: *run the syscall before designing a
+         privileged helper*, *check the scope of the evidence not
+         just its quality*, *a wrong claim that prompts the right
+         investigation*. These work whether the collaborator is a
+         Claude, a junior engineer, or oneself six months ago.
+         Lower distinctiveness but durable.
+      3. **Focused macOS-internals posts** on the specific findings
+         the project produced — the webdavfs writeseq cap, the
+         ptpcamerad userspace-broker realization, the
+         ImageCaptureCore PTP-mode scope ceiling, the BTM-corruption
+         arc. Small audience (working indie Mac developers) but the
+         *right* audience; Apple's official docs will never carry
+         these findings.
+      4. **A "how this project documents itself" pattern-paper** —
+         the decision-journal + numbered mistakes log + plan docs
+         + correspondence-style retrospectives as a working model
+         for low-staffed open-source projects with high quality
+         bars. Likely landing point: a single Hacker News post.
+
+      **Right time to publish: post-v0.4.0 ship.** Until then, the
+      material is in the right place — captured in-repo, available
+      for reference, not yet curated for an external audience. The
+      *"we shipped it, here's what it taught us"* framing earns
+      much more attention than the *"we're shipping it eventually"*
+      framing.
+
+      **Blocked on:** confirmation that humboldt-side backup is live
+      and `correspondence/` is captured. The corpus itself is what
+      makes the harvest possible; protecting it before any external
+      publication is non-negotiable, because publishing creates
+      both the value-of-survival incentive *and* (modestly) the
+      risk-of-loss attention. The calling card to humboldt's
+      Claude is at
+      [bazzite-server-plan/Correspondance/12-from-comprador-on-backup.md](../bazzite-server-plan/Correspondance/12-from-comprador-on-backup.md).
+      Once backup confirms, this item unblocks.
 
 ---
 
