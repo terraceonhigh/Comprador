@@ -77,6 +77,98 @@ for full context.
 
 ---
 
+## Pre-launch UX items (block v0.4.0 tag)
+
+Items the launch playbook ([LAUNCH-PLAYBOOK-DRAFT.md](docs/LAUNCH-PLAYBOOK-DRAFT.md))
+assumes have shipped before Day 0. Block the v0.4.0 tag.
+
+- [ ] **User-facing disclosure of the `ptpcamerad` kill.** Comprador's
+      bridge kills `ptpcamerad` (and `AMPDeviceDiscoveryAgent`) to win
+      the USB interface claim from macOS's photo-import broker (see
+      [MISTAKES.md](docs/MISTAKES.md) entries 11, 19 and the seizure
+      work in [DECISIONS.md](docs/DECISIONS.md)). User-visible
+      consequence: while Comprador is running, other apps that read
+      USB cameras and PTP/MTP devices — Image Capture, Photos
+      auto-import, third-party photo importers — temporarily lose
+      access. They recover when Comprador releases the device. This
+      currently has no user-facing disclosure. Surface in three
+      places:
+
+      - **Welcome window** (`MenuBarApp/Sources/WelcomeWindow.swift`)
+        — a single bullet in the "what to expect" copy. Friendly
+        register; aim for the phrasing *"While Comprador is running,
+        Image Capture and Photos auto-import pause for USB cameras.
+        They resume automatically when you eject your phone."*
+      - **Website FAQ**
+        ([docs/WEBSITE-v0.4.0-DRAFT.md](docs/WEBSITE-v0.4.0-DRAFT.md))
+        — a longer FAQ entry explaining the why (macOS's PTP
+        coordinator is single-claim) for users curious about the
+        underlying behavior. Anchor on the symptom, not the
+        mechanism: "if Image Capture seems to stop seeing your
+        camera while Comprador is mounted, that's expected."
+      - **README's "What works"** section — one paragraph for
+        technical readers and blog reviewers writing about the
+        project. Honest disclosure beats discovery-by-bug-report.
+
+      The pattern surveyed in [docs/COLLEAGUE-COPY-DRAFT.md](docs/COLLEAGUE-COPY-DRAFT.md)
+      confirms competitors implying "fully automatic, no friction"
+      and avoiding this disclosure (MacDroid's hero in particular).
+      Our advantage in surfacing it: the disclosure is small, the
+      friction is small, and naming it up front means no support
+      tickets later asking why Image Capture stopped working.
+
+- [ ] **Update detector with Homebrew-aware suppression.** The
+      launch playbook commits to two distribution channels in
+      parallel: direct .dmg from GitHub Releases (the canonical
+      path for non-technical users via the website) and Homebrew
+      Cask (for technical-adjacent users and a credibility marker).
+      Each channel needs a different update story.
+
+      - Direct-DMG users need an in-app update mechanism. Industry
+        standard is **Sparkle** (`https://sparkle-project.org/`),
+        which works with a signed appcast.xml hosted alongside the
+        .dmg artifacts. Sparkle handles signature verification, EdDSA
+        keys, delta updates, the in-app prompt UI, and the relaunch
+        sequence. Mature, well-maintained, the obvious choice.
+      - Homebrew Cask users have `brew upgrade --cask comprador` as
+        their update path. An in-app Sparkle prompt for these users
+        bypasses the package manager they explicitly opted into and
+        breaks the reproducibility they care about. Sparkle must be
+        suppressed.
+
+      Detection of a Homebrew Cask install can use any of:
+
+      1. **Path check.** Homebrew Cask on Apple Silicon installs to
+         `/opt/homebrew/Caskroom/comprador/<version>/` and symlinks
+         (or copies) into `/Applications/`. On Intel: `/usr/local/
+         Caskroom/`. Check whether the running binary's
+         `Bundle.main.bundlePath` resolves under either Caskroom
+         prefix, or check whether either prefix contains a
+         `comprador/<version>` directory.
+      2. **xattr check.** Homebrew sets distinctive extended
+         attributes on Cask-installed artifacts. Less stable than
+         the path check; Homebrew has changed the metadata format
+         before. Use as a secondary signal, not primary.
+      3. **`brew list --cask` shell-out.** The most robust check,
+         but requires shelling out and depends on `brew` being on
+         PATH at runtime. Use as a last-resort verification.
+
+      Recommended behavior when Homebrew is detected:
+
+      - Suppress the Sparkle update prompt entirely.
+      - Optionally, when Sparkle's internal version check detects a
+        new release available, log a one-line hint to console
+        (`NSLog`) pointing at `brew upgrade --cask comprador` so
+        the technical user who tails the log sees it. No UI.
+      - Never block app functionality on update availability.
+
+      File touchpoints: new `MenuBarApp/Sources/UpdateChecker.swift`
+      wiring Sparkle. The Homebrew detection probably belongs in a
+      small `InstallSource.swift` so future code can ask "where did
+      this binary come from?" cleanly.
+
+---
+
 ## Verification follow-ups
 
 Carried forward from DECISIONS.md, not blocking but real:

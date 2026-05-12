@@ -169,6 +169,30 @@ only if the donation line genuinely doesn't keep up with real costs.
   does its own work; comparison-chart energy turns the project into
   a vendor-vs-vendor argument that wastes the disruption advantage.
 
+## Prerequisites before Day 0
+
+Two items block the v0.4.0 tag and the sequence below. Both are
+tracked in [TODO.md "Pre-launch UX items"](../TODO.md).
+
+- **User-facing disclosure of the `ptpcamerad` kill.** Comprador
+  temporarily preempts other USB-camera-reading apps (Image Capture,
+  Photos auto-import). Honest disclosure in three places: the welcome
+  window, the website FAQ, the README's "What works" section. The
+  Apple-conventions and colleague-copy surveys both confirmed our
+  competitors imply *fully automatic, no friction*; surfacing this
+  small friction up front beats discovery-by-bug-report after the
+  press wave lands.
+- **Update detector with Homebrew-aware suppression.** The playbook
+  ships across two distribution channels at once (direct .dmg and
+  Homebrew Cask). Sparkle handles the direct path; Homebrew-installed
+  copies need the Sparkle prompt suppressed so the in-app update flow
+  doesn't bypass `brew upgrade --cask comprador`. Without this,
+  Homebrew users get a confusing double-update experience and may
+  publicly complain — bad for the credibility marker the Cask
+  submission was supposed to be.
+
+Both shipped, then proceed to Day 0.
+
 ## Concrete first-week sequence when v0.4.0 ships
 
 In rough order, assuming the architect has a free week after the
