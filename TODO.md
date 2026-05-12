@@ -167,6 +167,152 @@ assumes have shipped before Day 0. Block the v0.4.0 tag.
       small `InstallSource.swift` so future code can ask "where did
       this binary come from?" cleanly.
 
+- [ ] **Respectful Defaults pass.** Bundle of small UX items that
+      together codify Comprador as a *respectful utility* — the
+      brand positioning the launch playbook is built on. Each item
+      is five-to-twenty lines of Swift; the value is in shipping
+      them as a coherent set, not piecemeal. The colleague-copy
+      survey ([docs/COLLEAGUE-COPY-DRAFT.md](docs/COLLEAGUE-COPY-DRAFT.md))
+      confirmed competitors imply *fully-automatic, no-friction*
+      and stop there; Comprador's wedge is doing this work that
+      they skip.
+
+      Verify or implement (each):
+      - **Menu-bar-only** (`LSUIElement=true` in Info.plist; no dock
+        icon). Likely already in place; confirm.
+      - **Tooltip on the menu bar icon** showing current state —
+        *"No device connected"* / *"Pixel 6 mounted"* / *"Connecting…"*.
+        State visible without a click.
+      - **Reduced Motion respect.** The connecting-state pulse
+        animation in `AppDelegate.startPulse` should check
+        `NSWorkspace.shared.accessibilityDisplayShouldReduceMotion`
+        and skip the animation when true. Static-icon connecting
+        state is acceptable; the pulse is a flourish, not load-bearing.
+      - **Sleep / wake handling.** Subscribe to
+        `NSWorkspace.willSleepNotification` (unmount + tear down +
+        release USB claim) and `didWakeNotification` (re-detect, reconnect
+        if phone still attached). Without this, sleep-with-phone-
+        mounted produces broken state on wake — Image Capture and
+        others recover; Comprador silently doesn't.
+      - **Don't prevent system sleep.** `IOPMAssertionCreateWithName`
+        with `kIOPMAssertionTypeNoIdleSleep` ONLY while a transfer is
+        actively in flight (NFS WRITE RPCs queued or staging file
+        non-empty). Release immediately on idle. Many indie utilities
+        forget this and quietly burn user battery.
+      - **Welcome window once-only enforcement.** First launch only;
+        not on update, not on relaunch. The `Comprador.didShowWelcome`
+        flag exists; confirm no future feature accidentally re-shows it.
+      - **System notifications sparingly.** Only post
+        `UNUserNotification` for events the user must act on
+        (currently: *"phone connected, choose File Transfer on its
+        screen"*). Audit existing notification sites; remove any
+        *"successfully mounted"* / *"ejected"* / *"transfer complete"*
+        prompts. Notification fatigue is real and recovery from a
+        notification turn-off is hard.
+      - **Clean uninstall.** Drag-to-trash should leave zero
+        artifacts. With v0.4.0's helper retirement this gets dramatically
+        easier — no LaunchDaemon to register, no `/etc/hosts` block
+        to unwind. Verify: drag to trash, restart, look for orphaned
+        plists / preferences / launchd registrations. Mention in
+        website FAQ as a feature.
+      - **No dock bounce, ever.** `NSApp.requestUserAttention` is a
+        sealed entry point; codify in a comment that no caller may
+        invoke it.
+      - **Codify: no telemetry, no phone-home.** Already a security
+        invariant ([docs/SECURITY.md](docs/SECURITY.md)); state as a
+        *UX promise* on the website. Users notice the assertion even
+        if they don't verify the code.
+
+- [ ] **Donation infrastructure — legitimate nudges, no dark patterns.**
+      The project's pitch is respect-by-default; donation flow has to
+      match. The launch playbook
+      ([docs/LAUNCH-PLAYBOOK-DRAFT.md](docs/LAUNCH-PLAYBOOK-DRAFT.md))
+      sketches the strategic frame. Concrete items:
+
+      - **GitHub Sponsors button** on the repository. Five-minute
+        setup; visible on every repo visit. Strictly additive to the
+        existing Interac e-Transfer path in README.md.
+      - **Quiet *"Support Comprador…"* menu item** in the menu bar
+        dropdown. Never bolded, never tagged *"new!"*. Present, not
+        pushy. Opens the Odometer window (item below) or links
+        directly to the donation page — see the Odometer entry for
+        rationale on routing through it.
+      - **"Where the money goes" page** on the website. Concrete
+        numbers: Apple Developer Program $99/year, domain cost,
+        codesigning costs. Honest transparency activates trust where
+        vague *"support our work"* activates suspicion.
+      - **README Support section moved above License**, not buried
+        in the footer below the third-party-notices link. Visible to
+        anyone reading down the page; not intruding on the install
+        path.
+      - **Donor count, opt-in** (if GitHub Sponsors). Quiet visible
+        *"N supporters this month"* on the repo's README. Social proof
+        that's true and verifiable.
+      - **Annual transparency post**, once per year. *"Comprador cost
+        $X to run, received $Y in donations, here's what next year
+        looks like."* Doesn't ask; informs. Builds long-term trust
+        with the user base that cares.
+
+      Dark patterns to refuse, codified here so a future contributor
+      doesn't propose them in good faith:
+
+      - No modal donation dialogs interrupting the connect flow.
+      - No time-pressure copy (*"Only N days left to…"*).
+      - No confirm-shaming dismiss buttons.
+      - No first-launch donation prompt.
+      - No pop-up frequency tricks (showing every N launches).
+      - No pre-checked donation checkboxes anywhere.
+      - No roach-motel recurring donation flows; cancellation as easy
+        as starting.
+      - No fabricated testimonials or inflated stats.
+
+- [ ] **Odometer window** — user-initiated usage stats with quiet
+      donation routing. New menu bar item (*"Odometer…"*) opens a
+      modest window showing the user their own Comprador mileage.
+      Inverts the donation flow from app-pushes-ask to
+      user-pulls-info-sees-own-value-encounters-support-option.
+
+      Stats to show (capped — do not add more without re-discussing):
+      - Total bytes transferred (in and out, separated for honesty)
+      - Total files transferred
+      - Devices ever mounted (count; optionally names, opt-in to show)
+      - First-use date
+      - Last mount date
+      - Cumulative mount-time (hours)
+
+      Stats to deliberately NOT show:
+      - Per-device transfer breakdowns (creates a privacy-share hazard
+        if a user screenshots)
+      - File-type histograms (same)
+      - Time-of-day patterns (creepy)
+
+      UI:
+      - Window opens from menu bar dropdown via the *"Odometer…"*
+        item (single click, no submenu nesting)
+      - Stats laid out simply — labels + numbers — no charts or
+        graphs in v0.4.0
+      - Footer button: *"Support Comprador"* (single button, neutral
+        verb). Opens donation page in the user's default browser.
+      - Footnote near the bottom of the window: *"All values stored
+        locally on this Mac. Nothing leaves your device."* Codifies
+        the no-telemetry promise in the place a user might wonder.
+      - *"Reset counters"* link (small, low-contrast, near the
+        footnote). Privacy gesture for users who want a fresh slate.
+
+      Storage: a small SQLite file or plist in the app's container
+      (Application Support / com.comprador.app/). Increment on each
+      mount, each completed transfer, each device first-seen. Never
+      transmitted.
+
+      Naming: *"Odometer"* (deliberate — on-brand for the
+      mechanical-historical comprador-as-ledger-keeper register).
+      Not *"Activity,"* not *"Usage,"* not *"Statistics."*
+
+      Feature-creep risk to monitor: Odometer → achievement
+      badges → leaderboards → gamification. Each step looks small
+      from the previous. Discipline: ship the modest version, refuse
+      additions. The Odometer is honest mileage, not a dashboard.
+
 ---
 
 ## Verification follow-ups
