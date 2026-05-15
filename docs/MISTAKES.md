@@ -725,7 +725,7 @@ Commit() hook to the Handler interface so write completion triggers MTP upload.
 
 **Reference:** `~/Labs/go-nfs/nfs_oncreate.go:43`
 
-### 1a. Per-storage FSStat: macOS may FSSTAT against the root file handle regardless of statfs(2) path (investigation pending)
+### 1a. Per-storage FSStat: macOS sends FSSTAT against the root file handle regardless of statfs(2) path (confirmed; option 1 dead)
 
 **Symptom (2026-05-11):** With the multi-storage FSStat patch landed
 (commit `5bfd2462`, [PLAN-MULTI-STORAGE.md](PLAN-MULTI-STORAGE.md)
@@ -768,7 +768,36 @@ option 2 (encode storage in the NFS file handle so `FromHandle`
 yields path-and-storage). Option 2 is more invasive but doesn't
 depend on the client's FSSTAT-path behavior.
 
-**Status:** awaiting diagnostic log from a re-run.
+**Diagnostic result (2026-05-14):** Hypothesis confirmed. With the
+Xperia mounted and `df`-equivalent statfs invoked against both
+`Internal shared storage/` and `SD card/`, the bridge logged
+**13 FSStat calls, all with `path=[]`**:
+
+```
+FSStat path=[] → aggregate (no storage match) free=124131749888/total=144027406336
+[× 13, varying free count as transfers progressed]
+```
+
+The aggregate `124 GB free / 144 GB total` is `92.2 + 31.9 = 124.1`
+and `112.1 + 31.9 = 144.0` — sum of the two storages. Plan option 1
+(path-via-FSStat-arg) is structurally dead: the NFSv3 FSSTAT RPC
+carries only a file handle, and macOS resolves that handle to the
+mount root, not to whichever subdirectory `statfs(2)` was invoked
+against. The path the patched go-nfs forwards is therefore always
+empty regardless of how many subdirectory levels deep the user
+called `statfs`.
+
+**Required fix is plan option 2: encode storage ID in the NFS file
+handle.** The bridge already mints unique handles per object; the
+addition is making the storage identifier recoverable from any
+handle (e.g. high bits of the handle, or a side table). FSStat then
+reads it from `FromHandle(fh).Storage` and dispatches to the right
+LIBMTP storage struct. No dependence on client-side path forwarding.
+
+Diagnostic log preserved at `build/dev-nfs-2026-05-14.log`.
+
+**Status:** closed-as-diagnosed. Implementation of option 2 tracked
+in [TODO.md](../TODO.md) under multi-storage follow-ups.
 
 ### 1b. Directory copy: some files do not make the jump (resolved — wrong destination path)
 
