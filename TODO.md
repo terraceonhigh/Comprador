@@ -25,36 +25,49 @@ or in the appropriate doc above instead.
 
 ---
 
-## On-return pickups — autonomous session 2026-05-11
+## On-return pickups — sessions 2026-05-11 and 2026-05-14
 
-Items the autonomous afternoon session surfaced but couldn't
-close without hands on the bridge. See
-[correspondence/12-autonomous-afternoon-2026-05-11/letter.md](correspondence/12-autonomous-afternoon-2026-05-11/letter.md)
-for full context.
+Items prior sessions surfaced but couldn't close without hands.
+See [correspondence/12-autonomous-afternoon-2026-05-11/letter.md](correspondence/12-autonomous-afternoon-2026-05-11/letter.md)
+and [correspondence/13-end-of-day-2026-05-11/letter.md](correspondence/13-end-of-day-2026-05-11/letter.md)
+for context.
 
-- [ ] **Clean up the stale NFS mount** at `/private/tmp/comprador`.
-      The bridge process (PID 79411) was killed mid-session per
-      the architect's instruction; the mount entry on the kernel
-      side persists. `sudo umount /private/tmp/comprador` to
-      drop it before the next `make dev-nfs` cycle.
-- [ ] **Diagnostic verification of MISTAKES 1a** (per-storage
-      FSStat returning aggregate). Restart bridge with the
-      diagnostic build (already at HEAD on `claude/multi-storage`):
-      `make dev-nfs 2>&1 | tee build/dev-nfs.log`, mount, df both
-      storages, grep the log for `FSStat path=`. Outcome
-      determines whether plan option 1 sufficed or we need
-      option 2 (encode storage in the NFS file handle). Detail
-      in [MISTAKES.md entry 1a](docs/MISTAKES.md).
-- [ ] **End-to-end verification of V0.3.3 #1** (TTL directory
-      refresh / phone-side mutation surfacing). With the new
-      bridge, `adb shell rm <file>` on the phone, wait ~2s,
-      list the parent directory through the mount, confirm the
-      file is gone. Logic is unit-tested
-      (`make bridge-test`); the wire-up isn't.
-- [ ] **Decide PR shape on `claude/multi-storage`.** 11 commits
-      ahead of master. Each commit is independently reviewable;
-      letter 12 has the chronological summary. Push and merge
-      at the architect's pace.
+- [x] **Clean up the stale NFS mount** at `/private/tmp/comprador`
+      — cleared 2026-05-14 (`sudo diskutil unmount force`).
+- [x] **Diagnostic verification of MISTAKES 1a** — closed
+      2026-05-14 in commit `5a19a3ac`. 13/13 FSStat calls
+      logged `path=[]`; option 2 (storage ID in file handle) is
+      the required fix.
+- [x] **End-to-end verification of V0.3.3 #1** — verified
+      2026-05-14 in commit `5a19a3ac`. Phone-side mutations
+      surface on next READDIR; NFS-client dirlist cache
+      documented as separate concern.
+- [x] **9 GiB Attenborough cgo-fix vmmap retake** — verified
+      2026-05-14. 67 VM_ALLOCATE regions, 8.3 MB RSS post-9-GiB
+      Mac→phone transfer. Fix is solid.
+- [ ] **Validate fileSync-hold against a fresh drag-drop**
+      (commit `0d1418ac`, 2026-05-14). The bridge build with
+      `commitOnce` / `SyncDurable` was started for testing
+      but the session closed before a real drag completed.
+      Test protocol:
+      1. `make dev-nfs 2>&1 | tee build/dev-nfs.log` — note PORT
+      2. `sudo diskutil unmount force` any stale mount on
+         `/tmp/comprador*` first (the 2026-05-14 session left
+         several behind; `/tmp/comprador` was hanging mid-session)
+      3. `mount -o port=<N>,mountport=<N>,nfsvers=3,nolocks,tcp
+         -t nfs XQ-BT52.local:/ /tmp/comprador`
+      4. Drag a multi-GB file from Finder onto the mount.
+      Expected: Finder progress dialog stays up for the FULL MTP
+      send duration (~7 min for 9 GB at USB-MTP rate). Dialog
+      dismisses only when bytes are durable on phone. Bridge
+      log shows `idle-flush <path>: committed` *before* (or at)
+      the moment the Finder dialog dismisses. Acceptance:
+      simultaneity between dialog dismissal and phone-side
+      file completion.
+- [ ] **Decide PR shape on `claude/multi-storage`.** Now 30+
+      commits ahead of master. Each commit is independently
+      reviewable; letters 12 and 13 have the chronological
+      summary. Push and merge at the architect's pace.
 
 ---
 
@@ -166,6 +179,71 @@ assumes have shipped before Day 0. Block the v0.4.0 tag.
       wiring Sparkle. The Homebrew detection probably belongs in a
       small `InstallSource.swift` so future code can ask "where did
       this binary come from?" cleanly.
+
+- [ ] **Hold NFS WRITE response until MTP commit completes.**
+      Symptom (re-surfaced 2026-05-14): architect drag-and-dropped a
+      9.094 GB file (`David.Attenborough…mkv`) into the mount via
+      Finder. Finder's progress bar reached 100% and dismissed in
+      under a minute — the NFS WRITE RPCs to the bridge complete at
+      memory speed. The architect read this as "copy complete," tried
+      to access the file, found it incomplete, and reported a *silent
+      regression*. The transfer was actually fine — the bridge was
+      mid-way through the synchronous MTP SendFile, which is
+      USB-bandwidth-bound at ~22 MB/s and takes ~7 minutes for 9 GB.
+      Bridge log was clean, no errors, file landed byte-perfect on
+      the phone. The bug is the **progress-bar lie**: Finder reports
+      done when bytes arrive at the bridge, not when bytes arrive at
+      the phone.
+
+      **Fix: hold the NFS WRITE FILE_SYNC response until the MTP
+      SendFile actually commits.** The final `WRITE how=2` RPC (the
+      sync commit, currently logged just before MTP SendFile kicks
+      off) should not return success until `LIBMTP_Send_File_From_Handler`
+      has returned cleanly. Finder will then keep the progress bar up
+      for the real duration of the transfer. The apparent copy time
+      goes from ~30s to ~7min for a 9 GB file, which is honest — that
+      IS how long writing 9 GB over USB-MTP takes.
+
+      Trade-off: the NFS client will see writes that take much longer
+      to acknowledge than expected. Most clients tolerate this fine
+      (their write loop just blocks longer on the final flush); risk
+      is a heuristic NFS-client timeout firing on multi-minute syncs.
+      macOS default NFS retransmit timeout is generous (60s base with
+      exponential backoff, ~10min ceiling under default mount opts);
+      the bridge should survive but should be tested against the
+      9 GiB workload before shipping. If timeouts do fire, the
+      fallback is to ack the FILE_SYNC immediately but defer reporting
+      "size" via subsequent stats — coarser but no client-side risk.
+
+      File touchpoints:
+      - `bridge/nfs/write.go` — block the FILE_SYNC commit path on
+        the MTP send completion future. Currently the idle-flush
+        pattern kicks the MTP send asynchronously; the WRITE
+        completes immediately and the architect's "silent failure"
+        is born. The trade is between a fast-but-misleading progress
+        bar and an honest-but-longer-feeling one. The latter is the
+        correct choice for a tool whose value prop is *honesty about
+        what's actually happening*.
+      - Consider: keep async idle-flush for *small* files (where
+        the discrepancy is sub-second and the user benefit of a fast
+        progress bar exceeds the misleading-progress cost), and
+        synchronous commit for *large* files (where the discrepancy
+        is minutes and the misleading progress bar caused a real
+        false-regression report from the architect). Threshold
+        suggestion: 100 MB.
+
+      Acceptance: drag a 9 GB file via Finder; the Finder progress
+      bar stays up for the full ~7-minute MTP commit duration; bytes
+      written to phone advance monotonically alongside the visible
+      progress; final commit lands byte-perfect and progress
+      dismisses simultaneously.
+
+      Captured 2026-05-14 from architect's drag-drop test on the
+      Xperia during the verification sweep. This was the trigger for
+      "hard stop, regression detected"; the diagnosis was that the
+      reported failure mode is in fact the progress-accuracy bug
+      we've been carrying as known UX debt. Promoted from
+      acknowledge-someday to v0.4.0-blocker.
 
 - [ ] **Respectful Defaults pass.** Bundle of small UX items that
       together codify Comprador as a *respectful utility* — the
