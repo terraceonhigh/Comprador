@@ -921,6 +921,117 @@ phone-side stall would have surfaced this. Filed as an
 instance of the *run-the-syscall-first* lesson
 (memory: `feedback_test_syscall_before_designing_helper.md`).
 
+### 4. First drag-drop after mount silently stalls for ~5 minutes (open; reproducible 2026-05-16)
+
+**Symptom (2026-05-16, both sessions):** On the *first*
+Mac→phone drag-drop attempt after a fresh `mount -t nfs`, macOS
+NFS client surfaces "Server connections interrupted: comprador"
+at T+~20-30 s. The Finder dialog disappears (or never appears).
+The bridge log shows **zero traffic** during the stall — no
+LOOKUP, no CREATE, no WRITE, no ACCESS. After ~5 minutes of
+silence, the kernel-side recovery completes on its own; the
+bridge suddenly receives a burst of exclusive-CREATE probes
+followed by the actual CREATE+WRITE+commit sequence. The
+dropped bytes flow through, the file lands on the phone.
+
+Two empirical receipts, both with the Xperia XQ-BT52:
+
+- **Session 1 (build `c84db8cc-dirty`, pre-revert).** Bridge
+  started 01:37:03. Architect mounted, browsed, attempted a
+  drag around 01:40. Bridge log silent 01:40:07 → 01:45:20
+  (5 min 13 s). Recovery at 01:45:20 produced the burst:
+  3x exclusive-CREATE errors, then real CREATE+WRITE for
+  `the-town-draft.md` (9 KB, succeeded at 01:45:21.4).
+
+- **Session 2 (build `fb4135a8-dirty`, post-revert).** Bridge
+  started 02:13:13. Architect mounted, browsed 02:15:15 →
+  02:15:38, attempted a drag of `Red_Castle.html` (137 KB)
+  around 02:16. Bridge log silent 02:15:38 → 02:21:16
+  (5 min 38 s). Recovery at 02:21:16 produced the burst:
+  4x exclusive-CREATE errors, then MTP SendFile for two files
+  (`Red_Castle.html` and `2026-05-10_23-00-14_Claude_Chat_Bone_China_Prime.md`,
+  both committed by 02:21:21).
+
+**Originally mis-attributed to commit `0d1418ac`** (the
+fileSync-hold). Reverting `0d1418ac` in commit `9239dcd7`
+did **not** eliminate the symptom (session 2 was on the
+reverted code and reproduced the stall identically). The
+attribution failed because today's first observation of the
+stall preceded the fileSync-hold test and the two findings
+got conflated in my analysis.
+
+**What this is not:**
+
+- *Not* `0d1418ac`. The reverted code reproduces it.
+- *Not* a bridge-side hang. The bridge log is silent because
+  no requests reach it; the bridge handler goroutines have
+  nothing to do. The bridge stays responsive to FSStat from
+  go-nfs's keep-alive once the kernel resumes sending.
+- *Not* an MTP-side delay. We never reach the MTP layer
+  during the stall.
+
+**Plausible hypotheses (none verified):**
+
+1. macOS NFS client cold-start retransmit/backoff against a
+   server it hasn't talked to recently. The kernel may be
+   probing TCP keepalive / RTT before sending real requests
+   and the probe itself takes minutes to time out and retry.
+2. mDNS / `.local` resolution issue. The mount source is
+   `XQ-BT52.local:/`; the first WRITE may require a fresh DNS
+   resolution and the resolver path is slow. (The mount itself
+   resolves at mount time, so this would have to be a
+   per-RPC re-resolution.)
+3. A bridge-side change on the branch that produces a malformed
+   response on the very first non-trivial RPC, causing the
+   kernel to retry-and-backoff. Suspect commits, in order of
+   plausibility: `54225165` (TTL-refresh directory listings,
+   which changes the reconcile path), `1c402e86` (AppleDouble
+   filter, which changes Create's return type for `._*`),
+   `5bfd2462` (multi-storage FSStat, which changes the FSStat
+   response shape).
+4. Some macOS NFSv3 client peculiarity around the very first
+   GUARDED/EXCLUSIVE CREATE probe — the kernel may issue an
+   exclusive-CREATE that hangs against our server before falling
+   back. The recovery burst we see always starts with the
+   exclusive-CREATE probes, suggesting that's where Finder
+   *starts* on the retry path; the first attempt may go
+   somewhere we never see.
+
+**Whether v0.3.x ships this bug is unknown** and is the
+load-bearing question for the next-session investigation. If
+yes, every first-drag after starting Comprador shows a scary
+alert before silently recovering — a pre-launch blocker that
+no amount of FUSE-T deliberation will fix in the meantime. If
+no, the regression-bisect against `5bfd2462`, `1c402e86`,
+`54225165` is the path to root cause.
+
+**Suggested investigation order (next session):**
+
+1. Build a binary at the v0.3.3 release tag (or whichever
+   notarized release the architect last shipped). Mount it,
+   browse briefly, drag a small file, time the wall-clock
+   delay to commit. If v0.3.x also stalls, the bug is
+   pre-branch and the fix is on the kernel-NFS-interaction
+   side. If v0.3.x is clean, bisect the branch.
+2. If bisecting: `git bisect` between `master` and current
+   HEAD, with the test being "mount + first drag, does it
+   stall >60 s." The substantive code commits are few
+   (a3dd67f7, 5bfd2462, 1c402e86, 54225165, 230f5806);
+   should be ≤3 bisect steps.
+3. Capture a packet trace of the loopback NFS traffic during
+   the stall (`tcpdump -i lo0 -w stall.pcap port <bridge-port>`).
+   If macOS is sending traffic but we're not responding,
+   that's our bug. If macOS is sending nothing, it's a
+   kernel-client issue and we need to look at the keep-alive
+   / retransmit settings.
+
+**Bridge log preserved:** `build/dev-nfs-2026-05-16.log`
+captures both sessions, including the two empirical
+silence-then-recovery windows. The interesting timestamps
+are 01:40:07 → 01:45:20 and 02:15:38 → 02:21:16.
+
+**Status:** open. Block on next-session bisect.
+
 ## SMAppService / Helper
 
 > **Section status — helper itself slated for v0.4.0 retirement.**

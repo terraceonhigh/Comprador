@@ -60,6 +60,22 @@ for context.
       (~20–30 s, ~600 MB at 21 MB/s) trades the old early-dismiss
       lie for a scary-alert + no-dialog regression. See `9239dcd7`
       commit message for the full timestamps and analysis.
+- [ ] **Investigate the first-drag-after-mount silent stall**
+      ([MISTAKES.md §3 entry 4](docs/MISTAKES.md), open). Two
+      sessions on 2026-05-16 reproduced a ~5 minute kernel-side
+      stall on the first Mac→phone drag after a fresh mount;
+      Finder shows "Server connections interrupted" at T+~20 s,
+      and the bridge log shows zero traffic during the stall.
+      Reproduced on both `c84db8cc-dirty` (pre-revert) and
+      `fb4135a8-dirty` (post-revert), so this is not caused by
+      `0d1418ac`. Next session priority — investigation order:
+      (1) build a v0.3.3-tagged binary and test for the same
+      stall; (2) if pre-branch, packet-trace the stall window;
+      (3) if branch-introduced, bisect substantive code commits
+      (suspects: `54225165`, `1c402e86`, `5bfd2462`).
+      Likely pre-launch blocker for v0.4.0 if it reproduces in
+      any user-visible scenario after a fresh Comprador start.
+      Bridge log preserved at `build/dev-nfs-2026-05-16.log`.
 - [ ] **Deliberate on FUSE-T as the next architectural pivot**
       (next session, post-fileSync-hold revert). The
       `ux_unavoidable_wait.md` memory note named FUSE-T as the
