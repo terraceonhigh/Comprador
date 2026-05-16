@@ -25,7 +25,7 @@ or in the appropriate doc above instead.
 
 ---
 
-## On-return pickups — sessions 2026-05-11 and 2026-05-14
+## On-return pickups — sessions 2026-05-11, 2026-05-14, and 2026-05-16
 
 Items prior sessions surfaced but couldn't close without hands.
 See [correspondence/12-autonomous-afternoon-2026-05-11/letter.md](correspondence/12-autonomous-afternoon-2026-05-11/letter.md)
@@ -45,29 +45,56 @@ for context.
 - [x] **9 GiB Attenborough cgo-fix vmmap retake** — verified
       2026-05-14. 67 VM_ALLOCATE regions, 8.3 MB RSS post-9-GiB
       Mac→phone transfer. Fix is solid.
-- [ ] **Validate fileSync-hold against a fresh drag-drop**
-      (commit `0d1418ac`, 2026-05-14). The bridge build with
-      `commitOnce` / `SyncDurable` was started for testing
-      but the session closed before a real drag completed.
-      Test protocol:
-      1. `make dev-nfs 2>&1 | tee build/dev-nfs.log` — note PORT
-      2. `sudo diskutil unmount force` any stale mount on
-         `/tmp/comprador*` first (the 2026-05-14 session left
-         several behind; `/tmp/comprador` was hanging mid-session)
-      3. `mount -o port=<N>,mountport=<N>,nfsvers=3,nolocks,tcp
-         -t nfs XQ-BT52.local:/ /tmp/comprador`
-      4. Drag a multi-GB file from Finder onto the mount.
-      Expected: Finder progress dialog stays up for the FULL MTP
-      send duration (~7 min for 9 GB at USB-MTP rate). Dialog
-      dismisses only when bytes are durable on phone. Bridge
-      log shows `idle-flush <path>: committed` *before* (or at)
-      the moment the Finder dialog dismisses. Acceptance:
-      simultaneity between dialog dismissal and phone-side
-      file completion.
-- [ ] **Decide PR shape on `claude/multi-storage`.** Now 30+
-      commits ahead of master. Each commit is independently
-      reviewable; letters 12 and 13 have the chronological
-      summary. Push and merge at the architect's pace.
+- [x] **Validate fileSync-hold against a fresh drag-drop**
+      — closed 2026-05-16 by **reverting `0d1418ac`** in commit
+      `9239dcd7`. Two drags from Finder via the Xperia XQ-BT52
+      mount empirically falsified the UX premise:
+      - 9 KB file: WRITE held 69 ms, dialog dismissed honestly,
+        mechanism verified.
+      - 9 GB Attenborough.mkv: MTP SendFile ran for 7 min 7 s
+        (~21 MB/s), all bytes verified on phone, but macOS NFS
+        client surfaced "Server connections interrupted" at T+20 s
+        and Finder showed no progress dialog for the remaining
+        ~6 min 47 s.
+      Any file whose MTP send exceeds macOS's NFS RPC timeout
+      (~20–30 s, ~600 MB at 21 MB/s) trades the old early-dismiss
+      lie for a scary-alert + no-dialog regression. See `9239dcd7`
+      commit message for the full timestamps and analysis.
+- [ ] **Deliberate on FUSE-T as the next architectural pivot**
+      (next session, post-fileSync-hold revert). The
+      `ux_unavoidable_wait.md` memory note named FUSE-T as the
+      only architectural escape for honest progress UX during
+      slow backend writes; the 2026-05-16 fileSync-hold attempt
+      bumped into the same wall from a different angle and
+      confirmed the diagnosis. Decision points for the
+      deliberation:
+      - **Acceptance of an install dependency.** FUSE-T is
+        third-party MIT-licensed; current ship is a single
+        notarized .dmg with no prerequisites. Trade single-binary
+        simplicity for honest progress UX.
+      - **First-install friction.** System Extension approval
+        flow on first run (~20 s of "approve in System Settings
+        → Privacy & Security"). Welcome-window onboarding copy
+        needs to absorb this.
+      - **Scope of the migration.** MTP session goroutine and
+        ObjectMap stay; NFS server + go-nfs vendor + helper
+        plumbing all go. ~1 week of careful work + re-testing
+        the multi-storage and AppleDouble cases we paid down on
+        the NFS side.
+      - **Security upside.** Drops the load-bearing invariant #1
+        (127.0.0.1 NFS listener) from CLAUDE.md §Security
+        Invariants; the bridge becomes a FUSE daemon with no
+        listening socket.
+      - **Sequencing relative to v0.4.0.** Letter 13 advised
+        execution-not-investigation for the v0.4.0 push. The
+        FUSE-T move is post-v0.4.0 by default; deliberate
+        whether the progress-dialog problem is severe enough to
+        block the launch instead.
+- [ ] **Decide PR shape on `claude/multi-storage`.** Now 31
+      commits ahead of master (after `9239dcd7`). Each commit is
+      independently reviewable; letters 12 and 13 plus the
+      `9239dcd7` revert receipt have the chronological summary.
+      Push and merge at the architect's pace.
 
 ---
 

@@ -844,6 +844,83 @@ empty or fail.
 Our stub does this (`hello.txt`). The MTP adapter will naturally satisfy
 this because storage roots always contain at least one child.
 
+### 3. fileSync-hold WRITE incompatible with macOS NFS client RPC timeout (2026-05-16; reverted)
+
+**Hypothesis (2026-05-14, commit `0d1418ac`):** macOS Finder's
+end-of-copy WRITE carries `stability=fileSync`. If we hold that
+WRITE's RPC response until the MTP send completes, Finder's
+progress dialog will reflect the *real* end-to-end duration —
+the dialog cannot dismiss until libmtp confirms the bytes are
+durable on the phone. "Single source of truth in Finder's
+progress dialog."
+
+The implementation: patch vendored `nfs_onwrite.go` to type-assert
+the `billy.File` to a new `DurableSyncer` interface; have
+Comprador's `stagingHandle` implement it via `commitOnce`
+(sync.Once over the existing idle-flush MTP push). One MTP send
+per file regardless of which trigger (idle-flush, COMMIT,
+fileSync, retransmit) reaches it first.
+
+**Empirical verification (2026-05-16, Xperia XQ-BT52):**
+
+- *9 KB file (`the-town-draft.md`)*: the mechanism worked
+  end-to-end. WRITE arrived at 01:45:21.438 with `how=2`; MTP
+  SendFile started at 01:45:21.442; idle-flush committed at
+  01:45:21.507. The WRITE RPC was held for **69 ms** while the
+  bytes were durably written to the phone. Finder dialog
+  dismissed honestly at the commit.
+
+- *9.09 GB file (`David.Attenborough...mkv`)*: the mechanism
+  worked at the protocol level — all bytes verified on the phone
+  after — but the **UX collapsed**. WRITEs filled the staging
+  temp at memory speed (offsets 0 → 9 094 266 880); the final
+  `how=2` WRITE arrived at 01:49:32.621; MTP SendFile started
+  at 01:49:32.622; idle-flush committed at 01:56:39.244. The
+  WRITE RPC was held for **7 min 7 s** (~21 MB/s,
+  plausible USB 2.0 MTP rate). macOS NFS client surfaced
+  *"Server connections interrupted: comprador"* at T+~20 s
+  into the held WRITE, with options *Ignore* / *Disconnect All*.
+  Clicking *Ignore* allowed the transfer to complete in the
+  background but Finder showed no progress dialog for the
+  remaining ~6 min 47 s.
+
+**Root cause.** macOS's NFSv3 client has a kernel-side patience
+window — ~20–30 s of no response on any single WRITE RPC and
+the client tears down the TCP connection and surfaces the
+"interrupted" alert. The bridge cannot legitimately stretch
+this. Any file whose MTP send exceeds the threshold (~600 MB
+at 21 MB/s) trips the alert; the dialog never even appears.
+The historic always-`unstable` reply returned a less-honest
+answer (Finder dismissed early on its own NFS-side flush) but
+never broke the dialog.
+
+**The architectural escape is FUSE-T.** FUSE-T's `write()` and
+`fsync()` callbacks have no equivalent kernel RPC timeout class;
+progress is paced by callback completions rather than by a
+single network RPC. The `ux_unavoidable_wait.md` memory note
+from 2026-05-07 named FUSE-T as "the only architectural escape"
+for this class of problem; the 2026-05-16 fileSync-hold attempt
+bumped into the same wall from a different angle and confirmed
+the diagnosis. The deliberation is queued in
+[TODO.md](../TODO.md) §On-return pickups.
+
+**Status:** reverted in commit `9239dcd7`. Bridge unit tests
+(`make bridge-test`) green against the revert. Branch
+`claude/multi-storage` returns to pre-`0d1418ac` WRITE
+semantics: WRITEs ack at memory speed; the idle-flush timer
+fires the MTP send asynchronously. Finder's progress dialog
+returns to dismissing early but no alert.
+
+**Methodological lesson.** The hypothesis was sound and the
+mechanism worked; the falsification was in the kernel-client
+behavior assumption (that macOS NFS would tolerate a
+multi-minute single WRITE). Cheaper to have measured macOS's
+RPC timeout *before* shipping the change than after; the
+running-bridge logs from any v0.3.x release with a 1+ minute
+phone-side stall would have surfaced this. Filed as an
+instance of the *run-the-syscall-first* lesson
+(memory: `feedback_test_syscall_before_designing_helper.md`).
+
 ## SMAppService / Helper
 
 > **Section status — helper itself slated for v0.4.0 retirement.**
