@@ -1,5 +1,73 @@
 # Comprador — TODO
 
+## NEXT SESSION — diagnose the first-drag-after-mount stall
+
+**Unacceptable regression. Pre-launch blocker for v0.4.0.**
+
+Three independent receipts on 2026-05-16 (one pre-revert, two
+post-revert including one after a clean macOS reboot) show that
+the *first* Mac→phone drag-drop attempt after a fresh `mount -t nfs`
+silently stalls for **5 min 12–38 s** of complete kernel-side silence
+before recovering. Finder surfaces "Server connections interrupted:
+comprador" within ~20 s of the drag; the bridge log shows zero
+traffic during the entire stall window; the file does eventually
+land after the kernel-side recovery. The actual MTP transfer for
+a small file is ~250 ms — the full 5+ minute wait is pure stall.
+
+**Mis-attributed in earlier diagnosis to `0d1418ac` (the
+fileSync-hold). Reverting that commit in `9239dcd7` did not
+eliminate the symptom. The fileSync-hold revert remains correct
+for separate reasons** (see MISTAKES entry 3), but the stall is
+a separate bug.
+
+Receipts and hypotheses live in
+[MISTAKES.md §NFS pivot entry 4](docs/MISTAKES.md). Bridge logs
+preserved at `build/dev-nfs-2026-05-16.log` and
+`build/dev-nfs-2026-05-16-post-reboot.log`.
+
+**First subtask — confirm `00235ca` (v0.3.1 release merge) does
+NOT suffer from this issue.** If v0.3.1 stalls identically, the
+bug is pre-branch and we're investigating a kernel/server
+interaction issue independent of the multi-storage work. If
+v0.3.1 is clean, the bug was introduced somewhere between
+`00235ca` and current HEAD, and `git bisect` against the
+substantive code commits on the branch (a3dd67f7, 5bfd2462,
+1c402e86, 54225165) finds it.
+
+Protocol:
+
+1. `git worktree add ../comprador-v031 00235ca` (worktree, not
+   checkout — preserves current branch state).
+2. `cd ../comprador-v031 && make dev-nfs` — capture PORT.
+3. Mount: `sudo mount -o port=<P>,mountport=<P>,nfsvers=3,nolocks,tcp
+   -t nfs XQ-BT52.local:/ /tmp/comprador`.
+4. Browse minimally into the destination directory.
+5. Drag a small file. Time the wall-clock delay to commit.
+6. Compare against today's 5:12 / 5:13 / 5:38 receipts.
+
+Outcomes:
+
+- **Stalls identically (Δ ≈ 5 min):** v0.3.1 ships this bug.
+  Every user's first drag triggers the alert. Investigation
+  pivots to the kernel-NFS-client side. Possibilities to chase:
+  packet trace of the stall window, mDNS / `.local` resolver
+  interaction, macOS NFSv3 client cold-start retransmit defaults.
+- **Stalls less, or not at all:** branch-introduced regression.
+  `git bisect start HEAD 00235ca` with the test being "fresh
+  mount + first drag, does it stall >60 s." Suspect commits
+  (in order): `54225165` (TTL refresh), `1c402e86` (AppleDouble
+  filter), `5bfd2462` (multi-storage FSStat), `a3dd67f7`
+  (FSStat diagnostics).
+
+**FUSE-T deliberation deferred until after the diagnosis** —
+no architectural pivot until we know whether the stall is
+pre-existing or branch-regression. (If FUSE-T sidesteps the
+NFS-client-timeout class entirely, it would also resolve this,
+but spending v0.4.0's runway on a major rewrite when a bisect
+might point at one of four small commits would be premature.)
+
+---
+
 ## Navigation — where work lives
 
 This file is the central backlog. Several adjacent docs track
