@@ -968,6 +968,19 @@ Two empirical receipts, both with the Xperia XQ-BT52:
   bug.* Log preserved at
   `build/dev-nfs-2026-05-16-post-reboot.log`.
 
+- **Session 4 (build at commit `00235ca`, v0.3.1 release
+  merge of 2026-05-09).** Architect tested the load-bearing
+  diagnostic late on 2026-05-16 (kept up by rain): stalls
+  identically. This **rules out the branch as the cause**
+  (`00235ca` predates all the substantive `claude/multi-storage`
+  code changes — `5bfd2462`, `1c402e86`, `54225165`,
+  `a3dd67f7`). The bug ships in every v0.2.x and v0.3.x
+  release Comprador has cut. *Architect's framing: "substrate
+  issue" — i.e. in the macOS NFS client ↔ localhost NFSv3
+  server ↔ mDNS resolution layer, not in our application code.*
+  This finding moots the planned `git bisect` and pivots the
+  investigation toward the substrate boundary.
+
 **Originally mis-attributed to commit `0d1418ac`** (the
 fileSync-hold). Reverting `0d1418ac` in commit `9239dcd7`
 did **not** eliminate the symptom (session 2 was on the

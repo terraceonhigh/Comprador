@@ -25,46 +25,71 @@ Receipts and hypotheses live in
 preserved at `build/dev-nfs-2026-05-16.log` and
 `build/dev-nfs-2026-05-16-post-reboot.log`.
 
-**First subtask — confirm `00235ca` (v0.3.1 release merge) does
-NOT suffer from this issue.** If v0.3.1 stalls identically, the
-bug is pre-branch and we're investigating a kernel/server
-interaction issue independent of the multi-storage work. If
-v0.3.1 is clean, the bug was introduced somewhere between
-`00235ca` and current HEAD, and `git bisect` against the
-substantive code commits on the branch (a3dd67f7, 5bfd2462,
-1c402e86, 54225165) finds it.
+**First subtask — confirmed done late on 2026-05-16.** Architect
+tested commit `00235ca` (v0.3.1 release merge) and reported the
+stall reproduces identically there. **The bug ships in every
+v0.2.x / v0.3.x release we've cut.** Branch bisect is mooted —
+`00235ca` predates all the substantive `claude/multi-storage`
+code changes (`5bfd2462`, `1c402e86`, `54225165`, `a3dd67f7`),
+so none of them introduced the stall.
 
-Protocol:
+The architect's framing: *"substrate issue."* The bug lives in
+the macOS NFS client ↔ localhost NFSv3 server ↔ mDNS resolution
+layer interaction, not in our application code.
 
-1. `git worktree add ../comprador-v031 00235ca` (worktree, not
-   checkout — preserves current branch state).
-2. `cd ../comprador-v031 && make dev-nfs` — capture PORT.
-3. Mount: `sudo mount -o port=<P>,mountport=<P>,nfsvers=3,nolocks,tcp
-   -t nfs XQ-BT52.local:/ /tmp/comprador`.
-4. Browse minimally into the destination directory.
-5. Drag a small file. Time the wall-clock delay to commit.
-6. Compare against today's 5:12 / 5:13 / 5:38 receipts.
+**Next-session investigation pivots to the substrate boundary.**
+Candidate diagnostic tools, in order of information density per
+unit of effort:
 
-Outcomes:
+1. **Packet trace the stall window.** `sudo tcpdump -i lo0 -w
+   build/stall.pcap port <P>` running concurrently with a fresh
+   mount + drag. Capture the full ~5 minute silence. Then
+   analyze in Wireshark with the NFS dissector. Outcomes:
+   - macOS sending nothing on the wire → kernel-side issue
+     (TCP keepalive, RTT-sample warm-up, RPC retransmit
+     backoff). Investigation moves to mount option tuning
+     (`timeo=`, `retrans=`, `actimeo=`, `nordirplus`) and
+     possibly mDNS/.local resolver interaction.
+   - macOS sending requests we silently fail to respond to →
+     bridge bug or go-nfs handler gap. Read the pcap and find
+     the unanswered RPC.
+   - macOS sending requests we error on → check our error
+     status codes against what Finder tolerates.
 
-- **Stalls identically (Δ ≈ 5 min):** v0.3.1 ships this bug.
-  Every user's first drag triggers the alert. Investigation
-  pivots to the kernel-NFS-client side. Possibilities to chase:
-  packet trace of the stall window, mDNS / `.local` resolver
-  interaction, macOS NFSv3 client cold-start retransmit defaults.
-- **Stalls less, or not at all:** branch-introduced regression.
-  `git bisect start HEAD 00235ca` with the test being "fresh
-  mount + first drag, does it stall >60 s." Suspect commits
-  (in order): `54225165` (TTL refresh), `1c402e86` (AppleDouble
-  filter), `5bfd2462` (multi-storage FSStat), `a3dd67f7`
-  (FSStat diagnostics).
+2. **Test with a non-`.local` hostname.** Bypass mDNS by
+   binding directly to `127.0.0.1` (mount source
+   `127.0.0.1:/`). If the stall vanishes, mDNS resolution is
+   on the path; the fix is hostname handling. If the stall
+   persists, mDNS is innocent.
 
-**FUSE-T deliberation deferred until after the diagnosis** —
-no architectural pivot until we know whether the stall is
-pre-existing or branch-regression. (If FUSE-T sidesteps the
-NFS-client-timeout class entirely, it would also resolve this,
-but spending v0.4.0's runway on a major rewrite when a bisect
-might point at one of four small commits would be premature.)
+3. **Test with NFSv4 instead of NFSv3** (if the patched
+   go-nfs supports it — likely not; would require an
+   alternate vendoring). NFSv4 has different cold-start
+   semantics; informative even if we don't ship it.
+
+4. **Compare with known-working localhost NFS server**
+   (e.g. macOS's built-in `nfsd` serving a directory).
+   Same mount + drag sequence. If macOS's own server doesn't
+   stall, our go-nfs server is doing something macOS's NFS
+   client doesn't like on the first contact.
+
+**FUSE-T re-enters the deliberation as a substrate replacement,
+not a UX-only swap.** The fileSync-hold-falsification framing
+treated FUSE-T as an *improvement* over a working substrate.
+The 00235ca confirmation tells us the NFS substrate is **broken
+for the first drag of every Comprador install**. FUSE-T sidesteps
+the entire macOS-NFS-client-timeout class, which is the most
+likely root cause of the stall. The deliberation now needs to
+weigh: *can we fix the NFS substrate cheaply (mount options,
+mDNS bypass, RPC retransmit tuning), or do we replace it?*
+Run the tcpdump first — the pcap will tell us which question
+to answer.
+
+**Bridge log artifacts from 2026-05-16:**
+- `build/dev-nfs-2026-05-16.log` — sessions 1 (pre-revert) and 2 (post-revert).
+- `build/dev-nfs-2026-05-16-post-reboot.log` — session 3 (post-revert, post-reboot).
+- Session 4 (v0.3.1) — log path TBD; architect ran the test, no
+  preserved artifact path recorded yet.
 
 ---
 
