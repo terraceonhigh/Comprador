@@ -952,6 +952,22 @@ Two empirical receipts, both with the Xperia XQ-BT52:
   (`Red_Castle.html` and `2026-05-10_23-00-14_Claude_Chat_Bone_China_Prime.md`,
   both committed by 02:21:21).
 
+- **Session 3 (build `786eeb69-dirty`, post-revert, after a
+  clean macOS reboot).** Bridge started 02:35:18. Architect
+  mounted at 02:37:40, browsed minimally (Internal storage at
+  02:37:48, Download at 02:37:50), attempted drag at
+  02:38:00 with `PXL_20260502_232127771.jpg` (2.3 MB photo).
+  Bridge log silent 02:37:50 → 02:43:12 (**5 min 12 s**,
+  within 1 second of session 1's stall duration). Recovery
+  at 02:43:12 produced the burst: 2x exclusive-CREATE
+  errors, MTP SendFile at 02:43:14.913, idle-flush
+  committed at 02:43:15.160. The MTP send itself took
+  ~247 ms; the rest of the wall-clock was pure kernel-side
+  stall. *The stall reproduces across a clean reboot,
+  confirming this is not a session-state accumulation
+  bug.* Log preserved at
+  `build/dev-nfs-2026-05-16-post-reboot.log`.
+
 **Originally mis-attributed to commit `0d1418ac`** (the
 fileSync-hold). Reverting `0d1418ac` in commit `9239dcd7`
 did **not** eliminate the symptom (session 2 was on the
