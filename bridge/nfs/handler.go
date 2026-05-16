@@ -80,11 +80,7 @@ func (h *mtpNFSHandler) Commit(_ context.Context, fs billy.Filesystem, path []st
 		return nil
 	}
 	mtpPath := cleanPath(strings.Join(path, "/"))
-	sf := mtpFS.writes.get(mtpPath)
-	if sf == nil {
-		return nil // no pending entry; either already committed or never staged
-	}
-	if err := sf.commitOnce(true /* wait */); err != nil {
+	if err := mtpFS.writes.commit(mtpPath, mtpFS.session, mtpFS.session.Objects); err != nil {
 		log.Printf("COMMIT %s: %v", mtpPath, err)
 		return err
 	}

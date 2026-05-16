@@ -2,6 +2,7 @@ package nfs
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,12 +21,17 @@ type MTPFileSystem struct {
 }
 
 // NewMTPFileSystem creates a billy.Filesystem backed by an MTP session.
-// The write registry holds references to the session and object map so
-// that idle-flush, COMMIT RPC, and fileSync-WRITE-SyncDurable paths can
-// all reach the MTP layer through a single entry point (commitOnce).
+// The write registry is wired with an idle-flush callback that uploads
+// staged writes to MTP when an entry has been quiet for idleFlushInterval.
 func NewMTPFileSystem(session *mtp.Session) *MTPFileSystem {
 	fs := &MTPFileSystem{session: session, cache: newDownloadCache()}
-	fs.writes = newWriteRegistry(session, session.Objects)
+	fs.writes = newWriteRegistry(func(mtpPath string) {
+		if err := fs.writes.commit(mtpPath, fs.session, fs.session.Objects); err != nil {
+			log.Printf("idle-flush %s: %v", mtpPath, err)
+		} else {
+			log.Printf("idle-flush %s: committed", mtpPath)
+		}
+	})
 	return fs
 }
 

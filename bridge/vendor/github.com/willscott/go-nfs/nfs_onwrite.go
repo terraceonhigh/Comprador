@@ -20,16 +20,6 @@ const (
 	fileSync writeStability = 2
 )
 
-// DurableSyncer is implemented by billy.File adapters that can synchronously
-// flush staged writes to a backing store before returning. Comprador's
-// stagingHandle implements this to push the staged temp file to the MTP
-// device when the NFS client requests fileSync stability. See
-// COMPRADOR-PATCH in onWrite below and the block comment in
-// bridge/nfs/write.go for the rationale.
-type DurableSyncer interface {
-	SyncDurable() error
-}
-
 type writeArgs struct {
 	Handle []byte
 	Offset uint64
@@ -93,23 +83,6 @@ func onWrite(ctx context.Context, w *response, userHandle Handler) error {
 		Log.Errorf("Error writing: %v", err)
 		return &NFSStatusError{statusFromWriteError(err), err}
 	}
-	// COMPRADOR-PATCH: when the client requests fileSync stability, the
-	// expectation is that the WRITE RPC does not return until the bytes
-	// are durable on the backing store. The default go-nfs server reports
-	// unstable and relies on a follow-up COMMIT RPC — but macOS NFSv3
-	// clients do not reliably send COMMIT. Type-assert the file to the
-	// DurableSyncer interface (implemented by Comprador's stagingHandle)
-	// and block here. This is the bridge's mechanism for making Finder's
-	// progress dialog honest about the end-to-end MTP commit duration.
-	// See bridge/nfs/write.go for the rationale and trade-offs.
-	if req.How == uint32(fileSync) {
-		if syncer, ok := file.(DurableSyncer); ok {
-			if err := syncer.SyncDurable(); err != nil {
-				Log.Errorf("SyncDurable error: %v", err)
-				return &NFSStatusError{statusFromWriteError(err), err}
-			}
-		}
-	}
 	if err := file.Close(); err != nil {
 		Log.Errorf("error closing: %v", err)
 		return &NFSStatusError{statusFromWriteError(err), err}
@@ -126,17 +99,11 @@ func onWrite(ctx context.Context, w *response, userHandle Handler) error {
 	if err := xdr.Write(writer, uint32(writtenCount)); err != nil {
 		return &NFSStatusError{NFSStatusServerFault, err}
 	}
-	// Respond with the highest stability we can honestly claim. If the
-	// client asked for fileSync and the SyncDurable hook ran above, the
-	// bytes are durable on the backing store and we can answer truthfully;
-	// otherwise report unstable so the client follows up with a COMMIT
-	// RPC (macOS clients in practice rely on idle-flush + fileSync rather
-	// than COMMIT; see write.go).
-	stabilityReply := unstable
-	if req.How == uint32(fileSync) {
-		stabilityReply = fileSync
-	}
-	if err := xdr.Write(writer, stabilityReply); err != nil {
+	// Respond with the lowest stability we can honestly claim. Servers that
+	// stage writes (deferred commit to backing store) MUST report unstable
+	// so the client follows up with a COMMIT RPC; otherwise the client
+	// believes the write is durable and never asks for a flush.
+	if err := xdr.Write(writer, unstable); err != nil {
 		return &NFSStatusError{NFSStatusServerFault, err}
 	}
 	if err := xdr.Write(writer, w.Server.ID); err != nil {
