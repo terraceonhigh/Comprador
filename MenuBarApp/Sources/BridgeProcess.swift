@@ -45,6 +45,21 @@ class BridgeProcess {
             throw BridgeError.binaryNotFound(bridgePath)
         }
 
+        // Kill macOS processes that auto-claim MTP/PTP USB interfaces
+        // BEFORE the IOKit seize preflight, not after. ptpcamerad holds
+        // each phone's USB Imaging Class interface in exclusive-access
+        // mode; an immediately-following USBDeviceOpenSeize() will
+        // return kIOReturnExclusiveAccess (0xE00002C5) and the seize
+        // (and the kernel-binding break that depends on it) will
+        // silently fail. Empirically reproducible with N>=2 devices
+        // pre-attached: the first session's seize fires against a
+        // still-alive ptpcamerad and fails; the second session's seize
+        // benefits from the first session's killCompetingProcesses
+        // call and succeeds. Swapping the order makes both seizes run
+        // against an already-dead ptpcamerad. See MISTAKES.md entry
+        // 19b for the full trace.
+        BridgeProcess.killCompetingProcesses()
+
         // IOKit preflight: force a software replug so the bridge sees a
         // fresh, kernel-unclaimed device. This sequence (seize → reset →
         // release) is what physical unplug+replug does at the hardware
@@ -78,9 +93,6 @@ class BridgeProcess {
         }
 
         NSLog("Comprador: Starting bridge at %@", bridgePath)
-
-        // Kill macOS processes that auto-claim MTP/PTP USB interfaces
-        BridgeProcess.killCompetingProcesses()
 
         let p = Process()
         p.executableURL = URL(fileURLWithPath: bridgePath)

@@ -637,21 +637,41 @@ kernel binding. Xperia gets neither: its preflight fired too
 early, and there's no retry path to re-attempt the seize once
 the kill has cleared the way.
 
-**Fix shape.**
+**Fix shape (revised after first attempt).**
 
-1. **One global `killall ptpcamerad` at app startup**, in
-   `AppDelegate.applicationDidFinishLaunching`, before
-   `setupDeviceWatcher` fires. This pre-clears the
-   exclusive-access holder before any DeviceSession seize
-   attempts. ~3 lines.
-2. **Serialize per-device IOKit seizes** via a shared actor
-   (`USBSeizer.shared`) so concurrent attaches don't have two
-   seizes racing against each other and the kernel's USB
-   re-enumeration plumbing. Per
-   [PLAN-MULTI-DEVICE.md §7](PLAN-MULTI-DEVICE.md), ~30 lines.
+A single global `killall ptpcamerad` at app startup turned out
+to be insufficient: macOS's launchd respawns `ptpcamerad` within
+seconds of the kill, and the 5-second gap between
+`applicationDidFinishLaunching` and the actual `USBDeviceOpenSeize`
+calls is plenty of time for the respawn. Verified empirically
+2026-05-17 13:34: the startup kill fired at T+0, the seize tried
+at T+5 s, and the seize still failed with
+`kIOReturnExclusiveAccess` — meaning a fresh `ptpcamerad` had
+already taken the device by then.
 
-Either fix alone may suffice for the two-phone case observed
-here; both together close the broader race.
+**The actual fix** is in `BridgeProcess.start()`: swap the order
+of `killCompetingProcesses()` and `USBSeizer.seizeAndReset()`.
+The existing implementation called *seize* first and *kill*
+second, which guaranteed every seize ran against a live
+`ptpcamerad`. Killing first means each seize runs against an
+already-dead `ptpcamerad`, and the seize's USBDeviceReEnumerate
+fires its USB-level replug before launchd has time to respawn
+the holder. Concurrent DeviceSessions both fire their own
+`killCompetingProcesses` first, so even with two near-
+simultaneous bridge spawns the kills converge to "ptpcamerad
+dead" before either seize runs. ~3 lines (the swap itself; the
+respawn-window analysis is in the block comment).
+
+The global startup pre-kill is **kept as belt-and-suspenders**
+— harmless if launchd respawns ptpcamerad before the seizes, and
+arguably useful for the rare edge case where the bridge subprocess
+itself fails to fire `killCompetingProcesses` for some reason.
+
+`USBSeizer.shared` serializing actor (PLAN-MULTI-DEVICE.md §7)
+is **not yet implemented**. The order swap alone closes the
+empirical failure; the actor is cheap insurance for a
+hypothetical race we haven't observed. Add if validation
+surfaces another seize-collision pattern.
 
 **Pattern lesson.** A "seize race" between sibling DeviceSessions
 wasn't on my multi-device radar — the assumption was that each
