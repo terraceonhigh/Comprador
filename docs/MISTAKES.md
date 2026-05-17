@@ -673,6 +673,95 @@ empirical failure; the actor is cheap insurance for a
 hypothetical race we haven't observed. Add if validation
 surfaces another seize-collision pattern.
 
+**Third iteration (2026-05-17 mid-afternoon).** The order swap
+was necessary but still insufficient when both phones were
+attached. Built a serializing `DispatchQueue` around the
+kill+seize pair (b2b76859), then moved the post-seize settle
+sleep inside the queue (8396a7f6) so cross-session protection
+would actually work. Both attempts failed empirically: with
+the queue + 1.2s in-queue settle, Session A's seize for the
+Pixel still succeeded but Session B's seize for the Xperia
+got `kIOReturnExclusiveAccess` 67 ms after Session A's seize
+returned. Worse: a wider pattern surfaced — the Pixel's USB
+descriptor migrated from `0x18d1:0x4ee1` (MTP File Transfer)
+to `0x18d1:0x4ee8` (a non-MTP variant libmtp doesn't enumerate)
+sometime during the earlier failed retry cycles. Once the
+Pixel was in `0x4ee8`, no amount of in-app seizing recovered
+it; only a physical replug reset the phone to whatever mode
+its on-screen USB notification had selected.
+
+**Root cause of the race (final understanding).** Both phones
+sit downstream of the same root-hub port (Pixel locID
+`0x00110000`, Xperia `0x00121100` — both bus 0, both behind a
+shared hub). `USBDeviceOpenSeize` isn't a per-device flag;
+it's a transaction the macOS USB family mediates through the
+host controller's state machine. `USBDeviceReEnumerate`
+triggers a physical-layer USB reset (hub drops the port,
+device renegotiates descriptors, hub re-detects, descriptor
+query starts over). For the ~0.5–1.5 s that reenum takes,
+the host controller's bus state is "busy with reset," and the
+USB family correctly rejects concurrent exclusive-access
+requests on the same controller. Our two `DeviceSession`s
+running ~10 ms apart hit this window every time.
+
+We can't probe "bus is settled now" from userspace; we can
+only sleep an empirical guess. The Pixel `0x4ee1 → 0x4ee8`
+degradation is the *worse* failure mode lurking behind
+"retry the race in software": every additional
+seize+reenumerate cycle stresses the phone's USB
+re-negotiation, and after a few rounds the phone's USB stack
+falls back to a non-MTP configuration. So even when the
+software race appears to resolve, we may have silently moved
+the phone into an unrecoverable (without replug) state.
+
+**Final fix shape (shipped 2026-05-17 14:00s).**
+
+1. Revert b2b76859 + 8396a7f6 (the serializing queue) —
+   commit `e64983f1`. The queue mechanism was attacking the
+   wrong problem; cost without benefit.
+2. Fail-fast on first claim failure — commit `327ae66d`. Swift
+   `retryDelays: [0,3,5]` → `[0]`; Go `maxAttempts: 2 → 1`.
+   One clean attempt, then surface the unplug-and-replug
+   notification. No retry loop to degrade the phone further.
+3. Welcome-window onboarding includes the
+   unplug-and-replug recovery hint plus the `ptpcamerad`
+   side-effect disclosure — commit `1441171b`. Primes the user
+   for the failure before it happens; the
+   `postFileTransferNotification` alert lands as
+   confirmation, not surprise.
+
+Kept: 54c929d6 (kill-before-seize order). That's still
+correct on its own merits.
+
+**Empirical result.** Two phones pre-attached: first phone
+mounts on first try (bus is idle when its seize fires), second
+phone fails fast and the user gets the notification + welcome-
+window-primed expectation. User replugs the second phone, the
+DeviceWatcher fires a fresh attach event, second phone mounts
+on its own first try (bus is idle again, since the first phone
+is fully stable). Net latency: one cable wiggle, no scary
+"Server connections interrupted" alert from the kernel NFS
+client.
+
+**Pattern lesson.** When two software clients fight over a
+shared hardware resource and the kernel arbitrates correctly
+by rejecting concurrent claims, the right software response
+is usually not "fight harder" or "wait longer" but "accept
+the kernel's correctness and let the user arbitrate." The
+user's physical action (replug) is a guaranteed coordination
+point that no amount of `Thread.sleep` tuning can match,
+because we can't reliably detect when the resource is free.
+
+**Architectural exit (deferred).** The race exists because we
+use IOKit `USBDeviceOpenSeize` to break the kernel's USB
+Imaging Class binding. A FUSE-T-based mount substrate would
+not need to break that binding at all — the kernel mediates
+the relevant access through a different IOKit family. Most
+of MISTAKES 19b would vanish under FUSE-T, along with the
+ptpcamerad kill (entries 11, 17, 19a) and the
+NFS-RPC-timeout class (entry 4). Tracked in
+[PLAN-NFS-READ.md](PLAN-NFS-READ.md) and TODO.md.
+
 **Pattern lesson.** A "seize race" between sibling DeviceSessions
 wasn't on my multi-device radar — the assumption was that each
 session's seize was independent because each targets a different
