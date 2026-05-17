@@ -1,6 +1,7 @@
 package nfs
 
 import (
+	"log"
 	"os"
 	"sync"
 	"time"
@@ -63,6 +64,15 @@ func (c *downloadCache) open(name string, id uint32, session *mtp.Session) (*cac
 // download runs the MTP transfer that populates entry. Must be called without
 // c.mu held. Closes entry.ready when done (whether success or failure).
 func (c *downloadCache) download(entry *cacheEntry, id uint32, session *mtp.Session) {
+	t0 := time.Now()
+	log.Printf("cache.download START: name=%q id=%d", entry.name, id)
+	defer func() {
+		if entry.err != nil {
+			log.Printf("cache.download END (FAIL %v) name=%q dt=%s", entry.err, entry.name, time.Since(t0))
+		} else {
+			log.Printf("cache.download END (OK) name=%q dt=%s", entry.name, time.Since(t0))
+		}
+	}()
 	tmp, err := os.CreateTemp("", "comprador-mtp-*")
 	if err != nil {
 		c.mu.Lock()

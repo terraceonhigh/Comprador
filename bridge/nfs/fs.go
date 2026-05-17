@@ -187,6 +187,11 @@ func (fs *MTPFileSystem) OpenFile(filename string, flag int, perm os.FileMode) (
 	if meta.IsDir {
 		return nil, os.ErrInvalid
 	}
+	// Log every READ-path open so we can see which files macOS is
+	// probing (Spotlight, QuickLook, mdworker, FSEvents — any
+	// background subsystem that respects .metadata_never_index OR
+	// not). Helps diagnose the 2026-05-16 stall.
+	log.Printf("OpenFile read-path: path=%q size=%d", p, meta.Size)
 	return fs.cache.open(meta.Name, meta.ID, fs.session)
 }
 
