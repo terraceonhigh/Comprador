@@ -201,10 +201,20 @@ SWIFT_SRC    := $(wildcard MenuBarApp/Sources/*.swift)
 SWIFT_TARGET := arm64-apple-macosx13.0
 BUILD_INFO_SWIFT := build/BuildInfo.swift
 
+# Swift conditional-compilation flag. SWIFT_DEBUG=1 enables `#if DEBUG`
+# code paths (the build-identifier copy-on-click menu item, the
+# synthetic-flutter testing menu, future dev-only affordances). Default
+# is production: no DEBUG, no dev menu items.
+#
+# Set on the command line: `make app-swiftc SWIFT_DEBUG=1` for the
+# developer experience.
+SWIFT_DEBUG ?=
+SWIFT_DEBUG_FLAG := $(if $(SWIFT_DEBUG),-D DEBUG,)
+
 app-swiftc: bridge helper icon
 	@mkdir -p build/swift build
 	@printf 'enum BuildInfo { static let id = "%s" }\n' "$(BUILD_ID)" > $(BUILD_INFO_SWIFT)
-	swiftc -target $(SWIFT_TARGET) -O -D DEBUG \
+	swiftc -target $(SWIFT_TARGET) -O $(SWIFT_DEBUG_FLAG) \
 		-framework Cocoa -framework SwiftUI -framework IOKit \
 		-framework DiskArbitration -framework ServiceManagement \
 		-framework UserNotifications \
