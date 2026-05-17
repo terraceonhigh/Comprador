@@ -1108,6 +1108,68 @@ phone fail-gracefully rather than hang).
 **Status:** root cause identified. Fix selection in
 progress (see TODO.md §NEXT SESSION).
 
+**Empirical receipts for fix attempts (2026-05-16 evening):**
+
+- **Approach 1 — `.metadata_never_index` sentinel** (commit
+  `56c44372`). **Insufficient.** Sentinel correctly silences
+  Spotlight content indexing — verified by clean 4-minute
+  browse with no READ probes. But the actual culprit is
+  QuickLook thumbnail extraction, which fires on Finder icon-view
+  rendering and **does not respect `.metadata_never_index`**.
+  Confirmed by instrumented bridge (commit `78eae7a3`): on the
+  next drag-into-directory test, the bridge logged sequential
+  reads of every file in `Download/` including hidden
+  `.trashed-*` files, with the 1 GB Shrek file blocking the
+  read pipeline for 36 s and the 9 GB Attenborough.mkv set to
+  take ~7 min. Sentinel kept for orthogonal benefit (Spotlight
+  *content* indexing still suppressed) but does not address
+  QuickLook.
+
+- **Approach 2 — `NFS3ERR_JUKEBOX` for files > 50 MB**
+  (commit `1acdf7f7`). **Partially effective.** Verified
+  2026-05-16 20:54: with bridge `1acdf7f7-dirty`, mounted via
+  loopback + Finder icon-view of `Download/`, the bridge
+  correctly returned JUKEBOX for Attenborough.mkv (9 GB) and
+  How_a_Computer_Works.webm (133 MB) on every probe. Small
+  files (98 KB jpg) went through the synchronous fast path in
+  ~12 ms. macOS NFS client retried the JUKEBOX'd reads with
+  exponential backoff (4 s → 8 s → 16 s → 30 s). **However,
+  macOS Finder still surfaced "Server connections interrupted"
+  alert after a few retries** — JUKEBOX is the spec-blessed
+  "media not ready, retry later" status but macOS treats
+  repeated JUKEBOX as a connection failure for user-display
+  purposes. The mount stays functionally alive — drags into
+  the directory still work normally during the retry storm.
+  This is the "outcome 3" anticipated in PLAN-NFS-READ.md.
+
+- **Outstanding: async prefetch on JUKEBOX** (drafted in
+  [PLAN-NFS-READ.md](PLAN-NFS-READ.md) but not yet
+  implemented). The mitigation for outcome 3: kick off an
+  asynchronous background download when we return JUKEBOX, so
+  the client's retry within the backoff window finds a
+  populated cache and gets the bytes. Should silence the
+  alert because Finder gets a real response on retry rather
+  than another JUKEBOX. Deferred to a future session;
+  expected ~1 day of careful work (state machine in
+  `cache.go`, eviction interaction, concurrent-read coordination).
+
+**Net status after 2026-05-16 evening:** the dominant user
+scenarios (mount + browse, drag-drop into directory) work
+without scary alerts. The scenario that still fails noisily
+is *icon-view rendering of a directory containing files
+> 50 MB* — Finder shows alerts after JUKEBOX retries
+exhaust. Functional impact is bounded: the mount remains
+usable, drags succeed, only the icon-view preview generation
+for large files is degraded (which is acceptable: a 9 GB
+video has no useful thumbnail anyway).
+
+Double-clicking a large file to preview it directly is
+**untested with the JUKEBOX patch** — last attempt (with
+patch active but for a slightly earlier reason)
+required a reboot. Speculatively safer with JUKEBOX active
+since the synchronous download path is bypassed, but
+empirically unverified.
+
 ## SMAppService / Helper
 
 > **Section status — helper itself slated for v0.4.0 retirement.**

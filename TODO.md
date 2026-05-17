@@ -1,6 +1,47 @@
 # Comprador — TODO
 
-## NEXT SESSION — ship the Spotlight-induced-READ-stall fix
+## NEXT SESSION — async prefetch on JUKEBOX
+
+**Status as of end-of-day 2026-05-16:** the two-fix combo
+(`.metadata_never_index` sentinel in `56c44372` + JUKEBOX-on-threshold
+in `1acdf7f7`) lands the dominant user-visible improvement: drags
+into the mount work cleanly with no 5-minute stall, Spotlight is
+silenced, and JUKEBOX correctly fires for files >50 MB. **One
+residual:** macOS Finder still surfaces "Server connections
+interrupted" alerts when the icon view in a directory containing
+large files exhausts JUKEBOX retries. The mount stays functional
+through the alert; drags continue to work; only the cosmetic
+"can't preview large files" UX degrades.
+
+**Fix:** implement the **async prefetch** path drafted in
+[docs/PLAN-NFS-READ.md](docs/PLAN-NFS-READ.md). When we return
+JUKEBOX for a large file, kick off an asynchronous background
+download via `cache.open` so the client's retry within the
+backoff window (4 s → 8 s → 16 s …) finds a populated cache and
+gets real bytes. Should silence the alert because Finder
+eventually gets a real response. ~1 day of careful work — state
+machine in `cache.go`, eviction interaction, concurrent-read
+coordination — but small surface area.
+
+**Open empirical question that should be answered first:**
+double-click on a large phone-resident file in Finder (e.g.
+opening Attenborough.mkv to preview). Pre-fix, this was
+catastrophic (required reboot). Theoretically JUKEBOX should
+help (no synchronous download triggered) but UNVERIFIED. The
+2026-05-16 evening final-test ended before re-testing this
+scenario. Test it carefully in the next session, before
+investing in the async prefetch.
+
+**Cosmetic followup:** the `[INFO] WRITE how=...` log line in
+[bridge/vendor/.../nfs_onwrite.go](bridge/vendor/github.com/willscott/go-nfs/nfs_onwrite.go)
+is a leftover from `0d1418ac` that the revert in `9239dcd7`
+didn't catch. Functional behavior is correct (no SyncDurable,
+no fileSync stabilityReply); just the log line survived. Strip
+it for cleanliness.
+
+---
+
+## Earlier NEXT SESSION block (preserved for context) — shipped 2026-05-16
 
 **Pre-launch blocker for v0.4.0.** Root cause identified
 2026-05-16 afternoon via pcap analysis (see
