@@ -588,6 +588,83 @@ Workaround no longer needed. Tracked in TODO.md under "Handle detach during
 file transfer gracefully (don't hang Finder)" — that entry was filed
 before we'd reproduced this exact race, but the fix is the same shape.
 
+### 19b. Multi-device ptpcamerad-kill race on app startup
+
+**Symptom (2026-05-17, post-multi-device-step-6):** Architect
+launches Comprador.app with two phones (Xperia + Pixel 6) already
+plugged in. Pixel mounts cleanly; Xperia fails to mount with no
+user-visible explanation. Unplug + replug the Xperia recovers it.
+The failure was 100% reproducible on plug-then-launch; absent on
+plug-after-launch.
+
+**Empirical receipt** (from `build/comprador.log`):
+
+```
+13:24:52.725  USB attached — Pixel 6   ← initial-scan drain
+13:24:52.725  USB attached — XQ-BT52   ← initial-scan drain
+13:24:58.067  Pixel:  [status] Starting bridge…
+13:24:58.085  Xperia: [status] Starting bridge…
+13:24:58.091  Xperia: IOKit preflight skipped (USBDeviceOpenSeize → 0xE00002C5)
+13:24:58.111  Killed ptpcamerad / AMPDeviceDiscoveryAgent
+13:24:58.146  Pixel:  IOKit preflight OK (seized + re-enumerated)
+13:24:58.225  Xperia bridge: libusb_claim_interface() = -3 (LIBUSB_ERROR_ACCESS)
+13:24:58.315  Xperia bridge: failed to open MTP device — kernel-bound
+              to the USB interface, requires physical replug or IOKit
+              interface seize
+```
+
+`0xE00002C5` is `kIOReturnExclusiveAccess`.
+
+**Root cause.** With both phones already attached when the app
+launches, `ptpcamerad` has been claiming both USB interfaces in
+exclusive-access mode for however long the user had them plugged
+in. Both DeviceSessions then race to spawn their bridges
+concurrently. The Xperia preflight runs first, finds `ptpcamerad`
+holding the USB interface, fails. The Pixel preflight runs second
+(a few tens of ms later, after a parallel bridge subprocess has
+called `killall ptpcamerad`), finds the interface free, succeeds.
+Xperia's bridge then tries `libusb_claim_interface` directly —
+but the kernel's USB Imaging Class driver has by now bound
+itself to the device's class-6 PTP interface, and that binding
+**survives ptpcamerad's death** — only a physical replug (or
+another IOKit-level re-enumeration via `USBDeviceReEnumerate`)
+breaks it.
+
+The Pixel works in the same window because its preflight runs
+*after* the first `killall` lands, and the IOKit re-enumeration
+that the preflight performs is the thing that breaks the
+kernel binding. Xperia gets neither: its preflight fired too
+early, and there's no retry path to re-attempt the seize once
+the kill has cleared the way.
+
+**Fix shape.**
+
+1. **One global `killall ptpcamerad` at app startup**, in
+   `AppDelegate.applicationDidFinishLaunching`, before
+   `setupDeviceWatcher` fires. This pre-clears the
+   exclusive-access holder before any DeviceSession seize
+   attempts. ~3 lines.
+2. **Serialize per-device IOKit seizes** via a shared actor
+   (`USBSeizer.shared`) so concurrent attaches don't have two
+   seizes racing against each other and the kernel's USB
+   re-enumeration plumbing. Per
+   [PLAN-MULTI-DEVICE.md §7](PLAN-MULTI-DEVICE.md), ~30 lines.
+
+Either fix alone may suffice for the two-phone case observed
+here; both together close the broader race.
+
+**Pattern lesson.** A "seize race" between sibling DeviceSessions
+wasn't on my multi-device radar — the assumption was that each
+session's seize was independent because each targets a different
+USB device. It is — but the *prerequisite* of the seize
+(`ptpcamerad` not holding exclusive access to any device on the
+bus) is process-wide and global. PLAN-MULTI-DEVICE.md §7 named
+this in the abstract; the architect's bug report was the first
+empirical confirmation.
+
+**Status:** fix in flight, to be validated by the same
+plug-both-then-launch scenario.
+
 ### 20. `mount_webdav` silently fails with custom mount point
 
 **What happened:** Tried calling `/sbin/mount_webdav` directly to control

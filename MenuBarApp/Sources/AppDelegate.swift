@@ -31,6 +31,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // ends up showing duplicates.
         MountManager.cleanupStaleMounts()
 
+        // Pre-emptively kill macOS processes that auto-claim USB
+        // PTP/MTP interfaces (ptpcamerad, AMPDeviceDiscoveryAgent, …).
+        // Without this, when N>=2 devices were plugged in *before* the
+        // app launched, both DeviceSessions race to spawn bridges whose
+        // IOKit-seize preflights collide on ptpcamerad's exclusive
+        // hold — one wins (gets a clean re-enumeration), the other
+        // gets kIOReturnExclusiveAccess, falls through to a bare
+        // libusb_claim_interface, fails because the kernel's USB
+        // Imaging Class driver has bound the interface. Empirically
+        // reproducible 2026-05-17 with Xperia + Pixel pre-attached.
+        // See MISTAKES.md entry 19b.
+        //
+        // Per-bridge killCompetingProcesses calls still fire on each
+        // spawn (BridgeProcess.start) for the plug-after-launch path
+        // where ptpcamerad may have re-spawned in the interim. The
+        // app-startup call is the additional pre-emption for the
+        // pre-attached case.
+        BridgeProcess.killCompetingProcesses()
+
         setupStatusItem()
         setupDeviceWatcher()
         updateIcon(state: .idle)
