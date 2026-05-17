@@ -298,8 +298,16 @@ func (s *Session) RefreshStorages() error {
 }
 
 // NewSession opens a device and populates the root-level storage entries.
+// Equivalent to NewSessionForLocation(0): first-detected device.
 func NewSession() (*Session, error) {
-	dev, err := DetectDevice()
+	return NewSessionForLocation(0)
+}
+
+// NewSessionForLocation opens the device matching the given macOS IOKit
+// USB Location ID (or the first-detected device if locationID==0) and
+// populates the root-level storage entries.
+func NewSessionForLocation(locationID uint32) (*Session, error) {
+	dev, err := DetectDeviceForLocation(locationID)
 	if err != nil {
 		return nil, err
 	}
