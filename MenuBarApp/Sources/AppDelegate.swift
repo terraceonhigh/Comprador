@@ -111,16 +111,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     menu.addItem(statusLine)
                     session.connectingStatusItem = statusLine
 
-                    // Hint only shown on the WebDAV path where the ~90s
-                    // NetFSMountURLSync wait dominates the cycle. NFS
-                    // connects in a few seconds, so the hint would be
-                    // misleading there.
-                    if session.bridgeProto != "nfs" {
-                        let hint = NSMenuItem(title: "Finder takes about 90 seconds to attach the volume",
-                                              action: nil, keyEquivalent: "")
-                        hint.isEnabled = false
-                        menu.addItem(hint)
-                    }
+                    // (Removed the "Finder takes about 90 seconds to
+                    // attach the volume" hint. It was correct for the
+                    // legacy WebDAV path where NetFSMountURLSync dominated
+                    // the cycle. The NFS path connects in a few seconds.
+                    // DeviceSession hardcodes useNFS = true now so the
+                    // hint was unconditionally misleading. The previous
+                    // `session.bridgeProto != "nfs"` gate let it slip
+                    // through during the pre-PROTO-parse window where
+                    // BridgeProcess.proto still defaulted to "webdav".)
                 }
             }
         }
