@@ -45,27 +45,28 @@ class BridgeProcess {
             throw BridgeError.binaryNotFound(bridgePath)
         }
 
-        // Kill macOS processes that auto-claim MTP/PTP USB interfaces
-        // BEFORE the IOKit seize preflight, not after. ptpcamerad holds
-        // each phone's USB Imaging Class interface in exclusive-access
-        // mode; an immediately-following USBDeviceOpenSeize() will
-        // return kIOReturnExclusiveAccess (0xE00002C5) and the seize
-        // (and the kernel-binding break that depends on it) will
-        // silently fail. Empirically reproducible with N>=2 devices
-        // pre-attached: the first session's seize fires against a
-        // still-alive ptpcamerad and fails; the second session's seize
-        // benefits from the first session's killCompetingProcesses
-        // call and succeeds. Swapping the order makes both seizes run
-        // against an already-dead ptpcamerad. See MISTAKES.md entry
-        // 19b for the full trace.
-        BridgeProcess.killCompetingProcesses()
-
         // IOKit preflight: force a software replug so the bridge sees a
         // fresh, kernel-unclaimed device. This sequence (seize → reset →
         // release) is what physical unplug+replug does at the hardware
         // level — except we don't need the user to touch the cable.
+        //
+        // The kill+seize pair must be SERIALIZED across concurrent
+        // DeviceSessions and the kill must run IMMEDIATELY before the
+        // seize. Two failure modes we've hit:
+        //
+        // 1. kill-after-seize (MISTAKES 19b first take). Seizes fire
+        //    against a still-alive ptpcamerad → kIOReturnExclusiveAccess.
+        // 2. kill-before-seize but parallel (MISTAKES 19b second take).
+        //    Two sessions kill+seize concurrently; both seizes hit the
+        //    same millisecond and collide at the IOKit layer →
+        //    kIOReturnExclusiveAccess on both.
+        //
+        // Fix: run the entire kill→seize sequence under a single global
+        // serial queue. Each session's kill clears any newly-respawned
+        // ptpcamerad immediately before its own seize, and no other
+        // session's seize can fire mid-sequence.
         if seizeForVendor != 0 && seizeForProduct != 0 {
-            let result = USBSeizer.seizeAndReset(
+            let result = BridgeProcess.serializedKillAndSeize(
                 vendorID: seizeForVendor,
                 productID: seizeForProduct
             )
@@ -211,6 +212,31 @@ class BridgeProcess {
     /// for root. See TODO.md for the full diagnosis. The remaining
     /// best-effort recovery path is physical unplug+replug, which the
     /// failure-notification copy already tells the user about.
+    /// Global serial queue that protects the kill→seize sequence from
+    /// concurrent DeviceSession invocations. See the block comment in
+    /// `start()` for the failure modes this addresses (MISTAKES 19b).
+    private static let seizeQueue = DispatchQueue(label: "comprador.usb.seize")
+
+    /// Runs `killCompetingProcesses` followed immediately by
+    /// `USBSeizer.seizeAndReset`, all serialized through `seizeQueue`
+    /// so concurrent DeviceSession calls take the lock one at a time.
+    ///
+    /// The single short sleep between kill and seize gives launchd a
+    /// brief window to NOT yet have respawned ptpcamerad — empirically
+    /// the daemon takes ~60 ms to come back, so a 20 ms gap is the
+    /// sweet spot: long enough for kill to land in the process table,
+    /// short enough that we still beat the respawn.
+    ///
+    /// Blocks the caller. Safe to call from an `async` context as long
+    /// as the queue isn't the main queue (it isn't).
+    static func serializedKillAndSeize(vendorID: UInt16, productID: UInt16) -> USBSeizer.Result {
+        return seizeQueue.sync {
+            killCompetingProcesses()
+            Thread.sleep(forTimeInterval: 0.02)
+            return USBSeizer.seizeAndReset(vendorID: vendorID, productID: productID)
+        }
+    }
+
     static func killCompetingProcesses() {
         let processNames = [
             "ptpcamerad", "PTPCamera",
