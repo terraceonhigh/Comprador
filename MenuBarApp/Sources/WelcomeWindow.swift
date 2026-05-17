@@ -104,6 +104,7 @@ private struct WelcomeView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     howToConnect
+                    goodToKnow
                     setup
                 }
                 .padding(.horizontal, 32)
@@ -168,6 +169,48 @@ private struct WelcomeView: View {
                 .foregroundStyle(.secondary)
                 .padding(.top, 4)
         }
+    }
+
+    private var goodToKnow: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Good to know")
+                .font(.headline)
+
+            infoCard(
+                icon: "arrow.triangle.2.circlepath",
+                title: "If Comprador can't see your phone",
+                body: "Unplug and re-plug the USB cable. macOS sometimes pins the phone into a connection mode Comprador can't read; a quick replug lets the phone go back to whatever you have selected on the phone screen."
+            )
+
+            infoCard(
+                icon: "camera.badge.ellipsis",
+                title: "Image Capture and Photos auto-import pause",
+                body: "While Comprador is running, Apple's Image Capture and the Photos auto-import that watches for cameras temporarily lose access to USB cameras and phones. They resume automatically when you eject your device from Finder."
+            )
+        }
+    }
+
+    private func infoCard(icon: String, title: String, body: String) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: icon)
+                .font(.title2)
+                .foregroundStyle(.tint)
+                .frame(width: 28, alignment: .center)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.body).fontWeight(.medium)
+                Text(body)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color(nsColor: .controlBackgroundColor))
+        )
     }
 
     private func connectCard(icon: String, title: String, steps: [String]) -> some View {
