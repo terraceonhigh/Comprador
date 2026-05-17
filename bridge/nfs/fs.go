@@ -100,6 +100,11 @@ func (fs *MTPFileSystem) Stat(filename string) (os.FileInfo, error) {
 	if p == "/" {
 		return rootFileInfo{}, nil
 	}
+	// Synthetic sentinel files (e.g. /.metadata_never_index) are served
+	// directly by the bridge without touching MTP. See sentinels.go.
+	if data, ok := sentinelInfo(p); ok {
+		return sentinelFileInfo{name: filepath.Base(p), size: int64(len(data))}, nil
+	}
 	// Check staging first — a file being written is not in ObjectMap yet.
 	if sf := fs.writes.get(p); sf != nil {
 		return sf.stat()
@@ -125,9 +130,20 @@ func (fs *MTPFileSystem) ReadDir(path string) ([]os.FileInfo, error) {
 	}
 	fs.session.EnsurePopulated(p)
 	children := fs.session.Objects.ListChildren(p)
-	infos := make([]os.FileInfo, len(children))
-	for i, meta := range children {
-		infos[i] = &mtpFileInfo{meta: meta}
+	infos := make([]os.FileInfo, 0, len(children)+1)
+	for _, meta := range children {
+		infos = append(infos, &mtpFileInfo{meta: meta})
+	}
+	// Surface any synthetic sentinel files whose parent is p. The mount
+	// root sees /.metadata_never_index so macOS Spotlight skips the
+	// volume entirely on first browse. See sentinels.go.
+	for spath, data := range sentinelContent {
+		if filepath.Dir(spath) == p {
+			infos = append(infos, sentinelFileInfo{
+				name: filepath.Base(spath),
+				size: int64(len(data)),
+			})
+		}
 	}
 	return infos, nil
 }
@@ -142,6 +158,17 @@ func (fs *MTPFileSystem) Open(filename string) (billy.File, error) {
 // Otherwise write flags are not permitted for existing MTP objects.
 func (fs *MTPFileSystem) OpenFile(filename string, flag int, perm os.FileMode) (billy.File, error) {
 	p := cleanPath(filename)
+
+	// Synthetic sentinel files (e.g. /.metadata_never_index) are served
+	// directly. Read-only; write flags get the same ErrReadOnly any other
+	// MTP-resident object would. See sentinels.go.
+	if data, ok := sentinelInfo(p); ok {
+		const writeMask = os.O_WRONLY | os.O_RDWR | os.O_APPEND | os.O_CREATE | os.O_TRUNC
+		if flag&writeMask != 0 {
+			return nil, billy.ErrReadOnly
+		}
+		return &sentinelHandle{name: filename, data: data}, nil
+	}
 
 	if sf := fs.writes.get(p); sf != nil {
 		return &stagingHandle{name: filename, sf: sf}, nil
@@ -176,6 +203,12 @@ func (fs *MTPFileSystem) Create(filename string) (billy.File, error) {
 		return &discardingHandle{name: filename}, nil
 	}
 	p := cleanPath(filename)
+	// Synthetic sentinels are read-only — refuse CREATE on them rather
+	// than letting it stage a phantom write that would shadow the virtual
+	// content. See sentinels.go.
+	if _, ok := sentinelInfo(p); ok {
+		return nil, os.ErrPermission
+	}
 	sf, err := fs.writes.register(p, filename)
 	if err != nil {
 		return nil, err
@@ -316,6 +349,14 @@ func (fs *MTPFileSystem) Rename(oldpath, newpath string) error {
 // Remove deletes an MTP object or discards a staging entry.
 func (fs *MTPFileSystem) Remove(filename string) error {
 	p := cleanPath(filename)
+
+	// Synthetic sentinels cannot be removed — they're not on the device.
+	// Refuse explicitly rather than fall through to ObjectMap and surface
+	// ErrNotExist (which would be misleading; the file does exist from
+	// the client's perspective). See sentinels.go.
+	if _, ok := sentinelInfo(p); ok {
+		return os.ErrPermission
+	}
 
 	if sf := fs.writes.delete(p); sf != nil {
 		sf.tmp.Close()
