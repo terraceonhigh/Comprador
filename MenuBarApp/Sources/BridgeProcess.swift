@@ -74,11 +74,12 @@ class BridgeProcess {
             case .success:
                 NSLog("Comprador: IOKit preflight OK (seized + re-enumerated 0x%04X:0x%04X)",
                       seizeForVendor, seizeForProduct)
-                // Wait for USB to settle after re-enumeration. ~1s is
-                // enough for IOKit to surface the new device handle;
-                // shorter and we race the kernel binding before our
-                // claim attempt.
-                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                // The post-seize settle window now lives inside
+                // serializedKillAndSeize (under the serial queue lock)
+                // so cross-session protection works. No additional
+                // sleep here — bridge spawn happens directly so we
+                // hit the brief post-re-enumeration window before
+                // the kernel re-binds the USB Imaging Class driver.
             case .deviceNotFound:
                 NSLog("Comprador: IOKit preflight skipped (device 0x%04X:0x%04X not found)",
                       seizeForVendor, seizeForProduct)
@@ -218,14 +219,27 @@ class BridgeProcess {
     private static let seizeQueue = DispatchQueue(label: "comprador.usb.seize")
 
     /// Runs `killCompetingProcesses` followed immediately by
-    /// `USBSeizer.seizeAndReset`, all serialized through `seizeQueue`
-    /// so concurrent DeviceSession calls take the lock one at a time.
+    /// `USBSeizer.seizeAndReset`, plus a post-seize settle window, all
+    /// serialized through `seizeQueue` so concurrent DeviceSession
+    /// calls take the lock one at a time.
     ///
-    /// The single short sleep between kill and seize gives launchd a
-    /// brief window to NOT yet have respawned ptpcamerad — empirically
-    /// the daemon takes ~60 ms to come back, so a 20 ms gap is the
-    /// sweet spot: long enough for kill to land in the process table,
-    /// short enough that we still beat the respawn.
+    /// The 20 ms gap between kill and seize gives launchd a brief
+    /// window to NOT yet have respawned ptpcamerad — empirically the
+    /// daemon takes ~60 ms to come back, so 20 ms is the sweet spot:
+    /// long enough for kill to land in the process table, short enough
+    /// that we still beat the respawn.
+    ///
+    /// The 1.2 s settle window AFTER a successful seize is to let
+    /// macOS's USB host controller finish processing the
+    /// USBDeviceReEnumerate before the next session's seize fires.
+    /// Empirically (2026-05-17): without it, Session B's seize fires
+    /// ~66 ms after Session A's seize returns while the bus is still
+    /// re-enumerating, and Session B gets kIOReturnExclusiveAccess.
+    /// With it, Session B waits behind the queue lock for a full
+    /// post-seize settle, then runs its own kill+seize cleanly.
+    /// (The original 1.2 s sleep was downstream of seizeAndReset in
+    /// start() and outside the queue, which protected the bridge-spawn
+    /// path within one session but not across sessions.)
     ///
     /// Blocks the caller. Safe to call from an `async` context as long
     /// as the queue isn't the main queue (it isn't).
@@ -233,7 +247,14 @@ class BridgeProcess {
         return seizeQueue.sync {
             killCompetingProcesses()
             Thread.sleep(forTimeInterval: 0.02)
-            return USBSeizer.seizeAndReset(vendorID: vendorID, productID: productID)
+            let result = USBSeizer.seizeAndReset(vendorID: vendorID, productID: productID)
+            if case .success = result {
+                // Hold the queue lock through the bus settle so
+                // sibling sessions don't seize against a still-
+                // re-enumerating bus.
+                Thread.sleep(forTimeInterval: 1.2)
+            }
+            return result
         }
     }
 
