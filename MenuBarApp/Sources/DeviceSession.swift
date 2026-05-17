@@ -126,8 +126,18 @@ final class DeviceSession {
         // detach/reattach cycles when switching to MTP mode.
         try? await Task.sleep(nanoseconds: 5_000_000_000)
 
-        // Retry with increasing delay
-        let retryDelays: [UInt64] = [0, 3, 5]
+        // Fail-fast: one attempt, no retry. The previous [0, 3, 5]-second
+        // retry cycle had a hidden cost — each attempt does a fresh
+        // IOKit USBDeviceReEnumerate + libusb_claim_interface cycle, and
+        // each such cycle on a phone whose USB state is already
+        // unhappy can push it further into a stuck non-MTP mode
+        // (Pixel: 0x4EE1 → 0x4EE8 observed 2026-05-17). One clean try,
+        // then surface the unplug-and-replug notification — letting the
+        // user reset the phone\'s USB state with a physical action is
+        // far more reliable than us banging on it from the host side.
+        // The DeviceWatcher will see the resulting detach/attach and
+        // trigger a fresh attempt automatically.
+        let retryDelays: [UInt64] = [0]
 
         for (attempt, delaySec) in retryDelays.enumerated() {
             guard isConnecting else { return } // cancelled

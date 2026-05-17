@@ -154,21 +154,20 @@ func DetectDevice() (*Device, error) {
 //
 // Uses the raw detection API for better diagnostics.
 //
-// Tries twice with the kill-then-claim race against ptpcamerad. Empirically
-// this race is unwinnable once the kernel has bound its USB Imaging Class
-// driver to the device — and that happens within microseconds of USB
-// enumeration, well before we ever spawn the bridge. So if attempt 1 fails,
-// attempt 2 fails too, and any further retries are dead time.
+// Fail-fast on libusb_claim_interface error: one attempt only. Empirically
+// (2026-05-17), each failed claim on a phone in a degraded USB state can
+// push the phone further out of MTP mode (Pixel 0x4EE1 → 0x4EE8 observed
+// over the course of repeated retries). The Swift layer also stops at
+// one attempt and surfaces an unplug-and-replug notification when this
+// fails — letting the user reset the phone's USB state with a physical
+// action is more reliable than us repeatedly seizing+re-enumerating.
 //
-// The only thing that actually breaks the kernel binding is a physical
-// detach/reattach (or the equivalent IOKit USBInterfaceOpenSeize, which
-// would need a Swift-side preflight before bridge spawn — TODO).
-//
-// Two attempts with a 50ms gap is enough to absorb a genuine transient
-// (e.g., libusb still finalizing a previous handle close) without burning
-// a full second on a known-unwinnable path.
+// The Swift-side IOKit seize preflight (USBDeviceOpenSeize +
+// USBDeviceReEnumerate) is the only thing that reliably breaks the
+// kernel binding; if that succeeded and we still can't claim, retrying
+// won't help because the kernel has re-bound.
 func DetectDeviceForLocation(locationID uint32) (*Device, error) {
-	const maxAttempts = 2
+	const maxAttempts = 1
 
 	var rawDevices *C.LIBMTP_raw_device_t
 	var numDevices C.int
