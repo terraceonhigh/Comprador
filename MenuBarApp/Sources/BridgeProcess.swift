@@ -45,28 +45,27 @@ class BridgeProcess {
             throw BridgeError.binaryNotFound(bridgePath)
         }
 
+        // Kill macOS processes that auto-claim MTP/PTP USB interfaces
+        // BEFORE the IOKit seize preflight, not after. ptpcamerad holds
+        // each phone's USB Imaging Class interface in exclusive-access
+        // mode; an immediately-following USBDeviceOpenSeize() will
+        // return kIOReturnExclusiveAccess (0xE00002C5) and the seize
+        // (and the kernel-binding break that depends on it) will
+        // silently fail. Empirically reproducible with N>=2 devices
+        // pre-attached: the first session's seize fires against a
+        // still-alive ptpcamerad and fails; the second session's seize
+        // benefits from the first session's killCompetingProcesses
+        // call and succeeds. Swapping the order makes both seizes run
+        // against an already-dead ptpcamerad. See MISTAKES.md entry
+        // 19b for the full trace.
+        BridgeProcess.killCompetingProcesses()
+
         // IOKit preflight: force a software replug so the bridge sees a
         // fresh, kernel-unclaimed device. This sequence (seize → reset →
         // release) is what physical unplug+replug does at the hardware
         // level — except we don't need the user to touch the cable.
-        //
-        // The kill+seize pair must be SERIALIZED across concurrent
-        // DeviceSessions and the kill must run IMMEDIATELY before the
-        // seize. Two failure modes we've hit:
-        //
-        // 1. kill-after-seize (MISTAKES 19b first take). Seizes fire
-        //    against a still-alive ptpcamerad → kIOReturnExclusiveAccess.
-        // 2. kill-before-seize but parallel (MISTAKES 19b second take).
-        //    Two sessions kill+seize concurrently; both seizes hit the
-        //    same millisecond and collide at the IOKit layer →
-        //    kIOReturnExclusiveAccess on both.
-        //
-        // Fix: run the entire kill→seize sequence under a single global
-        // serial queue. Each session's kill clears any newly-respawned
-        // ptpcamerad immediately before its own seize, and no other
-        // session's seize can fire mid-sequence.
         if seizeForVendor != 0 && seizeForProduct != 0 {
-            let result = BridgeProcess.serializedKillAndSeize(
+            let result = USBSeizer.seizeAndReset(
                 vendorID: seizeForVendor,
                 productID: seizeForProduct
             )
@@ -74,12 +73,11 @@ class BridgeProcess {
             case .success:
                 NSLog("Comprador: IOKit preflight OK (seized + re-enumerated 0x%04X:0x%04X)",
                       seizeForVendor, seizeForProduct)
-                // The post-seize settle window now lives inside
-                // serializedKillAndSeize (under the serial queue lock)
-                // so cross-session protection works. No additional
-                // sleep here — bridge spawn happens directly so we
-                // hit the brief post-re-enumeration window before
-                // the kernel re-binds the USB Imaging Class driver.
+                // Wait for USB to settle after re-enumeration. ~1s is
+                // enough for IOKit to surface the new device handle;
+                // shorter and we race the kernel binding before our
+                // claim attempt.
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
             case .deviceNotFound:
                 NSLog("Comprador: IOKit preflight skipped (device 0x%04X:0x%04X not found)",
                       seizeForVendor, seizeForProduct)
@@ -213,51 +211,6 @@ class BridgeProcess {
     /// for root. See TODO.md for the full diagnosis. The remaining
     /// best-effort recovery path is physical unplug+replug, which the
     /// failure-notification copy already tells the user about.
-    /// Global serial queue that protects the kill→seize sequence from
-    /// concurrent DeviceSession invocations. See the block comment in
-    /// `start()` for the failure modes this addresses (MISTAKES 19b).
-    private static let seizeQueue = DispatchQueue(label: "comprador.usb.seize")
-
-    /// Runs `killCompetingProcesses` followed immediately by
-    /// `USBSeizer.seizeAndReset`, plus a post-seize settle window, all
-    /// serialized through `seizeQueue` so concurrent DeviceSession
-    /// calls take the lock one at a time.
-    ///
-    /// The 20 ms gap between kill and seize gives launchd a brief
-    /// window to NOT yet have respawned ptpcamerad — empirically the
-    /// daemon takes ~60 ms to come back, so 20 ms is the sweet spot:
-    /// long enough for kill to land in the process table, short enough
-    /// that we still beat the respawn.
-    ///
-    /// The 1.2 s settle window AFTER a successful seize is to let
-    /// macOS's USB host controller finish processing the
-    /// USBDeviceReEnumerate before the next session's seize fires.
-    /// Empirically (2026-05-17): without it, Session B's seize fires
-    /// ~66 ms after Session A's seize returns while the bus is still
-    /// re-enumerating, and Session B gets kIOReturnExclusiveAccess.
-    /// With it, Session B waits behind the queue lock for a full
-    /// post-seize settle, then runs its own kill+seize cleanly.
-    /// (The original 1.2 s sleep was downstream of seizeAndReset in
-    /// start() and outside the queue, which protected the bridge-spawn
-    /// path within one session but not across sessions.)
-    ///
-    /// Blocks the caller. Safe to call from an `async` context as long
-    /// as the queue isn't the main queue (it isn't).
-    static func serializedKillAndSeize(vendorID: UInt16, productID: UInt16) -> USBSeizer.Result {
-        return seizeQueue.sync {
-            killCompetingProcesses()
-            Thread.sleep(forTimeInterval: 0.02)
-            let result = USBSeizer.seizeAndReset(vendorID: vendorID, productID: productID)
-            if case .success = result {
-                // Hold the queue lock through the bus settle so
-                // sibling sessions don't seize against a still-
-                // re-enumerating bus.
-                Thread.sleep(forTimeInterval: 1.2)
-            }
-            return result
-        }
-    }
-
     static func killCompetingProcesses() {
         let processNames = [
             "ptpcamerad", "PTPCamera",
