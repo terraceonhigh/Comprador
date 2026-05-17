@@ -1,53 +1,100 @@
 # Comprador — TODO
 
-## NEXT SESSION — pivot to multi-device
+## Current state — end-of-stretch 2026-05-17
 
-**The NFS READ stall is solved.** Three commits across two
-sessions implemented the full fix:
+**Two pre-launch blockers cleared in this stretch:** the NFS READ
+stall (multiple framings, eventually fixed at the application
+layer) and multi-device support (steps 4 → 6 of
+[PLAN-MULTI-DEVICE.md](docs/PLAN-MULTI-DEVICE.md) shipped). The
+branch is now ~55 commits ahead of master.
+
+### What landed (chronological, all on `claude/multi-storage`)
+
+**NFS READ stall, 2026-05-16 → 17:**
 
 | Commit | What |
 |---|---|
-| `56c44372` | `.metadata_never_index` sentinel — Spotlight content indexing skipped at the volume root. |
-| `1acdf7f7` | `NFS3ERR_JUKEBOX` for READ on files > 50 MB — Finder / QuickLook degrade gracefully with retry-and-give-up. |
-| `a405ed48` | Async prefetch on JUKEBOX + leftover `[INFO] WRITE` line stripped — direct-read clients (VLC, `cat`, `md5sum`) get bytes after the libmtp download completes (~6 min for 9 GB) instead of hanging forever. |
+| `9239dcd7` | Revert `0d1418ac` fileSync-hold — UX falsified for >600 MB |
+| `fc6a1799` | Root cause via pcap: bridge silently drops every NFSv3 READ |
+| `ce4e7fb6` | `docs/PLAN-NFS-READ.md` for JUKEBOX approach |
+| `56c44372` | `.metadata_never_index` sentinel (Spotlight block) |
+| `1acdf7f7` | `NFS3ERR_JUKEBOX` on READ for files > 50 MB |
+| `a405ed48` | Async prefetch on JUKEBOX (+ stripped leftover `[INFO] WRITE`) |
 
-Verified end-to-end 2026-05-17 morning with the Xperia + VLC +
-Attenborough.mkv: VLC loaded the 9 GB file in 5 min 42 s,
-played normally afterward, and all of Finder remained usable
-once the prefetch completed. See
-[MISTAKES.md §NFS pivot entry 4](docs/MISTAKES.md) for the
-full verification log. The "within-device single-session
-serialization" limitation surfaces as a real UX constraint
-during long prefetches (other MTP ops queue behind the
-running download) but is not a regression from this fix —
-it's the same constraint that would apply to any foreground
-phone→Mac copy.
+Verified end-to-end: VLC opens a 9 GB phone-resident video in
+~6 min instead of hanging forever; small-file drags land in
+2–3 s; QuickLook icon-view alerts reduced from "stacking 5+" to
+"at most one cosmetic flash."
 
-**Next architectural move per the architect's standing
-direction:** multi-device support, per
-[docs/PLAN-MULTI-DEVICE.md](docs/PLAN-MULTI-DEVICE.md). Steps
-1–3 already shipped on this branch (DeviceSession extracted,
-AppDelegate.sessions dictionary keyed by USB Location ID).
-Step 4 is the next concrete code work:
+**Multi-device support, 2026-05-17 afternoon:**
 
-**Step 4 — bridge `--device-loc-id` CLI flag.** Per
-[PLAN-MULTI-DEVICE.md §6](docs/PLAN-MULTI-DEVICE.md) option A.
-Add the flag in `bridge/main.go`; teach
-`bridge/mtp/binding.go`'s `DetectDevice` to filter libmtp's
-raw device list to a single matching Location ID rather than
-picking the first MTP device on the bus. Swift side:
-`BridgeProcess.start` already receives `seizeForVendor` /
-`seizeForProduct`; thread `locationID` through similarly and
-pass it to the bridge. ~30 lines total, but verification
-needs two phones plugged in simultaneously to confirm each
-bridge claims the right one. After this lands, step 5
-(per-device DeviceWatcher wiring) and step 6 (menu UX) become
-unblocked.
+| Commit | What |
+|---|---|
+| `d21dd133` | Bridge `--device-loc-id` flag + IOKit Location ID reconstruction via libusb (step 4) |
+| `22d2b7b1` | Swift `BridgeProcess.start(locationID:)` + AppDelegate guard relaxed (step 5) |
+| `a135ff4f` | Menu shows one block per attached device (step 6) |
+| `db50d540` | `cleanupStaleMounts` recognizes per-device `.local` NFS sources (regression fix) |
 
-The downloadCache and async prefetch are **per-MTPFileSystem
-instance**, so multi-device naturally scales — each bridge
-process gets its own cache, its own session goroutine, its
-own prefetch state. No cross-device interference.
+Verified end-to-end with the Xperia XQ-BT52 + Google Pixel 6
+plugged in simultaneously: menu bar app spawns two bridges,
+each claiming its own phone, each with its own mDNS hostname
+and mount path. Cross-device drag-drop (Xperia SD card → Pixel
+Internal, and vice versa) works cleanly.
+
+**UX polish:**
+
+| Commit | What |
+|---|---|
+| `486af7d9` | Build menu item is now clickable — copies `BuildInfo.id` to clipboard |
+
+### What's open
+
+In rough order of priority for the v0.4.0 launch story:
+
+1. **Pre-launch UX items** in the section further down this
+   file — user-facing disclosure of `ptpcamerad` kill, etc.
+   Some are blocked on Pinterest moodboard research that the
+   architect mentioned post-letter-13.
+
+2. **PR shape decision on `claude/multi-storage`.** Now ~55
+   commits ahead of master. Each commit is independently
+   reviewable; letters 12, 13, 14 give the chronological
+   summary. PR + merge at the architect's pace.
+
+3. **Multi-device step 7 — `USBSeizer.shared` batching.** Per
+   [PLAN-MULTI-DEVICE.md §7](docs/PLAN-MULTI-DEVICE.md). When
+   two phones plug in within ~100 ms, both DeviceSessions fire
+   `killall ptpcamerad` redundantly. The current behavior is
+   correct but noisy; a 200 ms batching window would suppress
+   the duplicate kill. Not blocking — bridges still claim
+   their devices fine; just wasteful.
+
+4. **FUSE-T deliberation** (originally queued post-launch).
+   The NFS READ fix substantially closed the gap that
+   motivated FUSE-T as a substrate replacement. Re-evaluate
+   after v0.4.0 ships and user feedback names the residual
+   pain points (if any).
+
+### Tidying followups
+
+Small items collected during this stretch:
+
+- **`dist-swiftc` inherits `-D DEBUG`** from `app-swiftc`, so
+  production builds expose the debug menu items (Synthetic
+  Flutter, Build identifier with copy-on-click). Separate
+  the debug flags between the two targets.
+- **`BuildInfo.swift` regeneration trigger.** Currently the
+  Makefile reads `git rev-parse --short HEAD` at the start of
+  the build, but if the working tree changes (commits added)
+  between that read and the binary launch, the embedded ID
+  can lag. Footgun confirmed 2026-05-17 (post-commit launch
+  showed the previous build's HEAD). Either regenerate
+  BuildInfo.swift on every `app-swiftc` invocation
+  unconditionally, or stamp the binary post-link.
+- **`make app` (xcodebuild path) is broken** on pbxproj drift
+  (DeviceSession.swift + BuildInfo.swift not in the project
+  file — MISTAKES 23a). `make app-swiftc` is the working
+  path; either fix the pbxproj or retire `make app`.
 
 ---
 
