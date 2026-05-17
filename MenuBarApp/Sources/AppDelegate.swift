@@ -282,12 +282,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSLog("Comprador: Device attached — \(device.displayName) (vendor: 0x%04X, product: 0x%04X, locID: 0x%08X)",
               device.vendorID, device.productID, device.locationID)
 
-        // Step-3 semantics: at most one session at a time. If the same
-        // device's session exists and is in flight or mounted, treat as a
-        // reattach race; if any *other* session exists, suppress new
-        // attaches the same way (matches the pre-refactor singleton
-        // behavior). Step 5 will relax this to genuinely accept new
-        // devices alongside existing ones.
+        // If a session for the same physical device (matched by USB
+        // IOKit Location ID) already exists, treat the attach as a
+        // reattach: in flight → ignore, mounted → queue pending teardown
+        // (race-mitigation for entry 19a), otherwise fall through to
+        // replace. Different-locationID attaches now proceed to create
+        // a parallel DeviceSession — step 5 of PLAN-MULTI-DEVICE.md.
+        // Each session has its own bridge (claimed via --device-loc-id),
+        // its own MountManager, and its own mount point under
+        // ~/Library/Application Support/Comprador/Volumes/<deviceName>.
         if let existing = sessions[device.locationID] {
             if existing.isConnecting {
                 NSLog("Comprador: Ignoring attach — connection already in progress")
@@ -301,11 +304,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // Same locID, existing session is errored or torn down — fall
             // through to replace it with a fresh attempt.
             sessions.removeValue(forKey: device.locationID)
-        } else if !sessions.isEmpty {
-            // Different locID, but we already have a session for some other
-            // device. Preserve step-3 single-device semantics by ignoring.
-            NSLog("Comprador: Ignoring attach — another session is active (step-3 single-device guard)")
-            return
         }
 
         let newSession = DeviceSession(device: device)

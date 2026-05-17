@@ -28,7 +28,18 @@ class BridgeProcess {
     /// replug), and releases. This is the only reliable way to break the
     /// macOS kernel driver's bind on a class-6 PTP interface so libusb's
     /// claim_interface can succeed on the bridge's first attempt.
-    func start(useNFS: Bool = false, seizeForVendor: UInt16 = 0, seizeForProduct: UInt16 = 0) async throws -> Int {
+    ///
+    /// If `locationID` is non-zero, it is passed to the bridge as
+    /// `--device-loc-id=<hex>` so the bridge claims the specific USB
+    /// device matching that IOKit Location ID rather than the first
+    /// detected MTP device. Required for multi-device operation: with
+    /// two or more phones plugged in, the bridge would otherwise be
+    /// non-deterministic about which one it claims. See
+    /// docs/PLAN-MULTI-DEVICE.md §6 option A.
+    func start(useNFS: Bool = false,
+               seizeForVendor: UInt16 = 0,
+               seizeForProduct: UInt16 = 0,
+               locationID: UInt32 = 0) async throws -> Int {
         let bridgePath = findBridgeBinary()
         guard FileManager.default.fileExists(atPath: bridgePath) else {
             throw BridgeError.binaryNotFound(bridgePath)
@@ -74,7 +85,14 @@ class BridgeProcess {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: bridgePath)
         p.currentDirectoryURL = URL(fileURLWithPath: NSTemporaryDirectory())
-        p.arguments = useNFS ? ["--nfs"] : []
+        var args: [String] = []
+        if useNFS {
+            args.append("--nfs")
+        }
+        if locationID != 0 {
+            args.append(String(format: "--device-loc-id=0x%08x", locationID))
+        }
+        p.arguments = args
 
         // Ensure libmtp can be found when launched from app bundle
         var env = ProcessInfo.processInfo.environment

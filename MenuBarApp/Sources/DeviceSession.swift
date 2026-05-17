@@ -151,7 +151,8 @@ final class DeviceSession {
                 let port = try await bp.start(
                     useNFS: useNFS,
                     seizeForVendor: device.vendorID,
-                    seizeForProduct: device.productID
+                    seizeForProduct: device.productID,
+                    locationID: device.locationID
                 )
 
                 let displayName = bp.deviceName ?? device.displayName
