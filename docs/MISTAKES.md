@@ -1206,6 +1206,40 @@ succeeds and the app gets bytes. The user-visible UX becomes
 "the app is permanently hung." Worse than instant, much
 better than hang-forever.
 
+**Verification 2026-05-17 — async prefetch shipped (commit
+`a405ed48`):** end-to-end test with the Xperia + VLC +
+Attenborough.mkv (9.09 GB):
+
+- 11:58:42.744 — VLC issues NFS READ; bridge returns JUKEBOX
+  and kicks off `cache.beginPrefetch START` in parallel
+  goroutines for both Attenborough.mkv and the smaller
+  How_a_Computer_Works.webm (134 MB).
+- 11:58:47.211 — webm prefetch completes in 4.5 s.
+- 12:04:24.817 — Attenborough prefetch completes in
+  **5 min 42 s** (= 27 MB/s, faster than the 21 MB/s estimate;
+  likely USB 3.x).
+- 12:04:24.832 — next VLC retry hits the cache, logs
+  `READ prefetched-cache-hit`, falls through to the normal
+  read path. **VLC starts playing.**
+- 12:04:24.83+ — hundreds of sequential `prefetched-cache-hit`
+  reads as VLC streams the file content.
+
+Outcome: **user waits ~6 minutes with VLC's loading UI**
+(instead of permanent hang on the pre-prefetch builds), then
+the file plays normally. Force Quit no longer required. The
+mount stays alive for other reads/writes throughout, *except*
+that other MTP operations queue behind the running prefetch
+(libmtp's single-session-goroutine serialization). The
+architect observed they "cannot browse other directories"
+during the prefetch window — this is the existing within-device
+concurrency limitation, not a regression introduced by the
+prefetch. It would apply equally to a foreground 9 GB
+phone→Mac copy.
+
+QuickLook icon-view alert also reduced: yesterday's tests
+showed multiple stacked alerts; with prefetch, only one alert
+fired and the file became previewable on cache populate.
+
 ## SMAppService / Helper
 
 > **Section status — helper itself slated for v0.4.0 retirement.**

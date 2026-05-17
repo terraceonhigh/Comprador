@@ -1,51 +1,57 @@
 # Comprador — TODO
 
-## NEXT SESSION — async prefetch on JUKEBOX
+## NEXT SESSION — pivot to multi-device
 
-**Status as of end-of-day 2026-05-16:** the two-fix combo
-(`.metadata_never_index` sentinel in `56c44372` + JUKEBOX-on-threshold
-in `1acdf7f7`) lands the dominant user-visible improvement: drags
-into the mount work cleanly with no 5-minute stall, Spotlight is
-silenced, and JUKEBOX correctly fires for files >50 MB. **One
-residual:** macOS Finder still surfaces "Server connections
-interrupted" alerts when the icon view in a directory containing
-large files exhausts JUKEBOX retries. The mount stays functional
-through the alert; drags continue to work; only the cosmetic
-"can't preview large files" UX degrades.
+**The NFS READ stall is solved.** Three commits across two
+sessions implemented the full fix:
 
-**Fix:** implement the **async prefetch** path drafted in
-[docs/PLAN-NFS-READ.md](docs/PLAN-NFS-READ.md). When we return
-JUKEBOX for a large file, kick off an asynchronous background
-download via `cache.open` so the client's retry within the
-backoff window (4 s → 8 s → 16 s …) finds a populated cache and
-gets real bytes. Should silence the alert because Finder
-eventually gets a real response. ~1 day of careful work — state
-machine in `cache.go`, eviction interaction, concurrent-read
-coordination — but small surface area.
+| Commit | What |
+|---|---|
+| `56c44372` | `.metadata_never_index` sentinel — Spotlight content indexing skipped at the volume root. |
+| `1acdf7f7` | `NFS3ERR_JUKEBOX` for READ on files > 50 MB — Finder / QuickLook degrade gracefully with retry-and-give-up. |
+| `a405ed48` | Async prefetch on JUKEBOX + leftover `[INFO] WRITE` line stripped — direct-read clients (VLC, `cat`, `md5sum`) get bytes after the libmtp download completes (~6 min for 9 GB) instead of hanging forever. |
 
-**Empirical answer (2026-05-17 morning):** double-click on
-Attenborough.mkv launches VLC, which hangs indefinitely on the
-`read()` syscall (no JUKEBOX-aware retry budget; macOS hard
-mount retries forever). **The bridge survives** — Force Quitting
-VLC recovers cleanly with the mount intact, no reboot required.
-Substantial improvement over pre-fix (which DID require reboot)
-but confirms that **JUKEBOX-only is fundamentally insufficient
-for any client that does straight `read()` syscalls** (media
-players, `cat`, `md5sum`, etc.). Async prefetch is therefore
-confirmed required, not optional, for the v0.4.0 launch story
-to cover the user-double-clicks-a-large-file path. See
-[MISTAKES entry 4](docs/MISTAKES.md) for the verification log.
+Verified end-to-end 2026-05-17 morning with the Xperia + VLC +
+Attenborough.mkv: VLC loaded the 9 GB file in 5 min 42 s,
+played normally afterward, and all of Finder remained usable
+once the prefetch completed. See
+[MISTAKES.md §NFS pivot entry 4](docs/MISTAKES.md) for the
+full verification log. The "within-device single-session
+serialization" limitation surfaces as a real UX constraint
+during long prefetches (other MTP ops queue behind the
+running download) but is not a regression from this fix —
+it's the same constraint that would apply to any foreground
+phone→Mac copy.
 
-**Cosmetic followup:** the `[INFO] WRITE how=...` log line in
-[bridge/vendor/.../nfs_onwrite.go](bridge/vendor/github.com/willscott/go-nfs/nfs_onwrite.go)
-is a leftover from `0d1418ac` that the revert in `9239dcd7`
-didn't catch. Functional behavior is correct (no SyncDurable,
-no fileSync stabilityReply); just the log line survived. Strip
-it for cleanliness.
+**Next architectural move per the architect's standing
+direction:** multi-device support, per
+[docs/PLAN-MULTI-DEVICE.md](docs/PLAN-MULTI-DEVICE.md). Steps
+1–3 already shipped on this branch (DeviceSession extracted,
+AppDelegate.sessions dictionary keyed by USB Location ID).
+Step 4 is the next concrete code work:
+
+**Step 4 — bridge `--device-loc-id` CLI flag.** Per
+[PLAN-MULTI-DEVICE.md §6](docs/PLAN-MULTI-DEVICE.md) option A.
+Add the flag in `bridge/main.go`; teach
+`bridge/mtp/binding.go`'s `DetectDevice` to filter libmtp's
+raw device list to a single matching Location ID rather than
+picking the first MTP device on the bus. Swift side:
+`BridgeProcess.start` already receives `seizeForVendor` /
+`seizeForProduct`; thread `locationID` through similarly and
+pass it to the bridge. ~30 lines total, but verification
+needs two phones plugged in simultaneously to confirm each
+bridge claims the right one. After this lands, step 5
+(per-device DeviceWatcher wiring) and step 6 (menu UX) become
+unblocked.
+
+The downloadCache and async prefetch are **per-MTPFileSystem
+instance**, so multi-device naturally scales — each bridge
+process gets its own cache, its own session goroutine, its
+own prefetch state. No cross-device interference.
 
 ---
 
-## Earlier NEXT SESSION block (preserved for context) — shipped 2026-05-16
+## Earlier NEXT SESSION blocks (preserved for context) — all shipped 2026-05-16 / 17
 
 **Pre-launch blocker for v0.4.0.** Root cause identified
 2026-05-16 afternoon via pcap analysis (see
