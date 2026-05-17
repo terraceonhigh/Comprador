@@ -236,14 +236,29 @@ class MountManager {
                 continue
             }
 
-            // NFS: "localhost:/ on .../Comprador/Volumes/foo (nfs, ...)"
-            // or "127.0.0.1:/ on /Volumes/foo (nfs, ...)" for legacy
-            // helper-driven mounts left over from older builds.
-            if s.contains("(nfs") &&
-               (s.hasPrefix("127.0.0.1:/") || s.hasPrefix("localhost:/")) {
+            // NFS: mounts we created. Recognized by source prefix —
+            // historically only 127.0.0.1:/ or localhost:/, but with
+            // multi-device support each bridge advertises a per-device
+            // .local hostname (e.g. "XQ-BT52.local:/", "Pixel-6.local:/")
+            // so the cleanup needs to match those too. Defensive
+            // narrowing: also require the mountpoint to live under our
+            // Comprador/Volumes directory, so we never force-unmount a
+            // user's unrelated localhost:/ NFS mount.
+            if s.contains("(nfs") {
+                let isOurSource = s.hasPrefix("127.0.0.1:/")
+                    || s.hasPrefix("localhost:/")
+                    || s.range(of: #"^[A-Za-z][A-Za-z0-9-]+\.local:/"#,
+                               options: .regularExpression) != nil
+                guard isOurSource else { continue }
                 guard let onRange = s.range(of: " on "),
                       let parenRange = s.range(of: " (nfs") else { continue }
                 let mp = String(s[onRange.upperBound..<parenRange.lowerBound])
+                let isOurPath = mp.contains("/Comprador/Volumes/")
+                    || mp.hasPrefix("/Volumes/")  // legacy helper path
+                guard isOurPath else {
+                    NSLog("Comprador: skipping NFS mount at %@ (source looks ours, path doesn't)", mp)
+                    continue
+                }
                 NSLog("Comprador: cleaning up stale NFS mount %@", mp)
                 forceUnmount(mp)
             }
