@@ -51,6 +51,31 @@ var ReadSyncThreshold int64 = 0
 // COMPRADOR-PATCH; not upstream.
 var ReadJukeboxSizeFn func(path string) (int64, bool) = nil
 
+// ReadJukeboxBeginFn, if non-nil, is called when onRead decides a file is
+// over ReadSyncThreshold. The implementation may kick off an asynchronous
+// prefetch so the next retry within macOS's NFS-client backoff window
+// (4 s → 8 s → 16 s → 30 s) finds populated cache.
+//
+// Returns true if the file is now ready for synchronous read — either the
+// prefetch completed since the last probe, or the bridge had cached the
+// file from prior activity. In that case onRead drops the JUKEBOX and
+// proceeds with the normal read path (which will hit the cache fast).
+//
+// Returns false if the file is still being prefetched (or prefetch just
+// started). onRead returns NFS3ERR_JUKEBOX in this case, signaling the
+// client to retry after a delay.
+//
+// Without this hook, onRead returns JUKEBOX for every probe indefinitely,
+// which is safe for clients with their own retry budgets (Finder /
+// QuickLook surface a dismissable alert) but causes hard hangs in clients
+// that issue direct read() syscalls (media players, cat, md5sum). With
+// this hook, those direct-read clients get bytes after the prefetch
+// completes — slow (multi-minute on a multi-GB file via USB-MTP) but
+// not infinite.
+//
+// COMPRADOR-PATCH; not upstream.
+var ReadJukeboxBeginFn func(path string) (ready bool) = nil
+
 func onRead(ctx context.Context, w *response, userHandle Handler) error {
 	w.errorFmt = opAttrErrorFormatter
 	var obj nfsReadArgs
@@ -63,14 +88,25 @@ func onRead(ctx context.Context, w *response, userHandle Handler) error {
 		return &NFSStatusError{NFSStatusStale, err}
 	}
 
-	// COMPRADOR-PATCH: short-circuit JUKEBOX for files above the
-	// configured threshold, before any backend Open/Stat that might
-	// trigger a multi-minute download. See ReadSyncThreshold doc.
+	// COMPRADOR-PATCH: for files above the configured threshold,
+	// return JUKEBOX immediately while kicking off an async prefetch
+	// via ReadJukeboxBeginFn. If a prior prefetch has already
+	// populated the cache (ready=true), fall through to the normal
+	// read path; otherwise return JUKEBOX so the client retries
+	// after its backoff. See ReadSyncThreshold / ReadJukeboxBeginFn
+	// docs above.
 	if ReadSyncThreshold > 0 && ReadJukeboxSizeFn != nil {
 		fullPath := fs.Join(path...)
 		if sz, ok := ReadJukeboxSizeFn(fullPath); ok && sz > ReadSyncThreshold {
-			Log.Infof("READ JUKEBOX: path=%q size=%d threshold=%d", fullPath, sz, ReadSyncThreshold)
-			return &NFSStatusError{NFSStatusJukebox, errors.New("media not ready: file larger than ReadSyncThreshold")}
+			ready := false
+			if ReadJukeboxBeginFn != nil {
+				ready = ReadJukeboxBeginFn(fullPath)
+			}
+			if !ready {
+				Log.Infof("READ JUKEBOX: path=%q size=%d threshold=%d", fullPath, sz, ReadSyncThreshold)
+				return &NFSStatusError{NFSStatusJukebox, errors.New("media not ready: file larger than ReadSyncThreshold")}
+			}
+			Log.Infof("READ prefetched-cache-hit: path=%q size=%d", fullPath, sz)
 		}
 	}
 

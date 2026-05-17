@@ -37,6 +37,10 @@ func newDownloadCache() *downloadCache {
 // open returns a cachedHandle for the given MTP object. If the file is not yet
 // cached it downloads it; if a download is already in progress it waits. Stale
 // cache entries (unused for cacheEntryTTL) are evicted lazily on each call.
+//
+// The download itself runs in a goroutine so beginPrefetch (the async sibling
+// of this method) can share the same machinery; this method just additionally
+// blocks on entry.ready before returning.
 func (c *downloadCache) open(name string, id uint32, session *mtp.Session) (*cachedHandle, error) {
 	c.mu.Lock()
 	c.evictStale()
@@ -46,7 +50,7 @@ func (c *downloadCache) open(name string, id uint32, session *mtp.Session) (*cac
 		entry = &cacheEntry{name: name, ready: make(chan struct{})}
 		c.entries[id] = entry
 		c.mu.Unlock()
-		c.download(entry, id, session)
+		go c.download(entry, id, session)
 	} else {
 		c.mu.Unlock()
 	}
@@ -59,6 +63,41 @@ func (c *downloadCache) open(name string, id uint32, session *mtp.Session) (*cac
 	entry.lastUse = time.Now()
 	c.mu.Unlock()
 	return &cachedHandle{name: name, entry: entry, cache: c}, nil
+}
+
+// beginPrefetch starts (or rejoins) an asynchronous download for the given
+// MTP object and reports whether the file is already ready for synchronous
+// read. Used by the vendored go-nfs onRead JUKEBOX path: when an NFS READ
+// arrives for a file above the size threshold, we want to return JUKEBOX
+// fast and start the libmtp download in the background, so the client's
+// retry (macOS's NFS client backs off at 4 s / 8 s / 16 s / 30 s) eventually
+// finds a populated cache and gets real bytes.
+//
+// Returns true if the entry is in the ready state (download has completed
+// successfully). Returns false in all other cases — entry doesn't exist
+// (new download just started), download still running, or download failed
+// (failed entries get evicted on next call so the next retry restarts).
+//
+// Never blocks. Safe to call concurrently from many goroutines for the
+// same id — the entry-creation race is serialized by c.mu.
+func (c *downloadCache) beginPrefetch(name string, id uint32, session *mtp.Session) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.evictStale()
+	entry, exists := c.entries[id]
+	if !exists {
+		entry = &cacheEntry{name: name, ready: make(chan struct{})}
+		c.entries[id] = entry
+		log.Printf("cache.beginPrefetch START: name=%q id=%d", name, id)
+		go c.download(entry, id, session)
+		return false
+	}
+	select {
+	case <-entry.ready:
+		return entry.err == nil
+	default:
+		return false
+	}
 }
 
 // download runs the MTP transfer that populates entry. Must be called without

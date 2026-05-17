@@ -54,5 +54,33 @@ func Serve(listener net.Listener, session *mtp.Session) error {
 		return 0, false
 	}
 
+	// Async prefetch hook: when onRead is about to JUKEBOX a large
+	// file, kick off the libmtp download in the background. If a
+	// prior prefetch has already populated the cache, report
+	// ready=true and onRead drops the JUKEBOX and reads from cache.
+	// Without this, JUKEBOX-only causes apps that do straight
+	// read() syscalls (media players, cat, md5sum) to hang
+	// indefinitely; with it, the same apps wait the libmtp
+	// download duration (~7 min for a 9 GB file at USB-MTP rate)
+	// and then receive bytes. See MISTAKES.md entry §NFS pivot 4.
+	gonfs.ReadJukeboxBeginFn = func(p string) bool {
+		cp := cleanPath(p)
+		// Sentinels and staged writes are always "ready" — they
+		// shouldn't even reach this hook (ReadJukeboxSizeFn reports
+		// their size as 0 and below threshold), but defensive.
+		if _, ok := sentinelInfo(cp); ok {
+			return true
+		}
+		if sf := fs.writes.get(cp); sf != nil {
+			_ = sf
+			return true
+		}
+		meta, ok := session.Objects.GetByPath(cp)
+		if !ok || meta.IsDir {
+			return false
+		}
+		return fs.cache.beginPrefetch(meta.Name, meta.ID, session)
+	}
+
 	return gonfs.Serve(listener, cacheHelper)
 }
