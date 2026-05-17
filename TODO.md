@@ -103,6 +103,7 @@ all of them before assuming "is there nothing else?"
 | [TODO.md](TODO.md) (this file) | Open items not tied to a specific release or plan. The default place for new work. |
 | [docs/V0.3.3.md](docs/V0.3.3.md) | Per-release polish list. Item-numbered, ✓ marks shipped. When v0.3.3 cuts, create `docs/V0.4.0.md` for the next cycle. |
 | [docs/PLAN-MULTI-STORAGE.md](docs/PLAN-MULTI-STORAGE.md) | Multi-storage feature plan. The §Sequence section is its TODO. |
+| [docs/PLAN-NFS-READ.md](docs/PLAN-NFS-READ.md) | JUKEBOX-on-threshold + async prefetch plan. Second-phase fix for the NFSv3 READ stall identified 2026-05-16; ships after the Spotlight-block fix. |
 | [docs/PLAN-MULTI-DEVICE.md](docs/PLAN-MULTI-DEVICE.md) | Multi-device feature plan. Same shape — §Sequence enumerates remaining steps. |
 | [docs/MISTAKES.md](docs/MISTAKES.md) | Numbered failure receipts. Entries marked "investigation pending" are implicit TODOs. |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Dated decision journal. Each entry's "Verification plan" line is a forward-looking item. |
