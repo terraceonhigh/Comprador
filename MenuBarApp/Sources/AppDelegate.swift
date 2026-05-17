@@ -120,9 +120,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
 #if DEBUG
         menu.addItem(NSMenuItem.separator())
+        // Build identifier, clickable — copies BuildInfo.id to the
+        // clipboard so the architect can paste it into a bug report or
+        // a journal note without retyping. Brief "Copied!" flash on
+        // click as confirmation; reverts after ~1 s.
         let buildItem = NSMenuItem(title: "Build: \(BuildInfo.id)",
-                                   action: nil, keyEquivalent: "")
-        buildItem.isEnabled = false
+                                   action: #selector(copyBuildID(_:)),
+                                   keyEquivalent: "")
+        buildItem.target = self
+        buildItem.toolTip = "Click to copy the build identifier to the clipboard"
         menu.addItem(buildItem)
 #endif
 
@@ -131,6 +137,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func installHelper() {
         installHelperFlow()
+    }
+
+    /// Copies the bridge/app build identifier to the system clipboard,
+    /// then briefly flashes the menu item title to "Copied!" as
+    /// confirmation. Reverts after ~1 second.
+    @objc private func copyBuildID(_ sender: NSMenuItem) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(BuildInfo.id, forType: .string)
+
+        let originalTitle = sender.title
+        sender.title = "Copied! (\(BuildInfo.id))"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            sender.title = originalTitle
+        }
     }
 
     @objc private func toggleLoginItem() {
