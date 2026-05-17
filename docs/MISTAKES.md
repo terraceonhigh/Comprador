@@ -981,85 +981,132 @@ Two empirical receipts, both with the Xperia XQ-BT52:
   This finding moots the planned `git bisect` and pivots the
   investigation toward the substrate boundary.
 
-**Originally mis-attributed to commit `0d1418ac`** (the
-fileSync-hold). Reverting `0d1418ac` in commit `9239dcd7`
-did **not** eliminate the symptom (session 2 was on the
-reverted code and reproduced the stall identically). The
-attribution failed because today's first observation of the
-stall preceded the fileSync-hold test and the two findings
-got conflated in my analysis.
+**The diagnosis arc and its mis-attributions (preserved as
+methodological receipt):**
 
-**What this is not:**
+1. *First framing:* "0d1418ac fileSync-hold caused this."
+   Reverted in `9239dcd7`. Stall reproduced on the reverted
+   code. Wrong.
+2. *Second framing:* "Pre-branch, possibly substrate issue —
+   macOS NFS client interaction with our localhost server."
+   Reinforced when session 4 (v0.3.1 release merge `00235ca`)
+   stalled identically. Pointed toward kernel-side tuning and
+   FUSE-T as substrate replacement.
+3. *Third framing (correct, 2026-05-16 afternoon):* **The
+   bridge silently drops every NFSv3 READ RPC.** The "stall"
+   is not silence on the wire — it's the bridge ACK-ing TCP
+   delivery while never sending RPC replies. macOS times the
+   READs out and surfaces "Server connections interrupted"
+   to the user.
 
-- *Not* `0d1418ac`. The reverted code reproduces it.
-- *Not* a bridge-side hang. The bridge log is silent because
-  no requests reach it; the bridge handler goroutines have
-  nothing to do. The bridge stays responsive to FSStat from
-  go-nfs's keep-alive once the kernel resumes sending.
-- *Not* an MTP-side delay. We never reach the MTP layer
-  during the stall.
+**Root cause (verified by pcap analysis 2026-05-16):**
 
-**Plausible hypotheses (none verified):**
+Captured `build/stall.pcap` during the post-reboot stall
+(session 5, build `236e7e71-dirty`, drag at +25.98 s).
+Parsed RPC layer with `build/pcap_rpc.py`:
 
-1. macOS NFS client cold-start retransmit/backoff against a
-   server it hasn't talked to recently. The kernel may be
-   probing TCP keepalive / RTT before sending real requests
-   and the probe itself takes minutes to time out and retry.
-2. mDNS / `.local` resolution issue. The mount source is
-   `XQ-BT52.local:/`; the first WRITE may require a fresh DNS
-   resolution and the resolver path is slow. (The mount itself
-   resolves at mount time, so this would have to be a
-   per-RPC re-resolution.)
-3. A bridge-side change on the branch that produces a malformed
-   response on the very first non-trivial RPC, causing the
-   kernel to retry-and-backoff. Suspect commits, in order of
-   plausibility: `54225165` (TTL-refresh directory listings,
-   which changes the reconcile path), `1c402e86` (AppleDouble
-   filter, which changes Create's return type for `._*`),
-   `5bfd2462` (multi-storage FSStat, which changes the FSStat
-   response shape).
-4. Some macOS NFSv3 client peculiarity around the very first
-   GUARDED/EXCLUSIVE CREATE probe — the kernel may issue an
-   exclusive-CREATE that hangs against our server before falling
-   back. The recovery burst we see always starts with the
-   exclusive-CREATE probes, suggesting that's where Finder
-   *starts* on the retry path; the first attempt may go
-   somewhere we never see.
+```
+total RPC calls:   261
+total RPC replies: 220
+unanswered calls:  44     ← every one is NFSv3 READ
+```
 
-**Whether v0.3.x ships this bug is unknown** and is the
-load-bearing question for the next-session investigation. If
-yes, every first-drag after starting Comprador shows a scary
-alert before silently recovering — a pre-launch blocker that
-no amount of FUSE-T deliberation will fix in the meantime. If
-no, the regression-bisect against `5bfd2462`, `1c402e86`,
-`54225165` is the path to root cause.
+Other operations (ACCESS, GETATTR, FSSTAT, LOOKUP,
+READDIRPLUS, CREATE, SETATTR, REMOVE, COMMIT, WRITE, NULL)
+all answered correctly throughout. **READ is the only RPC
+type silently dropped.**
 
-**Suggested investigation order (next session):**
+The unanswered READs target 5 distinct file handles — exactly
+one per file in the destination directory `Download/`
+(DESIGN.md, Attenborough.mkv, How_a_Computer_Works.webm,
+nora_and_daniel-v1.1.md, phone-marker.txt). Reads arrive in
+32 KB-aligned sequential chunks (offsets 0, 32768, 65536, …,
+491520+ on two of the files). This pattern is **macOS
+Spotlight indexing** triggered when Finder enters the
+directory — Spotlight extracts thumbnails/previews/indexable
+text from each file by reading the first ~512 KB.
 
-1. Build a binary at the v0.3.3 release tag (or whichever
-   notarized release the architect last shipped). Mount it,
-   browse briefly, drag a small file, time the wall-clock
-   delay to commit. If v0.3.x also stalls, the bug is
-   pre-branch and the fix is on the kernel-NFS-interaction
-   side. If v0.3.x is clean, bisect the branch.
-2. If bisecting: `git bisect` between `master` and current
-   HEAD, with the test being "mount + first drag, does it
-   stall >60 s." The substantive code commits are few
-   (a3dd67f7, 5bfd2462, 1c402e86, 54225165, 230f5806);
-   should be ≤3 bisect steps.
-3. Capture a packet trace of the loopback NFS traffic during
-   the stall (`tcpdump -i lo0 -w stall.pcap port <bridge-port>`).
-   If macOS is sending traffic but we're not responding,
-   that's our bug. If macOS is sending nothing, it's a
-   kernel-client issue and we need to look at the keep-alive
-   / retransmit settings.
+**Why the bridge silently drops every READ:**
+[`bridge/nfs/cache.go:39 → 65`](../bridge/nfs/cache.go).
+`MTPFileSystem.OpenFile` → `cache.open(name, id, session)`
+→ `download(entry, id, session)` →
+`session.Do(MTPRequest{Op: OpGetFile, ObjectID: id, Writer: tmp})`.
+The `session.Do` call **blocks until the entire MTP file has
+been downloaded** into the staging temp. MTP has no
+random-access read — `LIBMTP_Get_File_To_Handler` pulls the
+whole file every time. While the download runs, the NFS
+goroutine handling that READ RPC is asleep. macOS's NFS
+client RPC timeout (~20–30 s) fires long before the download
+completes for any non-trivial file. By the time the bridge
+unblocks and tries to write the response, the kernel has
+already timed the RPC out.
 
-**Bridge log preserved:** `build/dev-nfs-2026-05-16.log`
-captures both sessions, including the two empirical
-silence-then-recovery windows. The interesting timestamps
-are 01:40:07 → 01:45:20 and 02:15:38 → 02:21:16.
+The bridge does not even log the download attempt:
+`Device.GetFileToWriter` in `bridge/mtp/operations.go:325`
+only logs on error, not on entry — which is why every prior
+session's "bridge log silent during stall" observation was
+misread as "no work happening." Work was happening; we
+weren't watching at the right layer.
 
-**Status:** open. Block on next-session bisect.
+**Why the recovery happens at ~5 minutes:**
+Spotlight's retry budget. After ~5 minutes of unanswered
+READs on a file, macOS abandons the preview attempt and
+moves on. Once Spotlight is no longer holding RPCs in
+flight, Finder is freed to complete the unrelated drag's
+CREATE+WRITE+commit (the write path does not go through
+`cache.open`, so it is unaffected by the read backlog).
+
+**Why this was never caught:**
+
+1. Developer-side verification used `adb shell md5sum` against
+   the phone directly, **bypassing the bridge entirely** (see
+   `test-md5.sh`, the architect's letter 12). This confirms
+   write durability but never exercises the bridge's READ
+   handler.
+2. End-to-end testing focused on Mac→phone (writes); a
+   phone→Mac drag through Finder was never explicitly run.
+3. Finder browse (READDIR/LOOKUP/GETATTR) doesn't trigger
+   READ — only opening a file or Spotlight indexing does.
+4. The Spotlight indexing is invisible to the user; they have
+   no awareness that their drag-into is being held up by an
+   unrelated background read.
+
+v0.2.x and v0.3.x both ship this bug. Every user who put any
+file on their phone (via Comprador or otherwise) and then
+opened that directory in Finder has hit this. The user-visible
+symptom is the "Server connections interrupted" alert; the
+hidden harm is that **phone→Mac reads have never actually
+worked through Comprador**.
+
+**Fix space:**
+
+| Approach | Fixes? | Cost | Notes |
+|---|---|---|---|
+| Block Spotlight via `.metadata_never_index` at mount root | Kills the Spotlight-induced symptom | Tiny | Doesn't fix actual read-from-phone; Finder open-file would still hang on large files |
+| Return `NFS3ERR_JUKEBOX` on READ for files > threshold | Both: Spotlight gives up gracefully, Finder shows "still preparing" | Moderate | NFS-spec-blessed semantics for "media not ready"; need to confirm Finder honors it |
+| Pre-cache files at directory enter | Defers, doesn't fix | High | Impractical for large devices |
+| FUSE-T migration | Sidesteps NFS-client-timeout class entirely | Week+ | Substrate replacement; deliberation still queued |
+
+Approaches 1 and 2 are the v0.4.0-shippable candidates.
+Likely shipping order: **1 first** (eliminates the
+user-visible symptom on every fresh-mount-then-Finder-browse
+scenario, which is what every user will do), **2 next**
+(makes the rare case of opening a large file from the
+phone fail-gracefully rather than hang).
+
+**Bridge log + pcap artifacts:**
+- `build/dev-nfs-2026-05-16.log` — sessions 1, 2.
+- `build/dev-nfs-2026-05-16-post-reboot.log` — session 3.
+- `build/dev-nfs-stall-probe.log` — session 5 (pcap capture).
+- `build/stall.pcap` — full lo0 packet capture during the
+  stall window of session 5.
+- `build/pcap_analyze.py`, `build/pcap_dissect.py`,
+  `build/pcap_rpc.py`, `build/pcap_read_args.py` — pure-stdlib
+  Python analyzers used to extract the root cause. Reusable
+  for future NFS-layer investigations.
+
+**Status:** root cause identified. Fix selection in
+progress (see TODO.md §NEXT SESSION).
 
 ## SMAppService / Helper
 

@@ -1,93 +1,92 @@
 # Comprador — TODO
 
-## NEXT SESSION — diagnose the first-drag-after-mount stall
+## NEXT SESSION — ship the Spotlight-induced-READ-stall fix
 
-**Unacceptable regression. Pre-launch blocker for v0.4.0.**
+**Pre-launch blocker for v0.4.0.** Root cause identified
+2026-05-16 afternoon via pcap analysis (see
+[MISTAKES.md §NFS pivot entry 4](docs/MISTAKES.md)).
+**TL;DR:** the bridge silently drops every NFSv3 READ RPC
+because `cache.open()` synchronously downloads the entire
+MTP file before responding. When Finder enters a directory,
+macOS Spotlight issues parallel READs against every file in
+it for thumbnail/preview indexing; the bridge's first
+multi-GB download holds the read path for minutes; macOS
+times the RPCs out and surfaces "Server connections
+interrupted" to the user. Ships in every v0.2.x and v0.3.x
+release.
 
-Three independent receipts on 2026-05-16 (one pre-revert, two
-post-revert including one after a clean macOS reboot) show that
-the *first* Mac→phone drag-drop attempt after a fresh `mount -t nfs`
-silently stalls for **5 min 12–38 s** of complete kernel-side silence
-before recovering. Finder surfaces "Server connections interrupted:
-comprador" within ~20 s of the drag; the bridge log shows zero
-traffic during the entire stall window; the file does eventually
-land after the kernel-side recovery. The actual MTP transfer for
-a small file is ~250 ms — the full 5+ minute wait is pure stall.
+**Earlier mis-attributions (preserved as receipts):**
+- Mis-attributed to commit `0d1418ac` (fileSync-hold).
+  Reverting in `9239dcd7` did not help. Revert still correct
+  for separate reasons (MISTAKES entry 3).
+- Mis-attributed to "substrate issue" after `00235ca`
+  reproduced. Wrong framing — the bug is application-layer.
 
-**Mis-attributed in earlier diagnosis to `0d1418ac` (the
-fileSync-hold). Reverting that commit in `9239dcd7` did not
-eliminate the symptom. The fileSync-hold revert remains correct
-for separate reasons** (see MISTAKES entry 3), but the stall is
-a separate bug.
+**Fix shipping order (recommended):**
 
-Receipts and hypotheses live in
-[MISTAKES.md §NFS pivot entry 4](docs/MISTAKES.md). Bridge logs
-preserved at `build/dev-nfs-2026-05-16.log` and
-`build/dev-nfs-2026-05-16-post-reboot.log`.
+1. **Block Spotlight indexing at the mount root.** The
+   first-and-only thing a fresh-mounted user does is open
+   the phone in Finder. That triggers Spotlight indexing on
+   every file in the directory, which triggers the stall.
+   Drop a `.metadata_never_index` file at the NFS root (or
+   serve it virtually) so macOS skips the mount entirely.
+   This alone eliminates the user-visible "interrupted"
+   alert on the dominant scenario. Cost: a few lines in
+   `bridge/nfs/fs.go` or `cache.go`.
 
-**First subtask — confirmed done late on 2026-05-16.** Architect
-tested commit `00235ca` (v0.3.1 release merge) and reported the
-stall reproduces identically there. **The bug ships in every
-v0.2.x / v0.3.x release we've cut.** Branch bisect is mooted —
-`00235ca` predates all the substantive `claude/multi-storage`
-code changes (`5bfd2462`, `1c402e86`, `54225165`, `a3dd67f7`),
-so none of them introduced the stall.
+2. **Return `NFS3ERR_JUKEBOX` on READ for files above some
+   threshold** (configurable; default e.g. 50 MB). NFSv3's
+   "media not ready, retry later" status — RFC 1813 §2.6.
+   Finder honors it as a polite "still preparing" indicator
+   rather than a connection failure. This makes the rare
+   case of opening a large file from the phone fail
+   *gracefully* rather than hang. Cost: handler-level
+   threshold check in `bridge/nfs/fs.go`'s `OpenFile`, plus
+   the JUKEBOX status code in our error mapping.
+   Open question: confirm Finder doesn't escalate JUKEBOX
+   to a user-visible warning after N retries — needs a
+   probe test before shipping.
 
-The architect's framing: *"substrate issue."* The bug lives in
-the macOS NFS client ↔ localhost NFSv3 server ↔ mDNS resolution
-layer interaction, not in our application code.
+3. **(Out of immediate v0.4.0 scope.)** True progressive
+   read — would need either libmtp partial-read support
+   (doesn't exist in libmtp) or asynchronous download +
+   chunked response over a long-lived RPC sequence.
+   Possible follow-up project.
 
-**Next-session investigation pivots to the substrate boundary.**
-Candidate diagnostic tools, in order of information density per
-unit of effort:
+**FUSE-T deliberation context.** FUSE-T would also resolve
+this class entirely (the FUSE write/read callback model has
+no equivalent kernel-side RPC timeout). But approaches 1
+and 2 above are days of work each and ship-blocking
+fix-grade; FUSE-T is a week+ substrate replacement.
+Recommended sequencing: **land 1 + 2 for v0.4.0**, then
+deliberate FUSE-T post-launch as a clean architectural
+improvement rather than an emergency.
 
-1. **Packet trace the stall window.** `sudo tcpdump -i lo0 -w
-   build/stall.pcap port <P>` running concurrently with a fresh
-   mount + drag. Capture the full ~5 minute silence. Then
-   analyze in Wireshark with the NFS dissector. Outcomes:
-   - macOS sending nothing on the wire → kernel-side issue
-     (TCP keepalive, RTT-sample warm-up, RPC retransmit
-     backoff). Investigation moves to mount option tuning
-     (`timeo=`, `retrans=`, `actimeo=`, `nordirplus`) and
-     possibly mDNS/.local resolver interaction.
-   - macOS sending requests we silently fail to respond to →
-     bridge bug or go-nfs handler gap. Read the pcap and find
-     the unanswered RPC.
-   - macOS sending requests we error on → check our error
-     status codes against what Finder tolerates.
+**Verification protocol** for the eventual fix:
+1. Drop a small file plus a large file (>500 MB) into the
+   phone's `Download/` via `adb push`, to seed indexable
+   content.
+2. Mount fresh. Open `/tmp/comprador/<storage>/Download/`
+   in Finder. **Expected:** no "Server connections
+   interrupted" alert appears within 60 s.
+3. Drag a small file *into* the directory. **Expected:**
+   Finder progress dialog appears immediately, dismisses
+   on commit, no alert.
+4. Spot-check a phone→Mac pull of a small file (<10 MB).
+   **Expected:** completes within seconds via Finder copy.
+5. Spot-check a phone→Mac pull of a large file (>500 MB).
+   **Expected with approach 2 active:** Finder shows a
+   "preparing" or retry-style indication, eventually
+   succeeds.
 
-2. **Test with a non-`.local` hostname.** Bypass mDNS by
-   binding directly to `127.0.0.1` (mount source
-   `127.0.0.1:/`). If the stall vanishes, mDNS resolution is
-   on the path; the fix is hostname handling. If the stall
-   persists, mDNS is innocent.
-
-3. **Test with NFSv4 instead of NFSv3** (if the patched
-   go-nfs supports it — likely not; would require an
-   alternate vendoring). NFSv4 has different cold-start
-   semantics; informative even if we don't ship it.
-
-4. **Compare with known-working localhost NFS server**
-   (e.g. macOS's built-in `nfsd` serving a directory).
-   Same mount + drag sequence. If macOS's own server doesn't
-   stall, our go-nfs server is doing something macOS's NFS
-   client doesn't like on the first contact.
-
-**FUSE-T re-enters the deliberation as a substrate replacement,
-not a UX-only swap.** The fileSync-hold-falsification framing
-treated FUSE-T as an *improvement* over a working substrate.
-The 00235ca confirmation tells us the NFS substrate is **broken
-for the first drag of every Comprador install**. FUSE-T sidesteps
-the entire macOS-NFS-client-timeout class, which is the most
-likely root cause of the stall. The deliberation now needs to
-weigh: *can we fix the NFS substrate cheaply (mount options,
-mDNS bypass, RPC retransmit tuning), or do we replace it?*
-Run the tcpdump first — the pcap will tell us which question
-to answer.
-
-**Bridge log artifacts from 2026-05-16:**
-- `build/dev-nfs-2026-05-16.log` — sessions 1 (pre-revert) and 2 (post-revert).
-- `build/dev-nfs-2026-05-16-post-reboot.log` — session 3 (post-revert, post-reboot).
+**Investigation artifacts (preserved):**
+- `build/stall.pcap` — full lo0 NFS traffic during session 5.
+- `build/pcap_analyze.py`, `build/pcap_dissect.py`,
+  `build/pcap_rpc.py`, `build/pcap_read_args.py` — pure-stdlib
+  Python analyzers, reusable for future NFS-layer probes.
+- `build/dev-nfs-2026-05-16.log` (sessions 1+2),
+  `build/dev-nfs-2026-05-16-post-reboot.log` (session 3),
+  `build/dev-nfs-stall-probe.log` (session 5).
 - Session 4 (v0.3.1) — log path TBD; architect ran the test, no
   preserved artifact path recorded yet.
 
