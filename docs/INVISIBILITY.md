@@ -153,23 +153,123 @@ These are below the floor. Within the floor, the levers above
 get us substantially closer. The FUSE-T deliberation is the
 inflection point — everything else is days-or-hours of polish.
 
-## FUSE-T license deliberation
+## FUSE-T license deliberation — conclusion: defer indefinitely
 
-*Below this point is the deferred FUSE-T license thinking, to
-be filled in when the architect and I work through the
-non-commercial/commercial line and the closed-source
-maintenance-risk question. The license text is reproduced in
-the conversation transcript; key facts to decide against:*
+### The license as written
 
-- *FUSE-T binary is closed-source (only `.pkg` is published on
-  GitHub).*
-- *Free for non-commercial use with attribution conditions.*
-- *Commercial use OR bundling with commercial software
-  requires a commercial license.*
-- *Comprador's status under this license: ambiguous. We're
-  free, donation-supported, and would either bundle FUSE-T's
-  `.pkg` in our installer or require users to install it
-  separately. The first invokes the "bundling" clause; the
-  second shifts the license-accept burden to the user.*
+Three tiers, retrieved from FUSE-T's GitHub 2026-05-17:
 
-To be drafted in a follow-up commit.
+1. **Free for non-commercial use**, with standard BSD-style
+   notice / disclaimer / no-endorsement attribution conditions.
+2. **Commercial use *or* bundling with commercial software**
+   requires a separately-negotiated commercial license from
+   the FUSE-T authors.
+3. The **LIBFUSE library** included in FUSE-T's distribution is
+   LGPL (forked from osxfuse). Different propagation rules
+   than the FUSE-T binary itself.
+
+### Comprador's status under the license
+
+Strictly read, Comprador is free, donation-supported, and
+open-source. We don't sell, we don't charge, donations are
+gifts not exchanges. We are not "commercial use" by the
+standard FOSS-license interpretation.
+
+Two ways we could integrate FUSE-T:
+
+- **Bundle FUSE-T's `.pkg` inside our `.dmg` installer.** Could
+  plausibly invoke the "bundling with commercial software"
+  clause depending on whether the FUSE-T authors interpret
+  Comprador as "commercial software." Most likely safe;
+  ambiguous enough to leave us exposed to a future
+  commercial-license demand.
+- **Require users to install FUSE-T separately.** Shifts the
+  license-acceptance burden to the user. Unambiguously
+  legal. Substantial UX cost: first-install friction goes
+  from "drag .dmg to Applications" to "drag .dmg, install
+  Comprador, install FUSE-T, approve FUSE-T's System
+  Extension, restart, then Comprador works."
+
+### Why license isn't the load-bearing question
+
+The license problem could be solved (bundle-and-hope or
+require-separate-install). The closed-source problem cannot.
+
+FUSE-T sits between the macOS kernel's mount machinery and
+our bridge process — exactly the security boundary CLAUDE.md
+§Security Invariants is conservative about. Three concrete
+risks compound:
+
+1. **No audit.** We can't read FUSE-T's source. We can't
+   reason about its security posture from primary materials.
+   Comprador would be telling its users "trust us, who trust
+   FUSE-T, who we can't verify." That's the exact position
+   the security invariants exist to avoid.
+
+2. **No fork on abandonment.** If the FUSE-T authors drop the
+   project, get acquired, or change terms, we have no
+   recourse. The `.pkg` becomes a fossil. Comprador's mount
+   path becomes load-bearing on a dead binary.
+
+3. **No bug-fixing.** If FUSE-T mishandles a corner of the
+   FUSE protocol or leaks memory under sustained reads, we
+   file an issue and wait. Compare to libmtp: open-source
+   under LGPL, we've already patched it in our vendor tree
+   (the `0d1418ac` revert, the `[INFO] WRITE` line strip).
+   We'd give up that affordance.
+
+### What FUSE-T would actually deliver, re-weighed
+
+The earlier framing of FUSE-T as "the architectural lever"
+was too generous. Going through gap-by-gap (see the table in
+the §What FUSE-T migration WOULD/WOULD NOT close above):
+
+**Closed by FUSE-T:**
+- NFS-RPC-timeout class for slow reads.
+- `cache.go` async-prefetch state machine.
+- Local-NFS-listener attack surface.
+
+**NOT closed by FUSE-T:**
+- IOKit `USBDeviceOpenSeize` race ([MISTAKES 19b](MISTAKES.md)).
+- `ptpcamerad` collateral damage.
+- Multi-device libmtp coordination.
+- Phone-side mode selection.
+
+The kept-open list contains the user-visible UX problems we
+spent today's three-step arc resolving. **FUSE-T does not
+address them.** The closed list contains problems we already
+solved at the application layer:
+
+- NFS-timeout class: solved by `.metadata_never_index`
+  sentinel (`56c44372`) + `NFS3ERR_JUKEBOX` threshold
+  (`1acdf7f7`) + async prefetch (`a405ed48`).
+- Async-prefetch complexity: built, working, well-understood.
+- Local-NFS-listener attack surface: real but small (loopback
+  only, no remote exposure).
+
+**We built around the FUSE-T-shaped hole, and the workarounds
+turned out to be smaller than the migration would be.**
+
+### Decision
+
+**Defer FUSE-T migration indefinitely.** Revisit if any of
+the following triggers fire:
+
+- **User feedback names the residual:** sustained reports of
+  read-latency problems that the async prefetch doesn't
+  cover. (We haven't shipped to enough users to know.)
+- **Apple deprecates the NFS client path** in a future macOS.
+  Possible but unlikely on the v0.4.0 timescale.
+- **FUSE-T becomes open-source under a permissive license**, or
+  an open-source FUSE-on-macOS alternative reaches working
+  state. (No current credible candidate.)
+- **Comprador's user base reaches a scale where the
+  application-layer fixes show stress** in ways the FUSE-T
+  substrate wouldn't. Currently no evidence; speculative.
+
+### Open question (out-of-band research)
+
+How hard would an in-house FUSE-T-equivalent be? This is
+worth knowing for completeness, because if it's months not
+years, the long-term audit/maintainability argument flips.
+Tracked as research-only; not blocking the deferral decision.
