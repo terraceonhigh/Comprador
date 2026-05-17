@@ -23,14 +23,18 @@ eventually gets a real response. ~1 day of careful work — state
 machine in `cache.go`, eviction interaction, concurrent-read
 coordination — but small surface area.
 
-**Open empirical question that should be answered first:**
-double-click on a large phone-resident file in Finder (e.g.
-opening Attenborough.mkv to preview). Pre-fix, this was
-catastrophic (required reboot). Theoretically JUKEBOX should
-help (no synchronous download triggered) but UNVERIFIED. The
-2026-05-16 evening final-test ended before re-testing this
-scenario. Test it carefully in the next session, before
-investing in the async prefetch.
+**Empirical answer (2026-05-17 morning):** double-click on
+Attenborough.mkv launches VLC, which hangs indefinitely on the
+`read()` syscall (no JUKEBOX-aware retry budget; macOS hard
+mount retries forever). **The bridge survives** — Force Quitting
+VLC recovers cleanly with the mount intact, no reboot required.
+Substantial improvement over pre-fix (which DID require reboot)
+but confirms that **JUKEBOX-only is fundamentally insufficient
+for any client that does straight `read()` syscalls** (media
+players, `cat`, `md5sum`, etc.). Async prefetch is therefore
+confirmed required, not optional, for the v0.4.0 launch story
+to cover the user-double-clicks-a-large-file path. See
+[MISTAKES entry 4](docs/MISTAKES.md) for the verification log.
 
 **Cosmetic followup:** the `[INFO] WRITE how=...` log line in
 [bridge/vendor/.../nfs_onwrite.go](bridge/vendor/github.com/willscott/go-nfs/nfs_onwrite.go)

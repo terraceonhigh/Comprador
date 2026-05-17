@@ -1170,6 +1170,42 @@ required a reboot. Speculatively safer with JUKEBOX active
 since the synchronous download path is bypassed, but
 empirically unverified.
 
+**Update 2026-05-17 morning — double-click-Attenborough verified
+with JUKEBOX:** the architect double-clicked the 9 GB
+Attenborough.mkv via Finder, which launched VLC. VLC issued
+NFSv3 READ; bridge returned JUKEBOX; macOS NFS client retried
+with exponential backoff (4 s → 8 s → 16 s → 30 s → 30 s …).
+The bridge stayed healthy throughout (0.27 CPU-seconds total
+over 4 minutes, all idle). **VLC, however, hung indefinitely**
+on the `read()` syscall — it has no JUKEBOX-aware retry budget
+and the macOS NFS hard mount retries forever. **Force Quitting
+VLC recovered cleanly without rebooting the system. The mount
+survived; Finder still worked; drags into other directories
+were still possible.**
+
+This is a substantial improvement over pre-fix behaviour (which
+required a full system reboot to recover from the synchronous
+9 GB download) but confirms a **fundamental limitation of
+JUKEBOX-only**: it works for clients with their own
+timeout-and-give-up logic (Finder / QuickLook surface a
+dismissable alert) but does not work for clients that do
+straight `read()` syscalls (any media player, `cat`,
+`md5sum`, …). Those apps hang at the syscall layer because
+the kernel keeps retrying forever and the bridge keeps
+returning JUKEBOX forever.
+
+**Async prefetch on JUKEBOX is now confirmed required**, not
+optional. The cleanest design (per
+[PLAN-NFS-READ.md](PLAN-NFS-READ.md)): when we return JUKEBOX
+for a large file, kick off the libmtp download asynchronously.
+The first few retries continue returning JUKEBOX while the
+download runs. Once the cache is populated, the next retry
+succeeds and the app gets bytes. The user-visible UX becomes
+"the app is loading" for the duration of the libmtp download
+(~7 min for Attenborough at USB-MTP rate) instead of
+"the app is permanently hung." Worse than instant, much
+better than hang-forever.
+
 ## SMAppService / Helper
 
 > **Section status — helper itself slated for v0.4.0 retirement.**
