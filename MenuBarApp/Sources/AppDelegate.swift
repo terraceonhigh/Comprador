@@ -53,45 +53,76 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func rebuildMenu() {
         let menu = NSMenu()
 
-        if let session = currentSession {
-            let deviceItem = NSMenuItem(title: session.displayName, action: nil, keyEquivalent: "")
-            deviceItem.isEnabled = false
-            menu.addItem(deviceItem)
+        // Sort by locationID for stable ordering: the same two physical
+        // ports will produce the same menu order every relaunch, so the
+        // user doesn't see phones jump around the menu between sessions.
+        let sortedSessions = sessions.values.sorted {
+            $0.device.locationID < $1.device.locationID
+        }
 
-            if session.isMounted {
-                menu.addItem(NSMenuItem(title: "Show in Finder",
-                                        action: #selector(showInFinder),
-                                        keyEquivalent: "f"))
-                menu.addItem(NSMenuItem(title: "Eject \(session.displayName)",
-                                        action: #selector(ejectDevice),
-                                        keyEquivalent: "e"))
-#if DEBUG
-                menu.addItem(NSMenuItem.separator())
-                menu.addItem(NSMenuItem(title: "⚡ Synthetic Flutter",
-                                        action: #selector(syntheticFlutter),
-                                        keyEquivalent: ""))
-#endif
-            } else if session.isConnecting {
-                let statusLine = NSMenuItem(title: session.connectingStatusTitle(),
-                                            action: nil, keyEquivalent: "")
-                statusLine.isEnabled = false
-                menu.addItem(statusLine)
-                session.connectingStatusItem = statusLine
-
-                // Hint only shown on the WebDAV path where the ~90s
-                // NetFSMountURLSync wait dominates the cycle. NFS connects
-                // in a few seconds, so the hint would be misleading there.
-                if session.bridgeProto != "nfs" {
-                    let hint = NSMenuItem(title: "Finder takes about 90 seconds to attach the volume",
-                                          action: nil, keyEquivalent: "")
-                    hint.isEnabled = false
-                    menu.addItem(hint)
-                }
-            }
-        } else {
-            let noDevice = NSMenuItem(title: "No device connected", action: nil, keyEquivalent: "")
+        if sortedSessions.isEmpty {
+            let noDevice = NSMenuItem(title: "No device connected",
+                                      action: nil, keyEquivalent: "")
             noDevice.isEnabled = false
             menu.addItem(noDevice)
+        } else {
+            for (idx, session) in sortedSessions.enumerated() {
+                // Separator between device blocks. The first block runs
+                // directly under the status item with no leading separator.
+                if idx > 0 {
+                    menu.addItem(NSMenuItem.separator())
+                }
+
+                let deviceItem = NSMenuItem(title: session.displayName,
+                                            action: nil, keyEquivalent: "")
+                deviceItem.isEnabled = false
+                menu.addItem(deviceItem)
+
+                if session.isMounted {
+                    // Cmd-F / Cmd-E shortcuts only on the first mounted
+                    // device. With N devices the shortcuts are
+                    // necessarily ambiguous; the menu still works via
+                    // pointer + click for the others.
+                    let showItem = NSMenuItem(title: "Show in Finder",
+                                              action: #selector(showInFinder(_:)),
+                                              keyEquivalent: idx == 0 ? "f" : "")
+                    showItem.target = self
+                    showItem.representedObject = session
+                    menu.addItem(showItem)
+
+                    let ejectItem = NSMenuItem(title: "Eject \(session.displayName)",
+                                               action: #selector(ejectDevice(_:)),
+                                               keyEquivalent: idx == 0 ? "e" : "")
+                    ejectItem.target = self
+                    ejectItem.representedObject = session
+                    menu.addItem(ejectItem)
+#if DEBUG
+                    let flutterItem = NSMenuItem(title: "⚡ Synthetic Flutter \(session.displayName)",
+                                                 action: #selector(syntheticFlutter(_:)),
+                                                 keyEquivalent: "")
+                    flutterItem.target = self
+                    flutterItem.representedObject = session
+                    menu.addItem(flutterItem)
+#endif
+                } else if session.isConnecting {
+                    let statusLine = NSMenuItem(title: session.connectingStatusTitle(),
+                                                action: nil, keyEquivalent: "")
+                    statusLine.isEnabled = false
+                    menu.addItem(statusLine)
+                    session.connectingStatusItem = statusLine
+
+                    // Hint only shown on the WebDAV path where the ~90s
+                    // NetFSMountURLSync wait dominates the cycle. NFS
+                    // connects in a few seconds, so the hint would be
+                    // misleading there.
+                    if session.bridgeProto != "nfs" {
+                        let hint = NSMenuItem(title: "Finder takes about 90 seconds to attach the volume",
+                                              action: nil, keyEquivalent: "")
+                        hint.isEnabled = false
+                        menu.addItem(hint)
+                    }
+                }
+            }
         }
 
         menu.addItem(NSMenuItem.separator())
@@ -386,14 +417,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func showInFinder() {
-        guard let path = currentSession?.mountPath else { return }
+    /// Returns the menu item's target session, falling back to
+    /// currentSession for keyboard-shortcut invocations on the
+    /// first-listed device.
+    private func sessionFor(_ sender: Any?) -> DeviceSession? {
+        if let item = sender as? NSMenuItem,
+           let target = item.representedObject as? DeviceSession {
+            return target
+        }
+        return currentSession
+    }
+
+    @objc private func showInFinder(_ sender: Any?) {
+        guard let path = sessionFor(sender)?.mountPath else { return }
         NSWorkspace.shared.open(path)
     }
 
-    @objc private func ejectDevice() {
-        NSLog("Comprador: Eject requested")
-        guard let active = currentSession else { return }
+    @objc private func ejectDevice(_ sender: Any?) {
+        guard let active = sessionFor(sender) else { return }
+        NSLog("Comprador: Eject requested for \(active.displayName)")
         active.isConnecting = false
         active.pendingAttach = nil
         active.stopConnectTimer()
@@ -433,8 +475,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// reproducing the entry 19a race: handleDeviceDetached queues a teardown Task
     /// and returns; handleDeviceAttached runs before that Task executes, sees
     /// isMounted == true, and should queue via pendingAttach rather than discarding.
-    @objc private func syntheticFlutter() {
-        guard let device = currentSession?.device else { return }
+    @objc private func syntheticFlutter(_ sender: Any?) {
+        guard let device = sessionFor(sender)?.device else { return }
         NSLog("Comprador: ⚡ synthetic flutter — firing detach+reattach on \(device.displayName)")
         handleDeviceDetached(device)
         handleDeviceAttached(device)
