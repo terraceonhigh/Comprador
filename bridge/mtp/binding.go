@@ -141,24 +141,33 @@ func unregisterReader(id int) {
 	delete(callbackRegistry.readers, id)
 }
 
-// DetectDevice finds and opens the first available MTP device.
+// DetectDevice finds and opens an available MTP device. Wraps
+// DetectDeviceForLocation with locationID=0, which selects the first
+// detected device — preserves the historical single-device behavior.
+func DetectDevice() (*Device, error) {
+	return DetectDeviceForLocation(0)
+}
+
+// DetectDeviceForLocation finds and opens an MTP device. If locationID is
+// non-zero, only the device matching that macOS IOKit USB Location ID is
+// considered; otherwise the first detected device is opened.
+//
 // Uses the raw detection API for better diagnostics.
 //
-// Tries twice with the kill-then-claim race against ptpcamerad. Empirically
-// this race is unwinnable once the kernel has bound its USB Imaging Class
-// driver to the device — and that happens within microseconds of USB
-// enumeration, well before we ever spawn the bridge. So if attempt 1 fails,
-// attempt 2 fails too, and any further retries are dead time.
+// Fail-fast on libusb_claim_interface error: one attempt only. Empirically
+// (2026-05-17), each failed claim on a phone in a degraded USB state can
+// push the phone further out of MTP mode (Pixel 0x4EE1 → 0x4EE8 observed
+// over the course of repeated retries). The Swift layer also stops at
+// one attempt and surfaces an unplug-and-replug notification when this
+// fails — letting the user reset the phone's USB state with a physical
+// action is more reliable than us repeatedly seizing+re-enumerating.
 //
-// The only thing that actually breaks the kernel binding is a physical
-// detach/reattach (or the equivalent IOKit USBInterfaceOpenSeize, which
-// would need a Swift-side preflight before bridge spawn — TODO).
-//
-// Two attempts with a 50ms gap is enough to absorb a genuine transient
-// (e.g., libusb still finalizing a previous handle close) without burning
-// a full second on a known-unwinnable path.
-func DetectDevice() (*Device, error) {
-	const maxAttempts = 2
+// The Swift-side IOKit seize preflight (USBDeviceOpenSeize +
+// USBDeviceReEnumerate) is the only thing that reliably breaks the
+// kernel binding; if that succeeded and we still can't claim, retrying
+// won't help because the kernel has re-bound.
+func DetectDeviceForLocation(locationID uint32) (*Device, error) {
+	const maxAttempts = 1
 
 	var rawDevices *C.LIBMTP_raw_device_t
 	var numDevices C.int
@@ -185,19 +194,69 @@ func DetectDevice() (*Device, error) {
 
 	log.Printf("Found %d raw MTP device(s)", int(numDevices))
 
-	// Log the first device's full USB descriptor tree before we try to
+	rawSlice := unsafe.Slice(rawDevices, int(numDevices))
+
+	// Compute the IOKit Location ID for each detected raw device and
+	// log it. With multi-device support this is the only way to know
+	// which physical phone we're about to claim; with single-device it's
+	// useful diagnostic noise (matches what the Swift side reads out of
+	// the IORegistry).
+	type candidate struct {
+		raw   *C.LIBMTP_raw_device_t
+		locID uint32
+	}
+	candidates := make([]candidate, 0, len(rawSlice))
+	for i := range rawSlice {
+		raw := &rawSlice[i]
+		busLoc := uint32(raw.bus_location)
+		devnum := uint8(raw.devnum)
+		locID, err := LocationIDForBusAddr(busLoc, devnum)
+		if err != nil {
+			log.Printf("raw[%d] VID=0x%04x PID=0x%04x bus=%d devnum=%d locationID=<lookup failed: %v>",
+				i, uint16(raw.device_entry.vendor_id), uint16(raw.device_entry.product_id),
+				busLoc, devnum, err)
+		} else {
+			log.Printf("raw[%d] VID=0x%04x PID=0x%04x bus=%d devnum=%d locationID=0x%08x",
+				i, uint16(raw.device_entry.vendor_id), uint16(raw.device_entry.product_id),
+				busLoc, devnum, locID)
+		}
+		candidates = append(candidates, candidate{raw: raw, locID: locID})
+	}
+
+	// Pick the target raw device. If locationID was requested, find the
+	// match; otherwise take candidate 0 (first detected). The historical
+	// LIBMTP_Open_Raw_Device_Uncached takes a pointer into the rawDevices
+	// array, so we hand it the same struct we matched.
+	var target *C.LIBMTP_raw_device_t
+	if locationID != 0 {
+		for _, c := range candidates {
+			if c.locID == locationID {
+				target = c.raw
+				log.Printf("Selected raw device by locationID match: 0x%08x", locationID)
+				break
+			}
+		}
+		if target == nil {
+			return nil, fmt.Errorf("no MTP device with locationID=0x%08x found among %d detected device(s)", locationID, len(candidates))
+		}
+	} else {
+		target = candidates[0].raw
+		if len(candidates) > 1 {
+			log.Printf("WARNING: %d MTP devices detected but --device-loc-id not set; opening the first one (locationID=0x%08x). For multi-device support pass --device-loc-id=<id> to disambiguate.",
+				len(candidates), candidates[0].locID)
+		}
+	}
+
+	// Log the target device's full USB descriptor tree before we try to
 	// open it. This is the diagnostic that tells us whether the device
 	// is exposing a PTP-class interface (kernel-claimed, can't free) or
 	// a vendor-class MTP interface (free for libusb to claim).
-	rawSlice := unsafe.Slice(rawDevices, int(numDevices))
-	if len(rawSlice) > 0 {
-		LogUSBInterfaces(uint16(rawSlice[0].device_entry.vendor_id))
-	}
+	LogUSBInterfaces(uint16(target.device_entry.vendor_id))
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		killCompetingProcesses()
 
-		dev := C.LIBMTP_Open_Raw_Device_Uncached(rawDevices)
+		dev := C.LIBMTP_Open_Raw_Device_Uncached(target)
 		if dev != nil {
 			log.Println("MTP device opened successfully")
 			return &Device{dev: dev}, nil

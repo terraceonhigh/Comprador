@@ -22,11 +22,20 @@ var BuildID = "dev"
 
 func main() {
 	useNFS := flag.Bool("nfs", false, "serve NFSv3 instead of WebDAV")
+	// --device-loc-id selects which physical MTP device this bridge
+	// instance claims, by macOS IOKit USB Location ID. Required when
+	// multiple MTP devices are plugged in; if 0/absent the first
+	// detected device is opened (single-device behavior).
+	// Accepts decimal or hex (0x...) per flag.Uint64 conventions.
+	deviceLocID := flag.Uint64("device-loc-id", 0, "macOS IOKit USB Location ID of the target MTP device; 0 = first detected")
 	flag.Parse()
 
 	log.SetOutput(os.Stderr)
 	log.SetFlags(log.Ltime | log.Lmicroseconds)
 	log.Printf("bridge build: %s", BuildID)
+	if *deviceLocID != 0 {
+		log.Printf("Targeting device locationID=0x%08x", uint32(*deviceLocID))
+	}
 
 	// Bind to a random localhost port first, before device detection.
 	// This lets us fail fast on port issues.
@@ -37,7 +46,7 @@ func main() {
 	port := listener.Addr().(*net.TCPAddr).Port
 
 	log.Println("Detecting MTP device...")
-	session, err := mtp.NewSession()
+	session, err := mtp.NewSessionForLocation(uint32(*deviceLocID))
 	if err != nil {
 		log.Fatalf("MTP session failed: %v", err)
 	}

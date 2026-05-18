@@ -156,6 +156,17 @@ caretaker workaround.
 
 ## WebDAV / Finder
 
+> **Section status — slated for historical archive once v0.4.0 ships.**
+> NFS has been the default mount path since v0.3.0 (2026-05-09). The
+> WebDAV apparatus is retained in tree for legacy reasons but is no
+> longer exercised by normal use; the v0.4.0 retirement work
+> ([TODO.md "Tidying" Tier 3](../TODO.md)) will remove
+> `bridge/webdav/`, `MountManager.mount`, `ResumeCompanion`, and the
+> writeseq-cap heuristics. At that point, every entry in this section
+> (9, 9a, 10, 11, 11a–11e) becomes a postmortem on code that no longer
+> exists. Keep them — the underlying lessons about Apple's webdavfs
+> quirks generalise — but read them with that frame.
+
 ### 9. `Seek` always returned `(0, nil)`
 
 **What happened:** Our `mtpFile.Seek()` fetched the file into a
@@ -577,6 +588,192 @@ Workaround no longer needed. Tracked in TODO.md under "Handle detach during
 file transfer gracefully (don't hang Finder)" — that entry was filed
 before we'd reproduced this exact race, but the fix is the same shape.
 
+### 19b. Multi-device ptpcamerad-kill race on app startup
+
+**Symptom (2026-05-17, post-multi-device-step-6):** Architect
+launches Comprador.app with two phones (Xperia + Pixel 6) already
+plugged in. Pixel mounts cleanly; Xperia fails to mount with no
+user-visible explanation. Unplug + replug the Xperia recovers it.
+The failure was 100% reproducible on plug-then-launch; absent on
+plug-after-launch.
+
+**Empirical receipt** (from `build/comprador.log`):
+
+```
+13:24:52.725  USB attached — Pixel 6   ← initial-scan drain
+13:24:52.725  USB attached — XQ-BT52   ← initial-scan drain
+13:24:58.067  Pixel:  [status] Starting bridge…
+13:24:58.085  Xperia: [status] Starting bridge…
+13:24:58.091  Xperia: IOKit preflight skipped (USBDeviceOpenSeize → 0xE00002C5)
+13:24:58.111  Killed ptpcamerad / AMPDeviceDiscoveryAgent
+13:24:58.146  Pixel:  IOKit preflight OK (seized + re-enumerated)
+13:24:58.225  Xperia bridge: libusb_claim_interface() = -3 (LIBUSB_ERROR_ACCESS)
+13:24:58.315  Xperia bridge: failed to open MTP device — kernel-bound
+              to the USB interface, requires physical replug or IOKit
+              interface seize
+```
+
+`0xE00002C5` is `kIOReturnExclusiveAccess`.
+
+**Root cause.** With both phones already attached when the app
+launches, `ptpcamerad` has been claiming both USB interfaces in
+exclusive-access mode for however long the user had them plugged
+in. Both DeviceSessions then race to spawn their bridges
+concurrently. The Xperia preflight runs first, finds `ptpcamerad`
+holding the USB interface, fails. The Pixel preflight runs second
+(a few tens of ms later, after a parallel bridge subprocess has
+called `killall ptpcamerad`), finds the interface free, succeeds.
+Xperia's bridge then tries `libusb_claim_interface` directly —
+but the kernel's USB Imaging Class driver has by now bound
+itself to the device's class-6 PTP interface, and that binding
+**survives ptpcamerad's death** — only a physical replug (or
+another IOKit-level re-enumeration via `USBDeviceReEnumerate`)
+breaks it.
+
+The Pixel works in the same window because its preflight runs
+*after* the first `killall` lands, and the IOKit re-enumeration
+that the preflight performs is the thing that breaks the
+kernel binding. Xperia gets neither: its preflight fired too
+early, and there's no retry path to re-attempt the seize once
+the kill has cleared the way.
+
+**Fix shape (revised after first attempt).**
+
+A single global `killall ptpcamerad` at app startup turned out
+to be insufficient: macOS's launchd respawns `ptpcamerad` within
+seconds of the kill, and the 5-second gap between
+`applicationDidFinishLaunching` and the actual `USBDeviceOpenSeize`
+calls is plenty of time for the respawn. Verified empirically
+2026-05-17 13:34: the startup kill fired at T+0, the seize tried
+at T+5 s, and the seize still failed with
+`kIOReturnExclusiveAccess` — meaning a fresh `ptpcamerad` had
+already taken the device by then.
+
+**The actual fix** is in `BridgeProcess.start()`: swap the order
+of `killCompetingProcesses()` and `USBSeizer.seizeAndReset()`.
+The existing implementation called *seize* first and *kill*
+second, which guaranteed every seize ran against a live
+`ptpcamerad`. Killing first means each seize runs against an
+already-dead `ptpcamerad`, and the seize's USBDeviceReEnumerate
+fires its USB-level replug before launchd has time to respawn
+the holder. Concurrent DeviceSessions both fire their own
+`killCompetingProcesses` first, so even with two near-
+simultaneous bridge spawns the kills converge to "ptpcamerad
+dead" before either seize runs. ~3 lines (the swap itself; the
+respawn-window analysis is in the block comment).
+
+The global startup pre-kill is **kept as belt-and-suspenders**
+— harmless if launchd respawns ptpcamerad before the seizes, and
+arguably useful for the rare edge case where the bridge subprocess
+itself fails to fire `killCompetingProcesses` for some reason.
+
+`USBSeizer.shared` serializing actor (PLAN-MULTI-DEVICE.md §7)
+is **not yet implemented**. The order swap alone closes the
+empirical failure; the actor is cheap insurance for a
+hypothetical race we haven't observed. Add if validation
+surfaces another seize-collision pattern.
+
+**Third iteration (2026-05-17 mid-afternoon).** The order swap
+was necessary but still insufficient when both phones were
+attached. Built a serializing `DispatchQueue` around the
+kill+seize pair (b2b76859), then moved the post-seize settle
+sleep inside the queue (8396a7f6) so cross-session protection
+would actually work. Both attempts failed empirically: with
+the queue + 1.2s in-queue settle, Session A's seize for the
+Pixel still succeeded but Session B's seize for the Xperia
+got `kIOReturnExclusiveAccess` 67 ms after Session A's seize
+returned. Worse: a wider pattern surfaced — the Pixel's USB
+descriptor migrated from `0x18d1:0x4ee1` (MTP File Transfer)
+to `0x18d1:0x4ee8` (a non-MTP variant libmtp doesn't enumerate)
+sometime during the earlier failed retry cycles. Once the
+Pixel was in `0x4ee8`, no amount of in-app seizing recovered
+it; only a physical replug reset the phone to whatever mode
+its on-screen USB notification had selected.
+
+**Root cause of the race (final understanding).** Both phones
+sit downstream of the same root-hub port (Pixel locID
+`0x00110000`, Xperia `0x00121100` — both bus 0, both behind a
+shared hub). `USBDeviceOpenSeize` isn't a per-device flag;
+it's a transaction the macOS USB family mediates through the
+host controller's state machine. `USBDeviceReEnumerate`
+triggers a physical-layer USB reset (hub drops the port,
+device renegotiates descriptors, hub re-detects, descriptor
+query starts over). For the ~0.5–1.5 s that reenum takes,
+the host controller's bus state is "busy with reset," and the
+USB family correctly rejects concurrent exclusive-access
+requests on the same controller. Our two `DeviceSession`s
+running ~10 ms apart hit this window every time.
+
+We can't probe "bus is settled now" from userspace; we can
+only sleep an empirical guess. The Pixel `0x4ee1 → 0x4ee8`
+degradation is the *worse* failure mode lurking behind
+"retry the race in software": every additional
+seize+reenumerate cycle stresses the phone's USB
+re-negotiation, and after a few rounds the phone's USB stack
+falls back to a non-MTP configuration. So even when the
+software race appears to resolve, we may have silently moved
+the phone into an unrecoverable (without replug) state.
+
+**Final fix shape (shipped 2026-05-17 14:00s).**
+
+1. Revert b2b76859 + 8396a7f6 (the serializing queue) —
+   commit `e64983f1`. The queue mechanism was attacking the
+   wrong problem; cost without benefit.
+2. Fail-fast on first claim failure — commit `327ae66d`. Swift
+   `retryDelays: [0,3,5]` → `[0]`; Go `maxAttempts: 2 → 1`.
+   One clean attempt, then surface the unplug-and-replug
+   notification. No retry loop to degrade the phone further.
+3. Welcome-window onboarding includes the
+   unplug-and-replug recovery hint plus the `ptpcamerad`
+   side-effect disclosure — commit `1441171b`. Primes the user
+   for the failure before it happens; the
+   `postFileTransferNotification` alert lands as
+   confirmation, not surprise.
+
+Kept: 54c929d6 (kill-before-seize order). That's still
+correct on its own merits.
+
+**Empirical result.** Two phones pre-attached: first phone
+mounts on first try (bus is idle when its seize fires), second
+phone fails fast and the user gets the notification + welcome-
+window-primed expectation. User replugs the second phone, the
+DeviceWatcher fires a fresh attach event, second phone mounts
+on its own first try (bus is idle again, since the first phone
+is fully stable). Net latency: one cable wiggle, no scary
+"Server connections interrupted" alert from the kernel NFS
+client.
+
+**Pattern lesson.** When two software clients fight over a
+shared hardware resource and the kernel arbitrates correctly
+by rejecting concurrent claims, the right software response
+is usually not "fight harder" or "wait longer" but "accept
+the kernel's correctness and let the user arbitrate." The
+user's physical action (replug) is a guaranteed coordination
+point that no amount of `Thread.sleep` tuning can match,
+because we can't reliably detect when the resource is free.
+
+**Architectural exit (deferred).** The race exists because we
+use IOKit `USBDeviceOpenSeize` to break the kernel's USB
+Imaging Class binding. A FUSE-T-based mount substrate would
+not need to break that binding at all — the kernel mediates
+the relevant access through a different IOKit family. Most
+of MISTAKES 19b would vanish under FUSE-T, along with the
+ptpcamerad kill (entries 11, 17, 19a) and the
+NFS-RPC-timeout class (entry 4). Tracked in
+[PLAN-NFS-READ.md](PLAN-NFS-READ.md) and TODO.md.
+
+**Pattern lesson.** A "seize race" between sibling DeviceSessions
+wasn't on my multi-device radar — the assumption was that each
+session's seize was independent because each targets a different
+USB device. It is — but the *prerequisite* of the seize
+(`ptpcamerad` not holding exclusive access to any device on the
+bus) is process-wide and global. PLAN-MULTI-DEVICE.md §7 named
+this in the abstract; the architect's bug report was the first
+empirical confirmation.
+
+**Status:** fix in flight, to be validated by the same
+plug-both-then-launch scenario.
+
 ### 20. `mount_webdav` silently fails with custom mount point
 
 **What happened:** Tried calling `/sbin/mount_webdav` directly to control
@@ -714,6 +911,113 @@ Commit() hook to the Handler interface so write completion triggers MTP upload.
 
 **Reference:** `~/Labs/go-nfs/nfs_oncreate.go:43`
 
+### 1a. Per-storage FSStat: macOS sends FSSTAT against the root file handle regardless of statfs(2) path (confirmed; option 1 dead)
+
+**Symptom (2026-05-11):** With the multi-storage FSStat patch landed
+(commit `5bfd2462`, [PLAN-MULTI-STORAGE.md](PLAN-MULTI-STORAGE.md)
+steps 1–3), `df -h` against two distinct storages on the Xperia
+returns identical numbers for both:
+
+```
+terrace@gala comprador % df -h ./Internal\ shared\ storage
+Filesystem         Size    Used   Avail Capacity ...
+XQ-BT52.local:/   134Gi    18Gi   116Gi    14%   ...
+terrace@gala comprador % df -h ./SD\ card
+Filesystem         Size    Used   Avail Capacity ...
+XQ-BT52.local:/   134Gi    18Gi   116Gi    14%   ...
+```
+
+Both report what looks like the **aggregate** (or the Internal-only
+total, hard to tell without phone-side reference numbers). The
+patched go-nfs handler forwards `path` to `Handler.FSStat`; our
+handler matches `path[0]` against `sanitizeName(st.Description)`
+for each storage. If both df calls hit the aggregate fallback,
+`path` was empty on both invocations — i.e., macOS's NFSv3 client
+sent the **root** file handle for both FSSTAT RPCs, regardless of
+which subpath statfs(2) was invoked against.
+
+**Hypothesis.** macOS optimizes FSSTAT by always sending the root
+FH (since FSSTAT is semantically a filesystem-wide query). The
+path we resolve from the handle is therefore always `[]`. The
+patch is mechanically correct but doesn't get the information it
+needs from the kernel.
+
+**Diagnostic added (same commit, follow-up):** the FSStat handler
+now logs `path=...` on every call; the storage-init log prints
+`Description → sanitized` so we can compare verbatim. Re-run with
+`make dev-nfs 2>&1 | tee build/dev-nfs.log` and we'll see what
+macOS actually sends.
+
+**If the hypothesis holds**, plan option 1 (path-via-FSStat-arg)
+is structurally insufficient and we have to fall back to plan
+option 2 (encode storage in the NFS file handle so `FromHandle`
+yields path-and-storage). Option 2 is more invasive but doesn't
+depend on the client's FSSTAT-path behavior.
+
+**Diagnostic result (2026-05-14):** Hypothesis confirmed. With the
+Xperia mounted and `df`-equivalent statfs invoked against both
+`Internal shared storage/` and `SD card/`, the bridge logged
+**13 FSStat calls, all with `path=[]`**:
+
+```
+FSStat path=[] → aggregate (no storage match) free=124131749888/total=144027406336
+[× 13, varying free count as transfers progressed]
+```
+
+The aggregate `124 GB free / 144 GB total` is `92.2 + 31.9 = 124.1`
+and `112.1 + 31.9 = 144.0` — sum of the two storages. Plan option 1
+(path-via-FSStat-arg) is structurally dead: the NFSv3 FSSTAT RPC
+carries only a file handle, and macOS resolves that handle to the
+mount root, not to whichever subdirectory `statfs(2)` was invoked
+against. The path the patched go-nfs forwards is therefore always
+empty regardless of how many subdirectory levels deep the user
+called `statfs`.
+
+**Required fix is plan option 2: encode storage ID in the NFS file
+handle.** The bridge already mints unique handles per object; the
+addition is making the storage identifier recoverable from any
+handle (e.g. high bits of the handle, or a side table). FSStat then
+reads it from `FromHandle(fh).Storage` and dispatches to the right
+LIBMTP storage struct. No dependence on client-side path forwarding.
+
+Diagnostic log preserved at `build/dev-nfs-2026-05-14.log`.
+
+**Status:** closed-as-diagnosed. Implementation of option 2 tracked
+in [TODO.md](../TODO.md) under multi-storage follow-ups.
+
+### 1b. Directory copy: some files do not make the jump (resolved — wrong destination path)
+
+**Symptom (2026-05-11):** Architect copied a 432-file ECON101
+directory tree from Mac to phone and reported "some files did
+not make the jump." Initial diff against
+`/tmp/comprador/SD card/Download/ECON101` showed only 36 of 432
+files present — catastrophic loss on the face of it.
+
+**Actual cause:** the destination was `Internal shared storage`,
+not `SD card`. The directory copy succeeded in full; the
+verification diff was reading the wrong storage. Re-running
+against `/tmp/comprador/Internal shared storage/Download/ECON101`
+showed **430 files matching by sha256 byte-perfect**, 1 file
+missing (`iclicker_quizzes/.DS_Store` — a Finder metadata file,
+not user content), and 1 hash mismatch (the top-level
+`.DS_Store` — Finder legitimately regenerates this for the
+destination directory).
+
+The 270 "extra" files on the phone were all `._*`-prefixed
+AppleDouble companion files Finder writes to non-HFS+ targets
+to preserve extended attributes. This noise is a known polish
+item — see [V0.3.3.md item #3](V0.3.3.md) "Filter `._xattr` /
+`.AppleDouble` companion files" — but not a transfer fault.
+
+**Lesson.** Verify destination paths explicitly before drawing
+conclusions about transfer fidelity. A 432→36 mismatch is
+dramatic enough to look like a deep bug, but the actual cause
+was reading a different storage entirely. Pair "what files
+appeared at X" with "what path is X" — they're not always the
+path the user thinks.
+
+**Status:** closed.
+
 ### 2. In-tree `helpers/memfs` root acknowledgement
 
 **What happened:** The go-nfs test suite has a comment:
@@ -726,7 +1030,415 @@ empty or fail.
 Our stub does this (`hello.txt`). The MTP adapter will naturally satisfy
 this because storage roots always contain at least one child.
 
+### 3. fileSync-hold WRITE incompatible with macOS NFS client RPC timeout (2026-05-16; reverted)
+
+**Hypothesis (2026-05-14, commit `0d1418ac`):** macOS Finder's
+end-of-copy WRITE carries `stability=fileSync`. If we hold that
+WRITE's RPC response until the MTP send completes, Finder's
+progress dialog will reflect the *real* end-to-end duration —
+the dialog cannot dismiss until libmtp confirms the bytes are
+durable on the phone. "Single source of truth in Finder's
+progress dialog."
+
+The implementation: patch vendored `nfs_onwrite.go` to type-assert
+the `billy.File` to a new `DurableSyncer` interface; have
+Comprador's `stagingHandle` implement it via `commitOnce`
+(sync.Once over the existing idle-flush MTP push). One MTP send
+per file regardless of which trigger (idle-flush, COMMIT,
+fileSync, retransmit) reaches it first.
+
+**Empirical verification (2026-05-16, Xperia XQ-BT52):**
+
+- *9 KB file (`the-town-draft.md`)*: the mechanism worked
+  end-to-end. WRITE arrived at 01:45:21.438 with `how=2`; MTP
+  SendFile started at 01:45:21.442; idle-flush committed at
+  01:45:21.507. The WRITE RPC was held for **69 ms** while the
+  bytes were durably written to the phone. Finder dialog
+  dismissed honestly at the commit.
+
+- *9.09 GB file (`David.Attenborough...mkv`)*: the mechanism
+  worked at the protocol level — all bytes verified on the phone
+  after — but the **UX collapsed**. WRITEs filled the staging
+  temp at memory speed (offsets 0 → 9 094 266 880); the final
+  `how=2` WRITE arrived at 01:49:32.621; MTP SendFile started
+  at 01:49:32.622; idle-flush committed at 01:56:39.244. The
+  WRITE RPC was held for **7 min 7 s** (~21 MB/s,
+  plausible USB 2.0 MTP rate). macOS NFS client surfaced
+  *"Server connections interrupted: comprador"* at T+~20 s
+  into the held WRITE, with options *Ignore* / *Disconnect All*.
+  Clicking *Ignore* allowed the transfer to complete in the
+  background but Finder showed no progress dialog for the
+  remaining ~6 min 47 s.
+
+**Root cause.** macOS's NFSv3 client has a kernel-side patience
+window — ~20–30 s of no response on any single WRITE RPC and
+the client tears down the TCP connection and surfaces the
+"interrupted" alert. The bridge cannot legitimately stretch
+this. Any file whose MTP send exceeds the threshold (~600 MB
+at 21 MB/s) trips the alert; the dialog never even appears.
+The historic always-`unstable` reply returned a less-honest
+answer (Finder dismissed early on its own NFS-side flush) but
+never broke the dialog.
+
+**The architectural escape is FUSE-T.** FUSE-T's `write()` and
+`fsync()` callbacks have no equivalent kernel RPC timeout class;
+progress is paced by callback completions rather than by a
+single network RPC. The `ux_unavoidable_wait.md` memory note
+from 2026-05-07 named FUSE-T as "the only architectural escape"
+for this class of problem; the 2026-05-16 fileSync-hold attempt
+bumped into the same wall from a different angle and confirmed
+the diagnosis. The deliberation is queued in
+[TODO.md](../TODO.md) §On-return pickups.
+
+**Status:** reverted in commit `9239dcd7`. Bridge unit tests
+(`make bridge-test`) green against the revert. Branch
+`claude/multi-storage` returns to pre-`0d1418ac` WRITE
+semantics: WRITEs ack at memory speed; the idle-flush timer
+fires the MTP send asynchronously. Finder's progress dialog
+returns to dismissing early but no alert.
+
+**Methodological lesson.** The hypothesis was sound and the
+mechanism worked; the falsification was in the kernel-client
+behavior assumption (that macOS NFS would tolerate a
+multi-minute single WRITE). Cheaper to have measured macOS's
+RPC timeout *before* shipping the change than after; the
+running-bridge logs from any v0.3.x release with a 1+ minute
+phone-side stall would have surfaced this. Filed as an
+instance of the *run-the-syscall-first* lesson
+(memory: `feedback_test_syscall_before_designing_helper.md`).
+
+### 4. First drag-drop after mount silently stalls for ~5 minutes (open; reproducible 2026-05-16)
+
+**Symptom (2026-05-16, both sessions):** On the *first*
+Mac→phone drag-drop attempt after a fresh `mount -t nfs`, macOS
+NFS client surfaces "Server connections interrupted: comprador"
+at T+~20-30 s. The Finder dialog disappears (or never appears).
+The bridge log shows **zero traffic** during the stall — no
+LOOKUP, no CREATE, no WRITE, no ACCESS. After ~5 minutes of
+silence, the kernel-side recovery completes on its own; the
+bridge suddenly receives a burst of exclusive-CREATE probes
+followed by the actual CREATE+WRITE+commit sequence. The
+dropped bytes flow through, the file lands on the phone.
+
+Two empirical receipts, both with the Xperia XQ-BT52:
+
+- **Session 1 (build `c84db8cc-dirty`, pre-revert).** Bridge
+  started 01:37:03. Architect mounted, browsed, attempted a
+  drag around 01:40. Bridge log silent 01:40:07 → 01:45:20
+  (5 min 13 s). Recovery at 01:45:20 produced the burst:
+  3x exclusive-CREATE errors, then real CREATE+WRITE for
+  `the-town-draft.md` (9 KB, succeeded at 01:45:21.4).
+
+- **Session 2 (build `fb4135a8-dirty`, post-revert).** Bridge
+  started 02:13:13. Architect mounted, browsed 02:15:15 →
+  02:15:38, attempted a drag of `Red_Castle.html` (137 KB)
+  around 02:16. Bridge log silent 02:15:38 → 02:21:16
+  (5 min 38 s). Recovery at 02:21:16 produced the burst:
+  4x exclusive-CREATE errors, then MTP SendFile for two files
+  (`Red_Castle.html` and `2026-05-10_23-00-14_Claude_Chat_Bone_China_Prime.md`,
+  both committed by 02:21:21).
+
+- **Session 3 (build `786eeb69-dirty`, post-revert, after a
+  clean macOS reboot).** Bridge started 02:35:18. Architect
+  mounted at 02:37:40, browsed minimally (Internal storage at
+  02:37:48, Download at 02:37:50), attempted drag at
+  02:38:00 with `PXL_20260502_232127771.jpg` (2.3 MB photo).
+  Bridge log silent 02:37:50 → 02:43:12 (**5 min 12 s**,
+  within 1 second of session 1's stall duration). Recovery
+  at 02:43:12 produced the burst: 2x exclusive-CREATE
+  errors, MTP SendFile at 02:43:14.913, idle-flush
+  committed at 02:43:15.160. The MTP send itself took
+  ~247 ms; the rest of the wall-clock was pure kernel-side
+  stall. *The stall reproduces across a clean reboot,
+  confirming this is not a session-state accumulation
+  bug.* Log preserved at
+  `build/dev-nfs-2026-05-16-post-reboot.log`.
+
+- **Session 4 (build at commit `00235ca`, v0.3.1 release
+  merge of 2026-05-09).** Architect tested the load-bearing
+  diagnostic late on 2026-05-16 (kept up by rain): stalls
+  identically. This **rules out the branch as the cause**
+  (`00235ca` predates all the substantive `claude/multi-storage`
+  code changes — `5bfd2462`, `1c402e86`, `54225165`,
+  `a3dd67f7`). The bug ships in every v0.2.x and v0.3.x
+  release Comprador has cut. *Architect's framing: "substrate
+  issue" — i.e. in the macOS NFS client ↔ localhost NFSv3
+  server ↔ mDNS resolution layer, not in our application code.*
+  This finding moots the planned `git bisect` and pivots the
+  investigation toward the substrate boundary.
+
+**The diagnosis arc and its mis-attributions (preserved as
+methodological receipt):**
+
+1. *First framing:* "0d1418ac fileSync-hold caused this."
+   Reverted in `9239dcd7`. Stall reproduced on the reverted
+   code. Wrong.
+2. *Second framing:* "Pre-branch, possibly substrate issue —
+   macOS NFS client interaction with our localhost server."
+   Reinforced when session 4 (v0.3.1 release merge `00235ca`)
+   stalled identically. Pointed toward kernel-side tuning and
+   FUSE-T as substrate replacement.
+3. *Third framing (correct, 2026-05-16 afternoon):* **The
+   bridge silently drops every NFSv3 READ RPC.** The "stall"
+   is not silence on the wire — it's the bridge ACK-ing TCP
+   delivery while never sending RPC replies. macOS times the
+   READs out and surfaces "Server connections interrupted"
+   to the user.
+
+**Root cause (verified by pcap analysis 2026-05-16):**
+
+Captured `build/stall.pcap` during the post-reboot stall
+(session 5, build `236e7e71-dirty`, drag at +25.98 s).
+Parsed RPC layer with `build/pcap_rpc.py`:
+
+```
+total RPC calls:   261
+total RPC replies: 220
+unanswered calls:  44     ← every one is NFSv3 READ
+```
+
+Other operations (ACCESS, GETATTR, FSSTAT, LOOKUP,
+READDIRPLUS, CREATE, SETATTR, REMOVE, COMMIT, WRITE, NULL)
+all answered correctly throughout. **READ is the only RPC
+type silently dropped.**
+
+The unanswered READs target 5 distinct file handles — exactly
+one per file in the destination directory `Download/`
+(DESIGN.md, Attenborough.mkv, How_a_Computer_Works.webm,
+nora_and_daniel-v1.1.md, phone-marker.txt). Reads arrive in
+32 KB-aligned sequential chunks (offsets 0, 32768, 65536, …,
+491520+ on two of the files). This pattern is **macOS
+Spotlight indexing** triggered when Finder enters the
+directory — Spotlight extracts thumbnails/previews/indexable
+text from each file by reading the first ~512 KB.
+
+**Why the bridge silently drops every READ:**
+[`bridge/nfs/cache.go:39 → 65`](../bridge/nfs/cache.go).
+`MTPFileSystem.OpenFile` → `cache.open(name, id, session)`
+→ `download(entry, id, session)` →
+`session.Do(MTPRequest{Op: OpGetFile, ObjectID: id, Writer: tmp})`.
+The `session.Do` call **blocks until the entire MTP file has
+been downloaded** into the staging temp. MTP has no
+random-access read — `LIBMTP_Get_File_To_Handler` pulls the
+whole file every time. While the download runs, the NFS
+goroutine handling that READ RPC is asleep. macOS's NFS
+client RPC timeout (~20–30 s) fires long before the download
+completes for any non-trivial file. By the time the bridge
+unblocks and tries to write the response, the kernel has
+already timed the RPC out.
+
+The bridge does not even log the download attempt:
+`Device.GetFileToWriter` in `bridge/mtp/operations.go:325`
+only logs on error, not on entry — which is why every prior
+session's "bridge log silent during stall" observation was
+misread as "no work happening." Work was happening; we
+weren't watching at the right layer.
+
+**Why the recovery happens at ~5 minutes:**
+Spotlight's retry budget. After ~5 minutes of unanswered
+READs on a file, macOS abandons the preview attempt and
+moves on. Once Spotlight is no longer holding RPCs in
+flight, Finder is freed to complete the unrelated drag's
+CREATE+WRITE+commit (the write path does not go through
+`cache.open`, so it is unaffected by the read backlog).
+
+**Why this was never caught:**
+
+1. Developer-side verification used `adb shell md5sum` against
+   the phone directly, **bypassing the bridge entirely** (see
+   `test-md5.sh`, the architect's letter 12). This confirms
+   write durability but never exercises the bridge's READ
+   handler.
+2. End-to-end testing focused on Mac→phone (writes); a
+   phone→Mac drag through Finder was never explicitly run.
+3. Finder browse (READDIR/LOOKUP/GETATTR) doesn't trigger
+   READ — only opening a file or Spotlight indexing does.
+4. The Spotlight indexing is invisible to the user; they have
+   no awareness that their drag-into is being held up by an
+   unrelated background read.
+
+v0.2.x and v0.3.x both ship this bug. Every user who put any
+file on their phone (via Comprador or otherwise) and then
+opened that directory in Finder has hit this. The user-visible
+symptom is the "Server connections interrupted" alert; the
+hidden harm is that **phone→Mac reads have never actually
+worked through Comprador**.
+
+**Fix space:**
+
+| Approach | Fixes? | Cost | Notes |
+|---|---|---|---|
+| Block Spotlight via `.metadata_never_index` at mount root | Kills the Spotlight-induced symptom | Tiny | Doesn't fix actual read-from-phone; Finder open-file would still hang on large files |
+| Return `NFS3ERR_JUKEBOX` on READ for files > threshold | Both: Spotlight gives up gracefully, Finder shows "still preparing" | Moderate | NFS-spec-blessed semantics for "media not ready"; need to confirm Finder honors it |
+| Pre-cache files at directory enter | Defers, doesn't fix | High | Impractical for large devices |
+| FUSE-T migration | Sidesteps NFS-client-timeout class entirely | Week+ | Substrate replacement; deliberation still queued |
+
+Approaches 1 and 2 are the v0.4.0-shippable candidates.
+Likely shipping order: **1 first** (eliminates the
+user-visible symptom on every fresh-mount-then-Finder-browse
+scenario, which is what every user will do), **2 next**
+(makes the rare case of opening a large file from the
+phone fail-gracefully rather than hang).
+
+**Bridge log + pcap artifacts:**
+- `build/dev-nfs-2026-05-16.log` — sessions 1, 2.
+- `build/dev-nfs-2026-05-16-post-reboot.log` — session 3.
+- `build/dev-nfs-stall-probe.log` — session 5 (pcap capture).
+- `build/stall.pcap` — full lo0 packet capture during the
+  stall window of session 5.
+- `build/pcap_analyze.py`, `build/pcap_dissect.py`,
+  `build/pcap_rpc.py`, `build/pcap_read_args.py` — pure-stdlib
+  Python analyzers used to extract the root cause. Reusable
+  for future NFS-layer investigations.
+
+**Status:** root cause identified. Fix selection in
+progress (see TODO.md §NEXT SESSION).
+
+**Empirical receipts for fix attempts (2026-05-16 evening):**
+
+- **Approach 1 — `.metadata_never_index` sentinel** (commit
+  `56c44372`). **Insufficient.** Sentinel correctly silences
+  Spotlight content indexing — verified by clean 4-minute
+  browse with no READ probes. But the actual culprit is
+  QuickLook thumbnail extraction, which fires on Finder icon-view
+  rendering and **does not respect `.metadata_never_index`**.
+  Confirmed by instrumented bridge (commit `78eae7a3`): on the
+  next drag-into-directory test, the bridge logged sequential
+  reads of every file in `Download/` including hidden
+  `.trashed-*` files, with the 1 GB Shrek file blocking the
+  read pipeline for 36 s and the 9 GB Attenborough.mkv set to
+  take ~7 min. Sentinel kept for orthogonal benefit (Spotlight
+  *content* indexing still suppressed) but does not address
+  QuickLook.
+
+- **Approach 2 — `NFS3ERR_JUKEBOX` for files > 50 MB**
+  (commit `1acdf7f7`). **Partially effective.** Verified
+  2026-05-16 20:54: with bridge `1acdf7f7-dirty`, mounted via
+  loopback + Finder icon-view of `Download/`, the bridge
+  correctly returned JUKEBOX for Attenborough.mkv (9 GB) and
+  How_a_Computer_Works.webm (133 MB) on every probe. Small
+  files (98 KB jpg) went through the synchronous fast path in
+  ~12 ms. macOS NFS client retried the JUKEBOX'd reads with
+  exponential backoff (4 s → 8 s → 16 s → 30 s). **However,
+  macOS Finder still surfaced "Server connections interrupted"
+  alert after a few retries** — JUKEBOX is the spec-blessed
+  "media not ready, retry later" status but macOS treats
+  repeated JUKEBOX as a connection failure for user-display
+  purposes. The mount stays functionally alive — drags into
+  the directory still work normally during the retry storm.
+  This is the "outcome 3" anticipated in PLAN-NFS-READ.md.
+
+- **Outstanding: async prefetch on JUKEBOX** (drafted in
+  [PLAN-NFS-READ.md](PLAN-NFS-READ.md) but not yet
+  implemented). The mitigation for outcome 3: kick off an
+  asynchronous background download when we return JUKEBOX, so
+  the client's retry within the backoff window finds a
+  populated cache and gets the bytes. Should silence the
+  alert because Finder gets a real response on retry rather
+  than another JUKEBOX. Deferred to a future session;
+  expected ~1 day of careful work (state machine in
+  `cache.go`, eviction interaction, concurrent-read coordination).
+
+**Net status after 2026-05-16 evening:** the dominant user
+scenarios (mount + browse, drag-drop into directory) work
+without scary alerts. The scenario that still fails noisily
+is *icon-view rendering of a directory containing files
+> 50 MB* — Finder shows alerts after JUKEBOX retries
+exhaust. Functional impact is bounded: the mount remains
+usable, drags succeed, only the icon-view preview generation
+for large files is degraded (which is acceptable: a 9 GB
+video has no useful thumbnail anyway).
+
+Double-clicking a large file to preview it directly is
+**untested with the JUKEBOX patch** — last attempt (with
+patch active but for a slightly earlier reason)
+required a reboot. Speculatively safer with JUKEBOX active
+since the synchronous download path is bypassed, but
+empirically unverified.
+
+**Update 2026-05-17 morning — double-click-Attenborough verified
+with JUKEBOX:** the architect double-clicked the 9 GB
+Attenborough.mkv via Finder, which launched VLC. VLC issued
+NFSv3 READ; bridge returned JUKEBOX; macOS NFS client retried
+with exponential backoff (4 s → 8 s → 16 s → 30 s → 30 s …).
+The bridge stayed healthy throughout (0.27 CPU-seconds total
+over 4 minutes, all idle). **VLC, however, hung indefinitely**
+on the `read()` syscall — it has no JUKEBOX-aware retry budget
+and the macOS NFS hard mount retries forever. **Force Quitting
+VLC recovered cleanly without rebooting the system. The mount
+survived; Finder still worked; drags into other directories
+were still possible.**
+
+This is a substantial improvement over pre-fix behaviour (which
+required a full system reboot to recover from the synchronous
+9 GB download) but confirms a **fundamental limitation of
+JUKEBOX-only**: it works for clients with their own
+timeout-and-give-up logic (Finder / QuickLook surface a
+dismissable alert) but does not work for clients that do
+straight `read()` syscalls (any media player, `cat`,
+`md5sum`, …). Those apps hang at the syscall layer because
+the kernel keeps retrying forever and the bridge keeps
+returning JUKEBOX forever.
+
+**Async prefetch on JUKEBOX is now confirmed required**, not
+optional. The cleanest design (per
+[PLAN-NFS-READ.md](PLAN-NFS-READ.md)): when we return JUKEBOX
+for a large file, kick off the libmtp download asynchronously.
+The first few retries continue returning JUKEBOX while the
+download runs. Once the cache is populated, the next retry
+succeeds and the app gets bytes. The user-visible UX becomes
+"the app is loading" for the duration of the libmtp download
+(~7 min for Attenborough at USB-MTP rate) instead of
+"the app is permanently hung." Worse than instant, much
+better than hang-forever.
+
+**Verification 2026-05-17 — async prefetch shipped (commit
+`a405ed48`):** end-to-end test with the Xperia + VLC +
+Attenborough.mkv (9.09 GB):
+
+- 11:58:42.744 — VLC issues NFS READ; bridge returns JUKEBOX
+  and kicks off `cache.beginPrefetch START` in parallel
+  goroutines for both Attenborough.mkv and the smaller
+  How_a_Computer_Works.webm (134 MB).
+- 11:58:47.211 — webm prefetch completes in 4.5 s.
+- 12:04:24.817 — Attenborough prefetch completes in
+  **5 min 42 s** (= 27 MB/s, faster than the 21 MB/s estimate;
+  likely USB 3.x).
+- 12:04:24.832 — next VLC retry hits the cache, logs
+  `READ prefetched-cache-hit`, falls through to the normal
+  read path. **VLC starts playing.**
+- 12:04:24.83+ — hundreds of sequential `prefetched-cache-hit`
+  reads as VLC streams the file content.
+
+Outcome: **user waits ~6 minutes with VLC's loading UI**
+(instead of permanent hang on the pre-prefetch builds), then
+the file plays normally. Force Quit no longer required. The
+mount stays alive for other reads/writes throughout, *except*
+that other MTP operations queue behind the running prefetch
+(libmtp's single-session-goroutine serialization). The
+architect observed they "cannot browse other directories"
+during the prefetch window — this is the existing within-device
+concurrency limitation, not a regression introduced by the
+prefetch. It would apply equally to a foreground 9 GB
+phone→Mac copy.
+
+QuickLook icon-view alert also reduced: yesterday's tests
+showed multiple stacked alerts; with prefetch, only one alert
+fired and the file became previewable on cache populate.
+
 ## SMAppService / Helper
+
+> **Section status — helper itself slated for v0.4.0 retirement.**
+> The privileged helper is no longer invoked on the NFS mount path
+> (per the entry below) and the only feature it still serves is the
+> optional cosmetic `.local` hostname rewrite via `/etc/hosts`.
+> [TODO.md "Tidying" Tier 3](../TODO.md) tracks the v0.4.0 decision
+> to either drop that cosmetic entirely or migrate it to a one-shot
+> root prompt at install time. When that lands, `helper/`,
+> `HelperClient.swift`, the BUNDLE_HELPER Makefile recipe, the
+> LaunchDaemon plist, and the SMAppService.daemon registration all
+> go with it. The postmortem below remains the canonical receipt
+> of what we learned designing-then-removing the helper.
 
 ### 1. The privileged helper was load-bearing for nothing
 

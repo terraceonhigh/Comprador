@@ -32,7 +32,10 @@ func onFSStat(ctx context.Context, w *response, userHandle Handler) error {
 		defaults.AvailableSize = 0
 	}
 
-	err = userHandle.FSStat(ctx, fs, &defaults)
+	// Comprador patch (2026-05-11): forward `path` so handlers can
+	// implement per-storage quotas. See handler.go FSStat doc +
+	// docs/PLAN-MULTI-STORAGE.md.
+	err = userHandle.FSStat(ctx, fs, path, &defaults)
 	if err != nil {
 		if _, ok := err.(*NFSStatusError); ok {
 			return err

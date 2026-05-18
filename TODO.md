@@ -1,50 +1,916 @@
 # Comprador — TODO
 
-## ⚠ Roadmap imperative — cgo callback buffer reuse
+## Current state — end-of-stretch 2026-05-17
 
-**This is the single fix that gates Comprador's strategic
-differentiator.** Treat it as a hard prerequisite, not a
-"nice to have."
+**Two pre-launch blockers cleared in this stretch:** the NFS READ
+stall (multiple framings, eventually fixed at the application
+layer) and multi-device support (steps 4 → 6 of
+[PLAN-MULTI-DEVICE.md](docs/PLAN-MULTI-DEVICE.md) shipped). The
+branch is now ~55 commits ahead of master.
 
-The cgo MTP callback path
-([bridge/mtp/binding_callbacks.go](bridge/mtp/binding_callbacks.go))
-calls `make([]byte, wantlen)` on every libmtp invocation. A 9 GiB
-transfer generates ~400 allocations of ~22 MiB each; on macOS
-`MADV_FREE` keeps them in the process's address space until
-kernel reclaim. Detailed receipt at [MISTAKES.md entry 8a](docs/MISTAKES.md).
+### What landed (chronological, all on `claude/multi-storage`)
 
-**Why this is now load-bearing, not just an open bug:**
+**NFS READ stall, 2026-05-16 → 17:**
 
-[PLAN-MULTI-DEVICE.md](docs/PLAN-MULTI-DEVICE.md) commits us to
-**true concurrent multi-device** — N phones plugged in, N Finder
-sidebar entries, all browseable simultaneously. The forensics
-revealed that **no other macOS MTP app does this:** OpenMTP
-refuses multi-attached devices, SwiftMTP detects-many-but-mounts-one,
-Image Capture isn't a filesystem, Android File Transfer was
-single-device. Shipping this makes Comprador the only Mac app
-that treats two phones as two filesystems concurrently. The moat
-is the subprocess-per-bridge architecture we already paid for.
+| Commit | What |
+|---|---|
+| `9239dcd7` | Revert `0d1418ac` fileSync-hold — UX falsified for >600 MB |
+| `fc6a1799` | Root cause via pcap: bridge silently drops every NFSv3 READ |
+| `ce4e7fb6` | `docs/PLAN-NFS-READ.md` for JUKEBOX approach |
+| `56c44372` | `.metadata_never_index` sentinel (Spotlight block) |
+| `1acdf7f7` | `NFS3ERR_JUKEBOX` on READ for files > 50 MB |
+| `a405ed48` | Async prefetch on JUKEBOX (+ stripped leftover `[INFO] WRITE`) |
 
-**But:** two devices plugged in means two bridges in memory.
-Two simultaneous multi-GiB transfers means **18 GiB of leaked
-`VM_ALLOCATE` regions** on an 8 GiB Mac. The system thrashes,
-swaps, and either OOMs the bridges or kicks the user into
-unbearable lag. That's not a degraded experience — it's an
-unshippable one.
+Verified end-to-end: VLC opens a 9 GB phone-resident video in
+~6 min instead of hanging forever; small-file drags land in
+2–3 s; QuickLook icon-view alerts reduced from "stacking 5+" to
+"at most one cosmetic flash."
 
-**Until this fix lands, multi-device cannot ship.** Not "shouldn't,"
-not "would be nicer if." Cannot. The single most strategically
-valuable feature on Comprador's roadmap is gated on ~30 lines of
-Go. Hold a single `[]byte` buffer in the registry entry alongside
-the `io.Reader`/`io.Writer`; reuse across callbacks; grow once if
-a `wantlen` exceeds current capacity. Caps Go-side memory at one
-chunk (~22 MiB) per concurrent MTP operation. Sister entry
-preserved below in the High impact section for the technical
-breakdown; this section is the imperative framing.
+**Multi-device support, 2026-05-17 afternoon:**
 
-**Sequence consequence:** the cgo fix is the *first* item to land
-before any multi-device implementation work begins. PLAN-MULTI-
-DEVICE.md documents this as non-negotiable. Don't reorder.
+| Commit | What |
+|---|---|
+| `d21dd133` | Bridge `--device-loc-id` flag + IOKit Location ID reconstruction via libusb (step 4) |
+| `22d2b7b1` | Swift `BridgeProcess.start(locationID:)` + AppDelegate guard relaxed (step 5) |
+| `a135ff4f` | Menu shows one block per attached device (step 6) |
+| `db50d540` | `cleanupStaleMounts` recognizes per-device `.local` NFS sources (regression fix) |
+
+Verified end-to-end with the Xperia XQ-BT52 + Google Pixel 6
+plugged in simultaneously: menu bar app spawns two bridges,
+each claiming its own phone, each with its own mDNS hostname
+and mount path. Cross-device drag-drop (Xperia SD card → Pixel
+Internal, and vice versa) works cleanly.
+
+**UX polish:**
+
+| Commit | What |
+|---|---|
+| `486af7d9` | Build menu item is now clickable — copies `BuildInfo.id` to clipboard |
+
+### What's open
+
+In rough order of priority for the v0.4.0 launch story:
+
+1. **Pre-launch UX items** in the section further down this
+   file — user-facing disclosure of `ptpcamerad` kill, etc.
+   Some are blocked on Pinterest moodboard research that the
+   architect mentioned post-letter-13.
+
+2. **PR shape decision on `claude/multi-storage`.** Now ~55
+   commits ahead of master. Each commit is independently
+   reviewable; letters 12, 13, 14 give the chronological
+   summary. PR + merge at the architect's pace.
+
+3. **Multi-device step 7 — `USBSeizer.shared` batching.** Per
+   [PLAN-MULTI-DEVICE.md §7](docs/PLAN-MULTI-DEVICE.md). When
+   two phones plug in within ~100 ms, both DeviceSessions fire
+   `killall ptpcamerad` redundantly. The current behavior is
+   correct but noisy; a 200 ms batching window would suppress
+   the duplicate kill. Not blocking — bridges still claim
+   their devices fine; just wasteful.
+
+4. **FUSE-T deliberation** (originally queued post-launch).
+   The NFS READ fix substantially closed the gap that
+   motivated FUSE-T as a substrate replacement. Re-evaluate
+   after v0.4.0 ships and user feedback names the residual
+   pain points (if any).
+
+### Tidying followups
+
+Small items collected during this stretch:
+
+- **`dist-swiftc` inherits `-D DEBUG`** from `app-swiftc`, so
+  production builds expose the debug menu items (Synthetic
+  Flutter, Build identifier with copy-on-click). Separate
+  the debug flags between the two targets.
+- **`BuildInfo.swift` regeneration trigger.** Currently the
+  Makefile reads `git rev-parse --short HEAD` at the start of
+  the build, but if the working tree changes (commits added)
+  between that read and the binary launch, the embedded ID
+  can lag. Footgun confirmed 2026-05-17 (post-commit launch
+  showed the previous build's HEAD). Either regenerate
+  BuildInfo.swift on every `app-swiftc` invocation
+  unconditionally, or stamp the binary post-link.
+- **`make app` (xcodebuild path) is broken** on pbxproj drift
+  (DeviceSession.swift + BuildInfo.swift not in the project
+  file — MISTAKES 23a). `make app-swiftc` is the working
+  path; either fix the pbxproj or retire `make app`.
+
+---
+
+## Earlier NEXT SESSION blocks (preserved for context) — all shipped 2026-05-16 / 17
+
+**Pre-launch blocker for v0.4.0.** Root cause identified
+2026-05-16 afternoon via pcap analysis (see
+[MISTAKES.md §NFS pivot entry 4](docs/MISTAKES.md)).
+**TL;DR:** the bridge silently drops every NFSv3 READ RPC
+because `cache.open()` synchronously downloads the entire
+MTP file before responding. When Finder enters a directory,
+macOS Spotlight issues parallel READs against every file in
+it for thumbnail/preview indexing; the bridge's first
+multi-GB download holds the read path for minutes; macOS
+times the RPCs out and surfaces "Server connections
+interrupted" to the user. Ships in every v0.2.x and v0.3.x
+release.
+
+**Earlier mis-attributions (preserved as receipts):**
+- Mis-attributed to commit `0d1418ac` (fileSync-hold).
+  Reverting in `9239dcd7` did not help. Revert still correct
+  for separate reasons (MISTAKES entry 3).
+- Mis-attributed to "substrate issue" after `00235ca`
+  reproduced. Wrong framing — the bug is application-layer.
+
+**Fix shipping order (recommended):**
+
+1. **Block Spotlight indexing at the mount root.** The
+   first-and-only thing a fresh-mounted user does is open
+   the phone in Finder. That triggers Spotlight indexing on
+   every file in the directory, which triggers the stall.
+   Drop a `.metadata_never_index` file at the NFS root (or
+   serve it virtually) so macOS skips the mount entirely.
+   This alone eliminates the user-visible "interrupted"
+   alert on the dominant scenario. Cost: a few lines in
+   `bridge/nfs/fs.go` or `cache.go`.
+
+2. **Return `NFS3ERR_JUKEBOX` on READ for files above some
+   threshold** (configurable; default e.g. 50 MB). NFSv3's
+   "media not ready, retry later" status — RFC 1813 §2.6.
+   Finder honors it as a polite "still preparing" indicator
+   rather than a connection failure. This makes the rare
+   case of opening a large file from the phone fail
+   *gracefully* rather than hang. Cost: handler-level
+   threshold check in `bridge/nfs/fs.go`'s `OpenFile`, plus
+   the JUKEBOX status code in our error mapping.
+   Open question: confirm Finder doesn't escalate JUKEBOX
+   to a user-visible warning after N retries — needs a
+   probe test before shipping.
+
+3. **(Out of immediate v0.4.0 scope.)** True progressive
+   read — would need either libmtp partial-read support
+   (doesn't exist in libmtp) or asynchronous download +
+   chunked response over a long-lived RPC sequence.
+   Possible follow-up project.
+
+**FUSE-T deliberation context.** FUSE-T would also resolve
+this class entirely (the FUSE write/read callback model has
+no equivalent kernel-side RPC timeout). But approaches 1
+and 2 above are days of work each and ship-blocking
+fix-grade; FUSE-T is a week+ substrate replacement.
+Recommended sequencing: **land 1 + 2 for v0.4.0**, then
+deliberate FUSE-T post-launch as a clean architectural
+improvement rather than an emergency.
+
+**Verification protocol** for the eventual fix:
+1. Drop a small file plus a large file (>500 MB) into the
+   phone's `Download/` via `adb push`, to seed indexable
+   content.
+2. Mount fresh. Open `/tmp/comprador/<storage>/Download/`
+   in Finder. **Expected:** no "Server connections
+   interrupted" alert appears within 60 s.
+3. Drag a small file *into* the directory. **Expected:**
+   Finder progress dialog appears immediately, dismisses
+   on commit, no alert.
+4. Spot-check a phone→Mac pull of a small file (<10 MB).
+   **Expected:** completes within seconds via Finder copy.
+5. Spot-check a phone→Mac pull of a large file (>500 MB).
+   **Expected with approach 2 active:** Finder shows a
+   "preparing" or retry-style indication, eventually
+   succeeds.
+
+**Investigation artifacts (preserved):**
+- `build/stall.pcap` — full lo0 NFS traffic during session 5.
+- `build/pcap_analyze.py`, `build/pcap_dissect.py`,
+  `build/pcap_rpc.py`, `build/pcap_read_args.py` — pure-stdlib
+  Python analyzers, reusable for future NFS-layer probes.
+- `build/dev-nfs-2026-05-16.log` (sessions 1+2),
+  `build/dev-nfs-2026-05-16-post-reboot.log` (session 3),
+  `build/dev-nfs-stall-probe.log` (session 5).
+- Session 4 (v0.3.1) — log path TBD; architect ran the test, no
+  preserved artifact path recorded yet.
+
+---
+
+## Navigation — where work lives
+
+This file is the central backlog. Several adjacent docs track
+specific kinds of work that don't belong here verbatim; check
+all of them before assuming "is there nothing else?"
+
+| Doc | Holds |
+|---|---|
+| [TODO.md](TODO.md) (this file) | Open items not tied to a specific release or plan. The default place for new work. |
+| [docs/V0.3.3.md](docs/V0.3.3.md) | Per-release polish list. Item-numbered, ✓ marks shipped. When v0.3.3 cuts, create `docs/V0.4.0.md` for the next cycle. |
+| [docs/PLAN-MULTI-STORAGE.md](docs/PLAN-MULTI-STORAGE.md) | Multi-storage feature plan. The §Sequence section is its TODO. |
+| [docs/PLAN-NFS-READ.md](docs/PLAN-NFS-READ.md) | JUKEBOX-on-threshold + async prefetch plan. Second-phase fix for the NFSv3 READ stall identified 2026-05-16; ships after the Spotlight-block fix. |
+| [docs/PLAN-MULTI-DEVICE.md](docs/PLAN-MULTI-DEVICE.md) | Multi-device feature plan. Same shape — §Sequence enumerates remaining steps. |
+| [docs/MISTAKES.md](docs/MISTAKES.md) | Numbered failure receipts. Entries marked "investigation pending" are implicit TODOs. |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | Dated decision journal. Each entry's "Verification plan" line is a forward-looking item. |
+| [docs/PRE-LAUNCH.md](docs/PRE-LAUNCH.md) | Launch checklist for the public announcement. |
+| [~/Labs/TODO.md](../TODO.md) | Cross-project backlog (secrets handling, Forgejo migration, project renames). Different scope. |
+| `correspondence/*/letter.md` | Letters end with "Recommendation for tomorrow" lists. **Ephemeral** — a snapshot of one writer's view, not authoritative. Don't promote from here without re-considering. |
+
+**Code-level `TODO`/`FIXME` comments are pointer comments only** —
+they reference this file or another doc, not unsynced items. If
+you find yourself wanting to leave a TODO in code, write it here
+or in the appropriate doc above instead.
+
+---
+
+## On-return pickups — sessions 2026-05-11, 2026-05-14, and 2026-05-16
+
+Items prior sessions surfaced but couldn't close without hands.
+See [correspondence/12-autonomous-afternoon-2026-05-11/letter.md](correspondence/12-autonomous-afternoon-2026-05-11/letter.md)
+and [correspondence/13-end-of-day-2026-05-11/letter.md](correspondence/13-end-of-day-2026-05-11/letter.md)
+for context.
+
+- [x] **Clean up the stale NFS mount** at `/private/tmp/comprador`
+      — cleared 2026-05-14 (`sudo diskutil unmount force`).
+- [x] **Diagnostic verification of MISTAKES 1a** — closed
+      2026-05-14 in commit `5a19a3ac`. 13/13 FSStat calls
+      logged `path=[]`; option 2 (storage ID in file handle) is
+      the required fix.
+- [x] **End-to-end verification of V0.3.3 #1** — verified
+      2026-05-14 in commit `5a19a3ac`. Phone-side mutations
+      surface on next READDIR; NFS-client dirlist cache
+      documented as separate concern.
+- [x] **9 GiB Attenborough cgo-fix vmmap retake** — verified
+      2026-05-14. 67 VM_ALLOCATE regions, 8.3 MB RSS post-9-GiB
+      Mac→phone transfer. Fix is solid.
+- [x] **Validate fileSync-hold against a fresh drag-drop**
+      — closed 2026-05-16 by **reverting `0d1418ac`** in commit
+      `9239dcd7`. Two drags from Finder via the Xperia XQ-BT52
+      mount empirically falsified the UX premise:
+      - 9 KB file: WRITE held 69 ms, dialog dismissed honestly,
+        mechanism verified.
+      - 9 GB Attenborough.mkv: MTP SendFile ran for 7 min 7 s
+        (~21 MB/s), all bytes verified on phone, but macOS NFS
+        client surfaced "Server connections interrupted" at T+20 s
+        and Finder showed no progress dialog for the remaining
+        ~6 min 47 s.
+      Any file whose MTP send exceeds macOS's NFS RPC timeout
+      (~20–30 s, ~600 MB at 21 MB/s) trades the old early-dismiss
+      lie for a scary-alert + no-dialog regression. See `9239dcd7`
+      commit message for the full timestamps and analysis.
+- [ ] **Investigate the first-drag-after-mount silent stall**
+      ([MISTAKES.md §3 entry 4](docs/MISTAKES.md), open). Two
+      sessions on 2026-05-16 reproduced a ~5 minute kernel-side
+      stall on the first Mac→phone drag after a fresh mount;
+      Finder shows "Server connections interrupted" at T+~20 s,
+      and the bridge log shows zero traffic during the stall.
+      Reproduced on both `c84db8cc-dirty` (pre-revert) and
+      `fb4135a8-dirty` (post-revert), so this is not caused by
+      `0d1418ac`. Next session priority — investigation order:
+      (1) build a v0.3.3-tagged binary and test for the same
+      stall; (2) if pre-branch, packet-trace the stall window;
+      (3) if branch-introduced, bisect substantive code commits
+      (suspects: `54225165`, `1c402e86`, `5bfd2462`).
+      Likely pre-launch blocker for v0.4.0 if it reproduces in
+      any user-visible scenario after a fresh Comprador start.
+      Bridge log preserved at `build/dev-nfs-2026-05-16.log`.
+- [ ] **Deliberate on FUSE-T as the next architectural pivot**
+      (next session, post-fileSync-hold revert). The
+      `ux_unavoidable_wait.md` memory note named FUSE-T as the
+      only architectural escape for honest progress UX during
+      slow backend writes; the 2026-05-16 fileSync-hold attempt
+      bumped into the same wall from a different angle and
+      confirmed the diagnosis. Decision points for the
+      deliberation:
+      - **Acceptance of an install dependency.** FUSE-T is
+        third-party MIT-licensed; current ship is a single
+        notarized .dmg with no prerequisites. Trade single-binary
+        simplicity for honest progress UX.
+      - **First-install friction.** System Extension approval
+        flow on first run (~20 s of "approve in System Settings
+        → Privacy & Security"). Welcome-window onboarding copy
+        needs to absorb this.
+      - **Scope of the migration.** MTP session goroutine and
+        ObjectMap stay; NFS server + go-nfs vendor + helper
+        plumbing all go. ~1 week of careful work + re-testing
+        the multi-storage and AppleDouble cases we paid down on
+        the NFS side.
+      - **Security upside.** Drops the load-bearing invariant #1
+        (127.0.0.1 NFS listener) from CLAUDE.md §Security
+        Invariants; the bridge becomes a FUSE daemon with no
+        listening socket.
+      - **Sequencing relative to v0.4.0.** Letter 13 advised
+        execution-not-investigation for the v0.4.0 push. The
+        FUSE-T move is post-v0.4.0 by default; deliberate
+        whether the progress-dialog problem is severe enough to
+        block the launch instead.
+- [ ] **Decide PR shape on `claude/multi-storage`.** Now 31
+      commits ahead of master (after `9239dcd7`). Each commit is
+      independently reviewable; letters 12 and 13 plus the
+      `9239dcd7` revert receipt have the chronological summary.
+      Push and merge at the architect's pace.
+
+---
+
+## Next concrete code work
+
+- [ ] **Multi-device step 4 — bridge `--device-loc-id` CLI flag.**
+      Per
+      [PLAN-MULTI-DEVICE.md §6](docs/PLAN-MULTI-DEVICE.md) option A.
+      Add the flag in `bridge/main.go`; teach
+      `bridge/mtp/binding.go`'s `DetectDevice` to filter libmtp's
+      raw device list to a single matching Location ID rather
+      than picking the first MTP device on the bus. Swift side:
+      `BridgeProcess.start` already receives `seizeForVendor` /
+      `seizeForProduct`; thread `locationID` through similarly
+      and pass it to the bridge. ~30 lines total, but verification
+      needs two phones plugged in simultaneously to confirm each
+      bridge claims the right one. After this lands, step 5
+      (per-device DeviceWatcher wiring) and step 6 (menu UX)
+      become unblocked.
+
+---
+
+## Pre-launch UX items (block v0.4.0 tag)
+
+Items the launch playbook ([LAUNCH-PLAYBOOK-DRAFT.md](docs/LAUNCH-PLAYBOOK-DRAFT.md))
+assumes have shipped before Day 0. Block the v0.4.0 tag.
+
+- [ ] **User-facing disclosure of the `ptpcamerad` kill.** Comprador's
+      bridge kills `ptpcamerad` (and `AMPDeviceDiscoveryAgent`) to win
+      the USB interface claim from macOS's photo-import broker (see
+      [MISTAKES.md](docs/MISTAKES.md) entries 11, 19 and the seizure
+      work in [DECISIONS.md](docs/DECISIONS.md)). User-visible
+      consequence: while Comprador is running, other apps that read
+      USB cameras and PTP/MTP devices — Image Capture, Photos
+      auto-import, third-party photo importers — temporarily lose
+      access. They recover when Comprador releases the device. This
+      currently has no user-facing disclosure. Surface in three
+      places:
+
+      - **Welcome window** (`MenuBarApp/Sources/WelcomeWindow.swift`)
+        — a single bullet in the "what to expect" copy. Friendly
+        register; aim for the phrasing *"While Comprador is running,
+        Image Capture and Photos auto-import pause for USB cameras.
+        They resume automatically when you eject your phone."*
+      - **Website FAQ**
+        ([docs/WEBSITE-v0.4.0-DRAFT.md](docs/WEBSITE-v0.4.0-DRAFT.md))
+        — a longer FAQ entry explaining the why (macOS's PTP
+        coordinator is single-claim) for users curious about the
+        underlying behavior. Anchor on the symptom, not the
+        mechanism: "if Image Capture seems to stop seeing your
+        camera while Comprador is mounted, that's expected."
+      - **README's "What works"** section — one paragraph for
+        technical readers and blog reviewers writing about the
+        project. Honest disclosure beats discovery-by-bug-report.
+
+      The pattern surveyed in [docs/COLLEAGUE-COPY-DRAFT.md](docs/COLLEAGUE-COPY-DRAFT.md)
+      confirms competitors implying "fully automatic, no friction"
+      and avoiding this disclosure (MacDroid's hero in particular).
+      Our advantage in surfacing it: the disclosure is small, the
+      friction is small, and naming it up front means no support
+      tickets later asking why Image Capture stopped working.
+
+- [ ] **Update detector with Homebrew-aware suppression.** The
+      launch playbook commits to two distribution channels in
+      parallel: direct .dmg from GitHub Releases (the canonical
+      path for non-technical users via the website) and Homebrew
+      Cask (for technical-adjacent users and a credibility marker).
+      Each channel needs a different update story.
+
+      - Direct-DMG users need an in-app update mechanism. Industry
+        standard is **Sparkle** (`https://sparkle-project.org/`),
+        which works with a signed appcast.xml hosted alongside the
+        .dmg artifacts. Sparkle handles signature verification, EdDSA
+        keys, delta updates, the in-app prompt UI, and the relaunch
+        sequence. Mature, well-maintained, the obvious choice.
+      - Homebrew Cask users have `brew upgrade --cask comprador` as
+        their update path. An in-app Sparkle prompt for these users
+        bypasses the package manager they explicitly opted into and
+        breaks the reproducibility they care about. Sparkle must be
+        suppressed.
+
+      Detection of a Homebrew Cask install can use any of:
+
+      1. **Path check.** Homebrew Cask on Apple Silicon installs to
+         `/opt/homebrew/Caskroom/comprador/<version>/` and symlinks
+         (or copies) into `/Applications/`. On Intel: `/usr/local/
+         Caskroom/`. Check whether the running binary's
+         `Bundle.main.bundlePath` resolves under either Caskroom
+         prefix, or check whether either prefix contains a
+         `comprador/<version>` directory.
+      2. **xattr check.** Homebrew sets distinctive extended
+         attributes on Cask-installed artifacts. Less stable than
+         the path check; Homebrew has changed the metadata format
+         before. Use as a secondary signal, not primary.
+      3. **`brew list --cask` shell-out.** The most robust check,
+         but requires shelling out and depends on `brew` being on
+         PATH at runtime. Use as a last-resort verification.
+
+      Recommended behavior when Homebrew is detected:
+
+      - Suppress the Sparkle update prompt entirely.
+      - Optionally, when Sparkle's internal version check detects a
+        new release available, log a one-line hint to console
+        (`NSLog`) pointing at `brew upgrade --cask comprador` so
+        the technical user who tails the log sees it. No UI.
+      - Never block app functionality on update availability.
+
+      File touchpoints: new `MenuBarApp/Sources/UpdateChecker.swift`
+      wiring Sparkle. The Homebrew detection probably belongs in a
+      small `InstallSource.swift` so future code can ask "where did
+      this binary come from?" cleanly.
+
+- [ ] **Hold NFS WRITE response until MTP commit completes.**
+      Symptom (re-surfaced 2026-05-14): architect drag-and-dropped a
+      9.094 GB file (`David.Attenborough…mkv`) into the mount via
+      Finder. Finder's progress bar reached 100% and dismissed in
+      under a minute — the NFS WRITE RPCs to the bridge complete at
+      memory speed. The architect read this as "copy complete," tried
+      to access the file, found it incomplete, and reported a *silent
+      regression*. The transfer was actually fine — the bridge was
+      mid-way through the synchronous MTP SendFile, which is
+      USB-bandwidth-bound at ~22 MB/s and takes ~7 minutes for 9 GB.
+      Bridge log was clean, no errors, file landed byte-perfect on
+      the phone. The bug is the **progress-bar lie**: Finder reports
+      done when bytes arrive at the bridge, not when bytes arrive at
+      the phone.
+
+      **Fix: hold the NFS WRITE FILE_SYNC response until the MTP
+      SendFile actually commits.** The final `WRITE how=2` RPC (the
+      sync commit, currently logged just before MTP SendFile kicks
+      off) should not return success until `LIBMTP_Send_File_From_Handler`
+      has returned cleanly. Finder will then keep the progress bar up
+      for the real duration of the transfer. The apparent copy time
+      goes from ~30s to ~7min for a 9 GB file, which is honest — that
+      IS how long writing 9 GB over USB-MTP takes.
+
+      Trade-off: the NFS client will see writes that take much longer
+      to acknowledge than expected. Most clients tolerate this fine
+      (their write loop just blocks longer on the final flush); risk
+      is a heuristic NFS-client timeout firing on multi-minute syncs.
+      macOS default NFS retransmit timeout is generous (60s base with
+      exponential backoff, ~10min ceiling under default mount opts);
+      the bridge should survive but should be tested against the
+      9 GiB workload before shipping. If timeouts do fire, the
+      fallback is to ack the FILE_SYNC immediately but defer reporting
+      "size" via subsequent stats — coarser but no client-side risk.
+
+      File touchpoints:
+      - `bridge/nfs/write.go` — block the FILE_SYNC commit path on
+        the MTP send completion future. Currently the idle-flush
+        pattern kicks the MTP send asynchronously; the WRITE
+        completes immediately and the architect's "silent failure"
+        is born. The trade is between a fast-but-misleading progress
+        bar and an honest-but-longer-feeling one. The latter is the
+        correct choice for a tool whose value prop is *honesty about
+        what's actually happening*.
+      - Consider: keep async idle-flush for *small* files (where
+        the discrepancy is sub-second and the user benefit of a fast
+        progress bar exceeds the misleading-progress cost), and
+        synchronous commit for *large* files (where the discrepancy
+        is minutes and the misleading progress bar caused a real
+        false-regression report from the architect). Threshold
+        suggestion: 100 MB.
+
+      Acceptance: drag a 9 GB file via Finder; the Finder progress
+      bar stays up for the full ~7-minute MTP commit duration; bytes
+      written to phone advance monotonically alongside the visible
+      progress; final commit lands byte-perfect and progress
+      dismisses simultaneously.
+
+      Captured 2026-05-14 from architect's drag-drop test on the
+      Xperia during the verification sweep. This was the trigger for
+      "hard stop, regression detected"; the diagnosis was that the
+      reported failure mode is in fact the progress-accuracy bug
+      we've been carrying as known UX debt. Promoted from
+      acknowledge-someday to v0.4.0-blocker.
+
+- [ ] **Respectful Defaults pass.** Bundle of small UX items that
+      together codify Comprador as a *respectful utility* — the
+      brand positioning the launch playbook is built on. Each item
+      is five-to-twenty lines of Swift; the value is in shipping
+      them as a coherent set, not piecemeal. The colleague-copy
+      survey ([docs/COLLEAGUE-COPY-DRAFT.md](docs/COLLEAGUE-COPY-DRAFT.md))
+      confirmed competitors imply *fully-automatic, no-friction*
+      and stop there; Comprador's wedge is doing this work that
+      they skip.
+
+      Verify or implement (each):
+      - **Menu-bar-only** (`LSUIElement=true` in Info.plist; no dock
+        icon). Likely already in place; confirm.
+      - **Tooltip on the menu bar icon** showing current state —
+        *"No device connected"* / *"Pixel 6 mounted"* / *"Connecting…"*.
+        State visible without a click.
+      - **Reduced Motion respect.** The connecting-state pulse
+        animation in `AppDelegate.startPulse` should check
+        `NSWorkspace.shared.accessibilityDisplayShouldReduceMotion`
+        and skip the animation when true. Static-icon connecting
+        state is acceptable; the pulse is a flourish, not load-bearing.
+      - **Sleep / wake handling.** Subscribe to
+        `NSWorkspace.willSleepNotification` (unmount + tear down +
+        release USB claim) and `didWakeNotification` (re-detect, reconnect
+        if phone still attached). Without this, sleep-with-phone-
+        mounted produces broken state on wake — Image Capture and
+        others recover; Comprador silently doesn't.
+      - **Don't prevent system sleep.** `IOPMAssertionCreateWithName`
+        with `kIOPMAssertionTypeNoIdleSleep` ONLY while a transfer is
+        actively in flight (NFS WRITE RPCs queued or staging file
+        non-empty). Release immediately on idle. Many indie utilities
+        forget this and quietly burn user battery.
+      - **Welcome window once-only enforcement.** First launch only;
+        not on update, not on relaunch. The `Comprador.didShowWelcome`
+        flag exists; confirm no future feature accidentally re-shows it.
+      - **System notifications sparingly.** Only post
+        `UNUserNotification` for events the user must act on
+        (currently: *"phone connected, choose File Transfer on its
+        screen"*). Audit existing notification sites; remove any
+        *"successfully mounted"* / *"ejected"* / *"transfer complete"*
+        prompts. Notification fatigue is real and recovery from a
+        notification turn-off is hard.
+      - **Clean uninstall.** Drag-to-trash should leave zero
+        artifacts. With v0.4.0's helper retirement this gets dramatically
+        easier — no LaunchDaemon to register, no `/etc/hosts` block
+        to unwind. Verify: drag to trash, restart, look for orphaned
+        plists / preferences / launchd registrations. Mention in
+        website FAQ as a feature.
+      - **No dock bounce, ever.** `NSApp.requestUserAttention` is a
+        sealed entry point; codify in a comment that no caller may
+        invoke it.
+      - **Codify: no telemetry, no phone-home.** Already a security
+        invariant ([docs/SECURITY.md](docs/SECURITY.md)); state as a
+        *UX promise* on the website. Users notice the assertion even
+        if they don't verify the code.
+
+- [ ] **Donation infrastructure — legitimate nudges, no dark patterns.**
+      The project's pitch is respect-by-default; donation flow has to
+      match. The launch playbook
+      ([docs/LAUNCH-PLAYBOOK-DRAFT.md](docs/LAUNCH-PLAYBOOK-DRAFT.md))
+      sketches the strategic frame. Concrete items:
+
+      - **GitHub Sponsors button** on the repository. Five-minute
+        setup; visible on every repo visit. Strictly additive to the
+        existing Interac e-Transfer path in README.md.
+      - **Quiet *"Support Comprador…"* menu item** in the menu bar
+        dropdown. Never bolded, never tagged *"new!"*. Present, not
+        pushy. Opens the Odometer window (item below) or links
+        directly to the donation page — see the Odometer entry for
+        rationale on routing through it.
+      - **"Where the money goes" page** on the website. Concrete
+        numbers: Apple Developer Program $99/year, domain cost,
+        codesigning costs. Honest transparency activates trust where
+        vague *"support our work"* activates suspicion.
+      - **README Support section moved above License**, not buried
+        in the footer below the third-party-notices link. Visible to
+        anyone reading down the page; not intruding on the install
+        path.
+      - **Donor count, opt-in** (if GitHub Sponsors). Quiet visible
+        *"N supporters this month"* on the repo's README. Social proof
+        that's true and verifiable.
+      - **Annual transparency post**, once per year. *"Comprador cost
+        $X to run, received $Y in donations, here's what next year
+        looks like."* Doesn't ask; informs. Builds long-term trust
+        with the user base that cares.
+
+      Dark patterns to refuse, codified here so a future contributor
+      doesn't propose them in good faith:
+
+      - No modal donation dialogs interrupting the connect flow.
+      - No time-pressure copy (*"Only N days left to…"*).
+      - No confirm-shaming dismiss buttons.
+      - No first-launch donation prompt.
+      - No pop-up frequency tricks (showing every N launches).
+      - No pre-checked donation checkboxes anywhere.
+      - No roach-motel recurring donation flows; cancellation as easy
+        as starting.
+      - No fabricated testimonials or inflated stats.
+
+- [ ] **Odometer window** — user-initiated usage stats with quiet
+      donation routing. New menu bar item (*"Odometer…"*) opens a
+      modest window showing the user their own Comprador mileage.
+      Inverts the donation flow from app-pushes-ask to
+      user-pulls-info-sees-own-value-encounters-support-option.
+
+      Stats to show (capped — do not add more without re-discussing):
+      - Total bytes transferred (in and out, separated for honesty)
+      - Total files transferred
+      - Devices ever mounted (count; optionally names, opt-in to show)
+      - First-use date
+      - Last mount date
+      - Cumulative mount-time (hours)
+
+      Stats to deliberately NOT show:
+      - Per-device transfer breakdowns (creates a privacy-share hazard
+        if a user screenshots)
+      - File-type histograms (same)
+      - Time-of-day patterns (creepy)
+
+      UI:
+      - Window opens from menu bar dropdown via the *"Odometer…"*
+        item (single click, no submenu nesting)
+      - Stats laid out simply — labels + numbers — no charts or
+        graphs in v0.4.0
+      - Footer button: *"Support Comprador"* (single button, neutral
+        verb). Opens donation page in the user's default browser.
+      - Footnote near the bottom of the window: *"All values stored
+        locally on this Mac. Nothing leaves your device."* Codifies
+        the no-telemetry promise in the place a user might wonder.
+      - *"Reset counters"* link (small, low-contrast, near the
+        footnote). Privacy gesture for users who want a fresh slate.
+
+      Storage: a small SQLite file or plist in the app's container
+      (Application Support / com.comprador.app/). Increment on each
+      mount, each completed transfer, each device first-seen. Never
+      transmitted.
+
+      Naming: *"Odometer"* (deliberate — on-brand for the
+      mechanical-historical comprador-as-ledger-keeper register).
+      Not *"Activity,"* not *"Usage,"* not *"Statistics."*
+
+      Feature-creep risk to monitor: Odometer → achievement
+      badges → leaderboards → gamification. Each step looks small
+      from the previous. Discipline: ship the modest version, refuse
+      additions. The Odometer is honest mileage, not a dashboard.
+
+- [ ] **Website CSS — Apple-clean composition with period flavor.**
+      The body copy in
+      [docs/WEBSITE-v0.4.0-DRAFT.md](docs/WEBSITE-v0.4.0-DRAFT.md)
+      and the gh-pages preview at
+      <https://terraceonhigh.github.io/Comprador/> currently render
+      via `build/render-website.py`'s clinical-modern template. That
+      template fights the comprador frame — the body copy honours the
+      metaphor structurally but the typography and colour palette
+      don't. The CSS layer needs a pass that takes the Merian/Sluyter
+      pomegranate icon as seriously as the icon already takes itself:
+
+      - Cream paper background (not pure white)
+      - Deep crimson — seal-wax / merchant-chop register — as the
+        single accent. The bloom in the existing logo plate is
+        already roughly this red; color-pick from there.
+      - Transitional serif typography (Caslon, Baskerville, EB
+        Garamond, Source Serif — anything that belongs to the same
+        century as the engraving)
+      - Ornamental hairline rules between sections (hairline +
+        small ornament + hairline, not the modern flat HR)
+      - Period-marginalia treatment for the etymology / fine-print
+        ("Apple Silicon, macOS 13 or later. No iPhone support.")
+      - Bordered-engraving frame around the hero image, period
+        convention rather than modern edge-to-edge
+      - The sign-off (`Comprador. At your service.`) gets small caps
+        + the seal-red, sitting on a hairline ornament — the page's
+        single explicit period inscription, in keeping with the
+        Apple-with-period-flavor distribution we agreed
+      - Body copy stays Apple-clean throughout; the CSS does the
+        period work without the prose committing to the register
+
+      **Blocker: needs the architect to spend a few hours on
+      Pinterest** (or equivalent moodboard) gathering visual
+      references they actually like — period commercial broadsides,
+      18th-century natural-history engravings, modern reissues of
+      the same (the Merian/Sluyter plate's own milieu), Wes
+      Anderson title cards if relevant, museum-collection
+      letterpress samples. Without that reference set, any CSS pass
+      is guessing at what *feels right* and risks landing somewhere
+      twee or LARP-y. Once the moodboard exists, the CSS is a
+      bounded afternoon of work — typeface licensing decisions,
+      colour values, hairline-ornament SVG sourcing, then layout.
+
+      Risk to flag once unblocked: period treatment done halfway
+      reads as costume. The discipline mirrors the Odometer's: commit
+      fully to the period register in the visual layer, or stay
+      clinical-modern. The middle is the bad place.
+
+      Cross-references:
+      [docs/COLLEAGUE-COPY-DRAFT.md](docs/COLLEAGUE-COPY-DRAFT.md)
+      (positioning context),
+      [docs/APPLE-COPY-CONVENTIONS-DRAFT.md](docs/APPLE-COPY-CONVENTIONS-DRAFT.md)
+      (the body-copy register the visual is supposed to support),
+      and the gh-pages preview as the current baseline.
+
+- [ ] **Documentation sweep before v0.4.0 primetime.** The README
+      is the first surface most GitHub-arriving users see; secondary
+      docs (USER.md, PRE-LAUNCH.md, ARCHITECTURE.md, FAQ entries
+      across multiple files) are where curious users dig in next.
+      All of these were touched in the 2026-05-11 staleness audit
+      (commit `ccf324fe`) which fixed the WebDAV-still-mentioned
+      bugs but did not rewrite for marketing or post-v0.4.0 feature
+      set. A careful pre-tag pass is needed.
+
+      Items to address in the README specifically:
+
+      - **Headline and tagline** — confirm they still read right
+        after the marketing arc (composite copy + Apple-conventions
+        + colleague survey + Soduto footer + SEO subhead all settled
+        today, but only on the website draft; the README hasn't
+        been updated to match).
+      - **"Known issues" section** — multi-device shipped (drop the
+        *"Single device at a time (today)"* line), AppleDouble
+        filter shipped, TTL refresh shipped. The "first-plug-after-
+        app-start may fail" section needs honest update against
+        whatever v0.4.0 actually does about it.
+      - **Support section moved above License** per the donation
+        infrastructure TODO.
+      - **"What works" enumerates v0.4.0 features** — per-storage
+        quota, phone-side change reflection, AppleDouble filtering,
+        concurrent multi-device, helper retirement.
+      - **FAQ stale-claim sweep** — especially anything mentioning
+        WebDAV, the helper, or the privileged-mount path that's
+        gone.
+      - **Code-fenced commands** still resolve correctly
+        (`make app-swiftc`, `make test-md5`, `make bridge-test`,
+        the new `make test-e2e` if it lands).
+      - **Download / release-link URLs** point at the v0.4.0
+        release page once it exists.
+
+      Other documentation surfaces that should sweep in the same
+      pass:
+
+      - **USER.md** — does the user model still match the actual
+        v0.4.0 user (now that some "future" items are present-tense)?
+      - **PRE-LAUNCH.md** — go/no-go items, what's disclosed, what's
+        deferred. Several items shipped today; the checklist needs
+        a pass.
+      - **ARCHITECTURE.md** — WebDAV retirement may have left stale
+        references; the per-device subprocess shape of multi-device
+        wasn't documented when this was written.
+      - **DECISIONS.md** — confirm no decisions were invalidated by
+        v0.4.0's shape that aren't already noted.
+      - **MISTAKES.md** — entries whose underlying code retires
+        with v0.4.0 (WebDAV-section already tagged with the
+        sign-of-life header; helper-section similarly). Spot-check.
+      - **NOTICES.md** — third-party-licence accounting, especially
+        if any vendored dependency moved.
+
+      Budget: half a day of careful reading + writing. The v0.4.0
+      ship blocks on this not being stale. A blog post / Show HN
+      / Mac-press article from the launch playbook will quote from
+      whatever's at the top of the README; getting the wording
+      right *here* is the marketing channel that matters most.
+
+---
+
+## Verification follow-ups
+
+Carried forward from DECISIONS.md, not blocking but real:
+
+- [ ] **9 GiB Attenborough.mkv vmmap retake on the cgo-fix
+      bridge.** [DECISIONS.md "Vanquishing the per-callback
+      VM_ALLOCATE leak"](docs/DECISIONS.md) lists this as the
+      proper acceptance criterion (physical footprint < 1 GB,
+      VM_ALLOCATE regions < ~50 vs the pre-fix 409). Today's
+      partial confirmation was 49.6 MB transfer → 8.4 MB RSS —
+      directional evidence but not the spec'd test.
+
+---
+
+## Post-v0.4.0 backlog — durable corpus stewardship
+
+Forward-looking items that wait until v0.4.0 has shipped and the
+project is a stable reference point an external essay could
+plausibly cite.
+
+- [ ] **Externalize the methodological corpus.** Raised during the
+      2026-05-11 evening reflection on whether `correspondence/`
+      and the meta-docs have value beyond the project. Four
+      candidate threads identified, each is a real piece of writing,
+      pick one and do well rather than try to harvest all at once:
+
+      1. **AI-pair-programming methodology essay** drawing on the
+         `correspondence/` archive. The thinnest existing supply in
+         the public discourse; most published material on
+         working-with-AI is hype, demos, or manifestos rather than
+         working examples over real time. Comprador has the rare
+         primary-source material — a month of disciplined
+         architect-to-agent correspondence on a real product, with
+         methodological lessons captured *in the moment they were
+         learned* rather than retrospectively.
+      2. **Three to five distilled methodological essays** on the
+         generalizable lessons: *run the syscall before designing a
+         privileged helper*, *check the scope of the evidence not
+         just its quality*, *a wrong claim that prompts the right
+         investigation*. These work whether the collaborator is a
+         Claude, a junior engineer, or oneself six months ago.
+         Lower distinctiveness but durable.
+      3. **Focused macOS-internals posts** on the specific findings
+         the project produced — the webdavfs writeseq cap, the
+         ptpcamerad userspace-broker realization, the
+         ImageCaptureCore PTP-mode scope ceiling, the BTM-corruption
+         arc. Small audience (working indie Mac developers) but the
+         *right* audience; Apple's official docs will never carry
+         these findings.
+      4. **A "how this project documents itself" pattern-paper** —
+         the decision-journal + numbered mistakes log + plan docs
+         + correspondence-style retrospectives as a working model
+         for low-staffed open-source projects with high quality
+         bars. Likely landing point: a single Hacker News post.
+
+      **Right time to publish: post-v0.4.0 ship.** Until then, the
+      material is in the right place — captured in-repo, available
+      for reference, not yet curated for an external audience. The
+      *"we shipped it, here's what it taught us"* framing earns
+      much more attention than the *"we're shipping it eventually"*
+      framing.
+
+      **Blocked on:** confirmation that humboldt-side backup is live
+      and `correspondence/` is captured. The corpus itself is what
+      makes the harvest possible; protecting it before any external
+      publication is non-negotiable, because publishing creates
+      both the value-of-survival incentive *and* (modestly) the
+      risk-of-loss attention. The calling card to humboldt's
+      Claude is at
+      [bazzite-server-plan/Correspondance/12-from-comprador-on-backup.md](../bazzite-server-plan/Correspondance/12-from-comprador-on-backup.md).
+      Once backup confirms, this item unblocks.
+
+---
+
+## Tidying
+
+Discussed 2026-05-11; deliberately deferred to a focused tidying
+session rather than rolled into a code commit. Organized by
+reversibility — Tier 1 is clearly safe, Tier 3 is real
+architectural cleanup.
+
+### Tier 1 — safe deletions
+
+- [ ] **Delete `bridge/cmd/ictest1/` and `bridge/cmd/ictest2/`**
+      plus their Makefile targets (`ictest1`, `ictest2`) and the
+      `ICTEST1_OUT` / `ICTEST2_OUT` variables.
+      [DECISIONS.md "ImageCaptureCore investigation"](docs/DECISIONS.md)
+      explicitly marks these "deletable in a single commit once
+      the receipt in RESEARCH-IMAGECAPTURECORE.md is sufficient on
+      its own" — and it is. Net: ~350 lines of Swift gone, no
+      information loss.
+- [ ] **Delete `build/dir-diff.py` and `build/list-phone.py`.**
+      Ad-hoc Python scripts from the 2026-05-11 directory-copy
+      investigation, superseded by `test-md5.sh` as the canonical
+      verification tool. Already gitignored (`build/` is
+      gitignored), so this is working-directory hygiene only —
+      `rm` and move on.
+
+### Tier 2 — reasonable, worth a moment first
+
+- [x] **`docs/V0.4.0-DRAFT.md` drafted 2026-05-11.** Collects
+      the v0.4.0 retirement items into one place, mirroring
+      V0.3.3.md format. Architect to review and promote to
+      `V0.4.0.md` (drop the DRAFT markers in filename and inline
+      header) when v0.4.0 work picks up. Five items in the
+      draft: WebDAV retirement, helper retirement, the
+      system-extension entitlement decision, V0.3.3 #2 closure
+      contingent on the helper-retirement choice, and the cgo
+      acceptance-test retake.
+- [x] **Trim the "Original spec preserved for reference" tails**
+      in shipped items. 2026-05-11: V0.3.3.md item #1 trimmed
+      (~30 lines) and TODO.md "Phone-side checksum verification"
+      trimmed (~30 lines). Items #4 and #5 didn't actually grow
+      tails — earlier framing overcounted.
+
+### Tier 3 — real architectural cleanup (bigger, defer to a focused session)
+
+These are substantial PRs, not "tidying." Filed here so they're
+not forgotten when V0.4.0 is in flight.
+
+- [ ] **Retire the WebDAV mount path entirely.** NFS has been
+      the default since v0.3.0 (2026-05-09) and is verified
+      working for the architect's daily use. The WebDAV
+      apparatus is dead code: `bridge/webdav/` package, the
+      `MountManager.mount` (vs `mountNFS`) WebDAV branch in
+      `MenuBarApp/Sources/MountManager.swift`,
+      `ResumeCompanion` and its companion port, the writeseq-
+      cap heuristics, the bridge-side resume endpoint, the
+      WebDAV-specific code paths in BridgeProcess. Likely
+      ~1/3 of the codebase. Removing it shrinks the bundle,
+      simplifies the connect flow, and eliminates the
+      ~90s mount-time hint copy from the menu.
+- [ ] **Retire the privileged helper.** Per SECURITY.md, the
+      single largest privilege-escalation surface in the
+      bundle. NFS doesn't need it for the mount; the only
+      remaining use is the optional cosmetic `.local`
+      hostname rewrite (`MenuBarApp/Sources/HelperClient.swift`).
+      With WebDAV retired (above), the only thing the helper
+      still does is /etc/hosts editing for the
+      Pixel-6.local → Pixel-6 cosmetic. Decide: (a) drop the
+      feature entirely and live with `.local` (V0.3.3 #2's
+      option C); (b) drop the helper, accept the cosmetic
+      via a one-time root prompt at install (option B of #2);
+      (c) keep the helper as a tiny single-purpose daemon.
+      Decision blocks the deletion of `helper/`,
+      `MenuBarApp/Sources/HelperClient.swift`, the
+      `BUNDLE_HELPER` Makefile recipe, the LaunchDaemon
+      plist, and the SMAppService.daemon registration.
+
+---
+
+## ✓ Closed — cgo callback buffer reuse
+
+Shipped 2026-05-06 in commit `90fb7216` ("mtp: reuse one buffer
+per session in cgo callbacks"). Multi-device's hard prerequisite
+is met; the work in [PLAN-MULTI-DEVICE.md](docs/PLAN-MULTI-DEVICE.md)
+is unblocked. Implementation is in
+[bridge/mtp/binding_callbacks.go](bridge/mtp/binding_callbacks.go)
+(reuses `entry.buf` from the registry instead of `make([]byte, ...)`
+per callback) and [bridge/mtp/binding.go](bridge/mtp/binding.go)
+(`readerEntry` / `writerEntry` hold the buffer alongside the
+io.Reader/io.Writer). Receipt and the alternatives considered are
+in [DECISIONS.md "Vanquishing the per-callback VM_ALLOCATE
+leak"](docs/DECISIONS.md).
+
+Empirical confirmation is the next missing piece — the original
+9 GiB Attenborough vmmap reading should be re-taken on the fixed
+bridge to verify physical footprint stays under 1 GB. Not done
+yet; not blocking.
 
 ---
 
@@ -131,22 +997,13 @@ DEVICE.md documents this as non-negotiable. Don't reorder.
 
 ## High impact (correctness / UX friction)
 
-- [ ] **cgo MTP callback: reuse buffer per session instead of
-      allocating per call.** `bridge/mtp/binding_callbacks.go`'s
-      `goDataGetFunc` and `goDataPutFunc` each call
-      `make([]byte, int(wantlen))` on every invocation. For a 9 GiB
-      transfer that's ~400 allocations of ~22 MiB each, all 9 GiB
-      of which Go's runtime hands back to the OS via `MADV_FREE`
-      but stays attributed to the process (visible as 409
-      `VM_ALLOCATE` regions in `vmmap`) until kernel reclaim.
-      On low-RAM Macs the OS pages it to swap and the system
-      thrashes. Fix: hold a single `[]byte` buffer in the registry
-      entry alongside the io.Reader/io.Writer; reuse across
-      callbacks, grow once if a wantlen exceeds current capacity.
-      Caps Go-side memory at one chunk (~22 MiB) per concurrent
-      MTP operation. Receipt + analysis in MISTAKES.md entry 8a.
-      After the fix, profile to confirm and to surface any
-      remaining C-side libmtp allocations.
+- [x] **cgo MTP callback: reuse buffer per session instead of
+      allocating per call.** Shipped 2026-05-06 in `90fb7216`. See
+      the closed roadmap-imperative section above and
+      [DECISIONS.md "Vanquishing the per-callback VM_ALLOCATE
+      leak"](docs/DECISIONS.md) for the rationale and alternatives
+      considered. Verification by `vmmap` re-take on a multi-GiB
+      transfer is the open follow-up.
 
 - [ ] **Make GETs cancellable (revisit longstanding TODO).** Tied
       to MISTAKES.md entries 11d (deadlock under read pressure)
@@ -302,46 +1159,57 @@ DEVICE.md documents this as non-negotiable. Don't reorder.
 
 ## Testing infrastructure
 
-- [ ] **Phone-side checksum verification.** Currently we md5 the bridge's
-      assembled .partial file before MTP commit (see `resume.commit` in
-      `bridge/webdav/resume_endpoint.go`) and compare to a Mac-side md5
-      of the source. This catches assembly bugs (wrong byte offsets,
-      truncated POSTs, etc.) without paying the 5-10 minute MTP read-back
-      cost per multi-GiB file. PTP/USB carry CRCs, so md5(local-partial)
-      == md5(source) is strong evidence that md5(phone) == md5(source).
+- [x] **Phone-side checksum verification.** Shipped 2026-05-11 as
+      `make test-md5` / `test-md5.sh` per option 1 of the original
+      ADB-shell-md5 analysis. Gated by `COMPRADOR_TESTING_ADB=1`
+      env var so that ADB usage is explicitly developer-only — the
+      shipping product still doesn't require Developer Options
+      enabled on the user's phone. The script does
+      `find <phone_dir> -exec md5sum` via adb shell, computes
+      Mac-side md5 of the source tree, and reports per-file
+      matches / misses / mismatches. AppleDouble `._*` files are
+      excluded (filtered server-side per V0.3.3.md item #3).
+      Verified against the 2026-05-11 ECON101 transfer: 430/432
+      byte-perfect, the 2 deltas are both `.DS_Store` files that
+      Finder legitimately regenerates at the destination.
 
-      But it's not a *true* round-trip check. To catch the rare case
-      where libmtp itself misbehaves (or the device-side filesystem
-      corrupts on write — Android's FUSE-based MTP layer has had bugs
-      historically), we'd want md5 computed *on the phone*.
+- [ ] **End-to-end test harness (`test-e2e.sh`).** Builds on
+      [docs/AUTOMATED-TESTING-DRAFT.md](docs/AUTOMATED-TESTING-DRAFT.md)'s
+      survey of Mac automation surfaces and the recommended
+      shell-first architecture. ~90 lines, no new dependencies.
+      Composes with existing `test-md5.sh` for bulk-transfer
+      verification.
 
-      Options worth weighing if/when this becomes worth doing:
+      Flow: precondition the phone to MTP mode (via `adb shell svc
+      usb setFunction`), wait up to 120s for the Comprador-mounted
+      volume to appear under `/Volumes/`, smoke-list it, do a
+      random-payload write+verify (`cp` + ADB md5 round-trip),
+      do a read+verify (`cp` back + diff), clean up the phone-side
+      artifact, eject via `diskutil unmount`. Report pass/fail.
 
-      1. **ADB shell `md5sum /sdcard/Download/<file>`.** Cheapest by far,
-         single command. But ADB is explicitly out of scope for the
-         shipping product (CLAUDE.md "Why not ADB?" — requires Developer
-         Options + USB Debugging, which is the friction we're avoiding).
-         For the test harness only, gating ADB usage behind a
-         `COMPRADOR_TESTING_ADB=1` env var would be acceptable: we don't
-         need the user to enable Developer Options to use Comprador, only
-         the developer running tests.
+      Key design decisions from the survey:
 
-      2. **MTP `LIBMTP_Get_File_To_Handler` with an md5-computing
-         handler.** Bypasses Finder/webdavfs entirely on the read path;
-         streams device → libmtp → md5. Same MTP throughput cost as the
-         WebDAV round-trip, no improvement on the bottleneck. Only useful
-         if we want to verify *MTP-readback* specifically rather than
-         "what's stored on the device."
+      - **Shell beats AppleScript for almost everything.** Five of
+        six test needs are pure filesystem ops. `osascript` is only
+        worth invoking if we later want to verify Finder's
+        drag-and-drop verb *specifically* (which exercises the
+        same bridge path as `cp`, so probably not).
+      - **`diskutil unmount` beats `osascript`** for eject —
+        no Automation permission prompt.
+      - **No sudo needed.** `mount -t nfs` to localhost is
+        unprivileged (Comprador's helper-free path).
+      - **GUI session required** for any AX-based variants —
+        rules out headless CI Macs, but the pure-shell pipeline
+        runs fine without a logged-in session.
+      - **Gate behind `COMPRADOR_TESTING_ADB=1`** matching the
+        existing `test-md5.sh` convention.
 
-      3. **Companion phone app exposing a "hash this file" intent.** A
-         tiny Android side-loadable that listens for an intent and
-         returns md5. Would also avoid Developer Options. Heavy lift for
-         a testing convenience.
-
-      Recommendation: ship option 1 as a `make test-md5` target
-      (developer-side only, never bundled into the user-facing app)
-      whenever we next have a reason to suspect MTP write integrity. For
-      now, the bridge-side md5-on-commit log is sufficient.
+      Makefile target: `make test-e2e` mirroring `make test-md5`.
+      Expected duration: ~30 seconds per run if the phone is
+      already in MTP mode + plugged in; longer if the mount has
+      to be re-established. Suitable for pre-merge gates once
+      stabilized, possibly with a `make test-quick` subset that
+      skips the bulk transfer.
 
 ## Low impact (completeness)
 

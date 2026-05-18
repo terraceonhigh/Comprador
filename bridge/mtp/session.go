@@ -25,17 +25,32 @@ type ObjectMeta struct {
 // Directories are lazily populated: a directory exists in the map once its parent
 // has been listed, but its children are only fetched when ListDir is called.
 type ObjectMap struct {
-	mu         sync.RWMutex
-	byPath     map[string]*ObjectMeta
-	byID       map[uint32]*ObjectMeta
-	populated  map[string]bool // tracks which directories have had their children fetched
+	mu        sync.RWMutex
+	byPath    map[string]*ObjectMeta
+	byID      map[uint32]*ObjectMeta
+	// populated maps directory paths to the time their children were last
+	// fetched from the device. A zero time (or missing key) means never
+	// populated. The non-zero time supports a TTL-based staleness check:
+	// EnsurePopulated treats anything older than directoryTTL as in need of
+	// refresh, so phone-side mutations (the user deletes a file via the
+	// phone's Files app) surface on the next directory access through the
+	// NFS mount within a couple seconds. See V0.3.3.md item #1 for the
+	// motivation.
+	populated map[string]time.Time
 }
+
+// directoryTTL bounds how long a directory's enumeration is trusted before
+// the next access forces a re-fetch from the device. 2 s is the spec from
+// V0.3.3.md item #1 — slow enough to amortize the libmtp OpListDir cost
+// across burst Finder reads, fast enough that a phone-side delete surfaces
+// while the user is still looking at the mount.
+const directoryTTL = 2 * time.Second
 
 func NewObjectMap() *ObjectMap {
 	return &ObjectMap{
 		byPath:    make(map[string]*ObjectMeta),
 		byID:      make(map[uint32]*ObjectMeta),
-		populated: make(map[string]bool),
+		populated: make(map[string]time.Time),
 	}
 }
 
@@ -78,18 +93,69 @@ func (m *ObjectMap) InvalidateDir(dirPath string) {
 	delete(m.populated, strings.TrimSuffix(dirPath, "/"))
 }
 
-// IsPopulated returns whether a directory's children have been fetched.
+// IsPopulated returns whether a directory's children have been fetched
+// (at any point — does not consider freshness). For freshness-aware checks
+// use IsFresh.
 func (m *ObjectMap) IsPopulated(dirPath string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.populated[dirPath]
+	return !m.populated[dirPath].IsZero()
 }
 
-// MarkPopulated marks a directory as having had its children fetched.
+// IsFresh returns whether a directory's enumeration is both populated and
+// younger than directoryTTL. Callers should re-enumerate if this returns
+// false. Separate from IsPopulated because the bridge's first-access
+// behaviour ("never seen this directory; fetch its children") and its
+// refresh behaviour ("seen it but cache is stale") want different code
+// paths (the latter has to reconcile new vs old entries to surface
+// phone-side deletes).
+func (m *ObjectMap) IsFresh(dirPath string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	t := m.populated[dirPath]
+	return !t.IsZero() && time.Since(t) < directoryTTL
+}
+
+// MarkPopulated marks a directory as having had its children fetched
+// (timestamp = now). EnsurePopulated will trust this for up to
+// directoryTTL before forcing a re-fetch.
 func (m *ObjectMap) MarkPopulated(dirPath string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.populated[dirPath] = true
+	m.populated[dirPath] = time.Now()
+}
+
+// removeRecursive deletes meta at dirPath plus every descendant entry
+// (anything with dirPath + "/" as a prefix). Used by the staleness-
+// refresh path: when a directory disappears from the device's enumeration
+// (phone-side rmdir), all of its cached descendants are orphans and need
+// to go too — otherwise a subsequent Stat or Open on a deleted descendant
+// returns the cached entry and the bridge tries to read a phone object
+// that no longer exists.
+//
+// Caller must hold m.mu.
+func (m *ObjectMap) removeRecursiveLocked(dirPath string) {
+	if meta, ok := m.byPath[dirPath]; ok {
+		delete(m.byPath, dirPath)
+		delete(m.byID, meta.ID)
+	}
+	delete(m.populated, dirPath)
+	prefix := dirPath + "/"
+	for p, meta := range m.byPath {
+		if strings.HasPrefix(p, prefix) {
+			delete(m.byPath, p)
+			delete(m.byID, meta.ID)
+			delete(m.populated, p)
+		}
+	}
+}
+
+// RemoveRecursive removes a path and all its descendants from the map.
+// See removeRecursiveLocked for rationale.
+func (m *ObjectMap) RemoveRecursive(dirPath string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.removeRecursiveLocked(dirPath)
 }
 
 // ListChildren returns cached children of a directory (does not fetch from device).
@@ -122,6 +188,7 @@ const (
 	OpDelete
 	OpCreateFolder
 	OpListDir // lazy enumeration of a single directory
+	OpRefreshStorages // re-query LIBMTP_Get_Storage to refresh free/max bytes per storage
 )
 
 // MTPRequest is sent to the session goroutine.
@@ -149,17 +216,25 @@ type MTPResponse struct {
 type Session struct {
 	device   *Device
 	Objects  *ObjectMap
-	storages []Storage // cached at session init; capacity/free reported via WebDAV quota
-	requests chan MTPRequest
-	done     chan struct{}
+	// storages is the cached storage list. Snapshotted at session init and
+	// refreshed via OpRefreshStorages (e.g. on each FSStat call so Finder sees
+	// up-to-date per-storage free numbers). Protected by storagesMu because
+	// the session goroutine writes it (during refresh) while NFS handler
+	// goroutines read it via TotalBytes / FreeBytes / StorageForPath.
+	storages   []Storage
+	storagesMu sync.RWMutex
+	requests   chan MTPRequest
+	done       chan struct{}
 }
 
 // TotalBytes returns the sum of MaxCapacity across all storages on the device.
-// Used to populate DAV:quota-used-bytes / quota-available-bytes so Finder's
-// preflight free-space check (statfs(2)) sees a real number. Without this,
-// webdavfs reports zero bytes and Finder refuses copies > a small threshold
-// with "(error code 100060)" — having never sent a single byte to the bridge.
+// Used as the aggregate fallback when FSStat is called at the mount root or
+// against an unknown path; per-storage routing (via StorageForPath) is
+// preferred for any path under a specific storage subtree so that Finder's
+// "X GB available" string is accurate for the storage the user is browsing.
 func (s *Session) TotalBytes() uint64 {
+	s.storagesMu.RLock()
+	defer s.storagesMu.RUnlock()
 	var n uint64
 	for _, st := range s.storages {
 		n += st.MaxBytes
@@ -168,10 +243,13 @@ func (s *Session) TotalBytes() uint64 {
 }
 
 // FreeBytes returns the sum of FreeSpaceInBytes across all storages.
-// Snapshotted at session open; not refreshed mid-session — the cost of a
-// re-query through the libmtp PTP transport (~hundreds of ms) is not worth
-// the precision for a number Finder uses purely as a sanity check.
+// Aggregate fallback; per-storage values come through StorageForPath, which
+// the bridge's FSStat handler uses preferentially. RefreshStorages should
+// be called before reading these if up-to-date numbers matter — the slice
+// is mutated only inside the session goroutine.
 func (s *Session) FreeBytes() uint64 {
+	s.storagesMu.RLock()
+	defer s.storagesMu.RUnlock()
 	var n uint64
 	for _, st := range s.storages {
 		n += st.FreeBytes
@@ -179,9 +257,57 @@ func (s *Session) FreeBytes() uint64 {
 	return n
 }
 
+// StorageForPath resolves a path's owning Storage, or returns nil if the path
+// is at the mount root or under an unknown first segment. The first non-empty
+// component of `segments` is matched against `sanitizeName(st.Description)`
+// for each known storage — same form initStorages writes into the ObjectMap
+// at `"/" + sanitizeName(st.Description)`.
+//
+// Returns nil for root-level queries (so handlers can fall back to aggregate
+// reporting without surfacing an error to the NFS client).
+func (s *Session) StorageForPath(segments []string) *Storage {
+	first := ""
+	for _, seg := range segments {
+		if seg != "" {
+			first = seg
+			break
+		}
+	}
+	if first == "" {
+		return nil
+	}
+	s.storagesMu.RLock()
+	defer s.storagesMu.RUnlock()
+	for i := range s.storages {
+		if sanitizeName(s.storages[i].Description) == first {
+			return &s.storages[i]
+		}
+	}
+	return nil
+}
+
+// RefreshStorages re-queries libmtp for the device's storage list and replaces
+// the cached slice atomically. Synchronous: blocks the caller until the session
+// goroutine has refreshed. Used on each FSStat call so Finder sees free-space
+// numbers that decrement after a write rather than the snapshot taken at
+// session open. libmtp's LIBMTP_Get_Storage refreshes all storages in one call;
+// per-storage refresh isn't exposed.
+func (s *Session) RefreshStorages() error {
+	resp := s.Do(MTPRequest{Op: OpRefreshStorages})
+	return resp.Err
+}
+
 // NewSession opens a device and populates the root-level storage entries.
+// Equivalent to NewSessionForLocation(0): first-detected device.
 func NewSession() (*Session, error) {
-	dev, err := DetectDevice()
+	return NewSessionForLocation(0)
+}
+
+// NewSessionForLocation opens the device matching the given macOS IOKit
+// USB Location ID (or the first-detected device if locationID==0) and
+// populates the root-level storage entries.
+func NewSessionForLocation(locationID uint32) (*Session, error) {
+	dev, err := DetectDeviceForLocation(locationID)
 	if err != nil {
 		return nil, err
 	}
@@ -221,10 +347,17 @@ func (s *Session) Do(req MTPRequest) MTPResponse {
 	return <-req.Response
 }
 
-// EnsurePopulated makes sure the children of dirPath have been fetched from the device.
-// This is safe to call from any goroutine — the actual MTP call runs on the session goroutine.
+// EnsurePopulated makes sure the children of dirPath have been fetched from
+// the device and are within directoryTTL of the present. The actual MTP call
+// runs on the session goroutine; this method is safe from any caller.
+//
+// "Fresh" is the load-bearing word: a directory whose enumeration is older
+// than directoryTTL gets re-fetched even though we already have its
+// children cached. That re-fetch reconciles against phone-side mutations
+// (the user deletes a file via the phone's Files app and we surface it in
+// Finder within a couple seconds). See V0.3.3.md item #1.
 func (s *Session) EnsurePopulated(dirPath string) {
-	if s.Objects.IsPopulated(dirPath) {
+	if s.Objects.IsFresh(dirPath) {
 		return
 	}
 	s.Do(MTPRequest{Op: OpListDir, Path: dirPath})
@@ -288,23 +421,36 @@ func (s *Session) dispatch(req MTPRequest) MTPResponse {
 	case OpListDir:
 		entries := s.populateDir(req.Path)
 		return MTPResponse{Entries: entries}
+	case OpRefreshStorages:
+		storages, err := s.device.GetStorages()
+		if err != nil {
+			return MTPResponse{Err: err}
+		}
+		s.storagesMu.Lock()
+		s.storages = storages
+		s.storagesMu.Unlock()
+		return MTPResponse{}
 	default:
 		return MTPResponse{Err: fmt.Errorf("unknown op: %d", req.Op)}
 	}
 }
 
 // initStorages fetches storage list and registers them as top-level directories.
+// Runs in NewSession before the session goroutine starts, so no concurrent
+// readers exist yet; the lock here is for consistency with the access pattern.
 func (s *Session) initStorages() error {
 	storages, err := s.device.GetStorages()
 	if err != nil {
 		return err
 	}
+	s.storagesMu.Lock()
 	s.storages = storages
+	s.storagesMu.Unlock()
 
 	log.Printf("Found %d storage(s)", len(storages))
 	for _, st := range storages {
-		log.Printf("  Storage %d: %s (%.1f GB free / %.1f GB total)",
-			st.ID, st.Description,
+		log.Printf("  Storage %d: %q → sanitized %q (%.1f GB free / %.1f GB total)",
+			st.ID, st.Description, sanitizeName(st.Description),
 			float64(st.FreeBytes)/1e9, float64(st.MaxBytes)/1e9)
 
 		storagePath := "/" + sanitizeName(st.Description)
@@ -323,12 +469,20 @@ func (s *Session) initStorages() error {
 	return nil
 }
 
-// populateDir fetches children of a directory from the device and caches them.
-// Must be called from the session goroutine.
+// populateDir fetches children of a directory from the device, caches them,
+// and reconciles against any cached state from a previous enumeration that
+// has aged past directoryTTL. Must be called from the session goroutine.
+//
+// Reconciliation: when called against a directory that's already populated
+// but stale, the new device-side enumeration is treated as ground truth.
+// Entries present in the new enumeration are upserted; entries present in
+// the old cache but absent from the new enumeration are removed
+// recursively (the user deleted them from the phone). This is the
+// mechanism by which phone-side mutations surface in Finder.
 func (s *Session) populateDir(dirPath string) []*ObjectMeta {
 	dirPath = strings.TrimSuffix(dirPath, "/")
 
-	if s.Objects.IsPopulated(dirPath) {
+	if s.Objects.IsFresh(dirPath) {
 		return s.Objects.ListChildren(dirPath)
 	}
 
@@ -358,6 +512,27 @@ func (s *Session) populateDir(dirPath string) []*ObjectMeta {
 		return nil
 	}
 	log.Printf("Lazy enumerate %s: %d entries", dirPath, len(entries))
+
+	// Build the set of paths present in the new enumeration. We'll use this
+	// to find orphans from any prior cached state.
+	newPaths := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		newPaths[dirPath+"/"+sanitizeName(e.Name)] = true
+	}
+
+	// Reconcile: anything in the old cache for this directory that the
+	// device no longer reports is a phone-side delete; remove it (and any
+	// cached descendants) recursively. We only do this when there *was* a
+	// prior enumeration — first-time population has no old state to clean.
+	if s.Objects.IsPopulated(dirPath) {
+		for _, oldChild := range s.Objects.ListChildren(dirPath) {
+			if !newPaths[oldChild.Path] {
+				log.Printf("Reconcile %s: removing %s (no longer on device)",
+					dirPath, oldChild.Path)
+				s.Objects.RemoveRecursive(oldChild.Path)
+			}
+		}
+	}
 
 	var result []*ObjectMeta
 	for _, e := range entries {

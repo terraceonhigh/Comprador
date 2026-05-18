@@ -1,6 +1,8 @@
 BRIDGE_OUT   := build/bridge
 HELPER_OUT   := build/comprador-helper
 NFS_STUB_OUT := build/nfsstub
+ICTEST1_OUT  := build/ictest1
+ICTEST2_OUT  := build/ictest2
 APP_NAME   := Comprador
 GO         := /opt/homebrew/bin/go
 DERIVED    := $(HOME)/Library/Developer/Xcode/DerivedData
@@ -13,7 +15,7 @@ DIST_DIR   := dist
 # Format: short SHA + "-dirty" if the worktree has uncommitted changes.
 BUILD_ID := $(shell git rev-parse --short HEAD 2>/dev/null)$(shell git diff --quiet 2>/dev/null || echo "-dirty")
 
-.PHONY: bridge helper helper-test nfs-stub icon app app-debug app-signed app-notarized app-swiftc dev dev-nfs run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
+.PHONY: bridge bridge-test helper helper-test nfs-stub ictest1 ictest2 test-md5 icon app app-debug app-signed app-notarized app-swiftc dev dev-nfs run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
 
 ICON_SRC := images/icon.png
 ICON_OUT := MenuBarApp/Resources/Comprador.icns
@@ -51,6 +53,46 @@ helper:
 
 helper-test:
 	cd helper && $(GO) test -v ./...
+
+# Bridge mtp-package tests. cgo flags must be set explicitly because go test
+# doesn't inherit them from the Makefile's `bridge` build rule.
+bridge-test:
+	cd bridge && CGO_CFLAGS="-I$(CURDIR)/bridge/cvendor" CGO_LDFLAGS="-L/opt/homebrew/lib" $(GO) test -v ./...
+
+# Research probe: Test 1 from docs/RESEARCH-IMAGECAPTURECORE.md.
+# Tests whether ICDevice.requestOpenSession coexists with ptpcamerad.
+# Output goes into RESEARCH-IMAGECAPTURECORE.md §Test 1 Results.
+ictest1:
+	@mkdir -p build
+	swiftc -framework ImageCaptureCore -framework Foundation \
+		bridge/cmd/ictest1/main.swift -o $(ICTEST1_OUT)
+	@echo "Built: $(ICTEST1_OUT)"
+	@echo "Run:   ./$(ICTEST1_OUT)"
+
+# Phone-side md5 verification of a directory transfer. Developer-only
+# (uses ADB; never bundled into the user-facing app). Compares Mac
+# source against on-phone md5sums computed by adb shell, bypassing the
+# bridge entirely — so a bridge-side bug can't mask itself by being
+# self-consistent. Pass MAC_DIR and PHONE_DIR as args.
+#
+#   make test-md5 MAC_DIR=~/Documents/ECON101 PHONE_DIR=/storage/emulated/0/Download/ECON101
+test-md5:
+	@if [ -z "$(MAC_DIR)" ] || [ -z "$(PHONE_DIR)" ]; then \
+	  echo "Usage: make test-md5 MAC_DIR=<path> PHONE_DIR=<path>"; \
+	  echo "  example:"; \
+	  echo "    make test-md5 MAC_DIR=~/Documents/ECON101 PHONE_DIR=/storage/emulated/0/Download/ECON101"; \
+	  exit 64; \
+	fi
+	@COMPRADOR_TESTING_ADB=1 ./test-md5.sh "$(MAC_DIR)" "$(PHONE_DIR)"
+
+# Research probe: Test 2 from docs/RESEARCH-IMAGECAPTURECORE.md.
+# Measures sequential read throughput via requestReadDataFromFile.
+ictest2:
+	@mkdir -p build
+	swiftc -framework ImageCaptureCore -framework Foundation -framework CryptoKit \
+		bridge/cmd/ictest2/main.swift -o $(ICTEST2_OUT)
+	@echo "Built: $(ICTEST2_OUT)"
+	@echo "Run:   ./$(ICTEST2_OUT)"
 
 # Phase 1 NFS pivot verification: memfs-backed NFS server with no MTP dependency.
 # Run this, then use the printed sudo mount command to verify macOS mounts
@@ -159,10 +201,20 @@ SWIFT_SRC    := $(wildcard MenuBarApp/Sources/*.swift)
 SWIFT_TARGET := arm64-apple-macosx13.0
 BUILD_INFO_SWIFT := build/BuildInfo.swift
 
+# Swift conditional-compilation flag. SWIFT_DEBUG=1 enables `#if DEBUG`
+# code paths (the build-identifier copy-on-click menu item, the
+# synthetic-flutter testing menu, future dev-only affordances). Default
+# is production: no DEBUG, no dev menu items.
+#
+# Set on the command line: `make app-swiftc SWIFT_DEBUG=1` for the
+# developer experience.
+SWIFT_DEBUG ?=
+SWIFT_DEBUG_FLAG := $(if $(SWIFT_DEBUG),-D DEBUG,)
+
 app-swiftc: bridge helper icon
 	@mkdir -p build/swift build
 	@printf 'enum BuildInfo { static let id = "%s" }\n' "$(BUILD_ID)" > $(BUILD_INFO_SWIFT)
-	swiftc -target $(SWIFT_TARGET) -O -D DEBUG \
+	swiftc -target $(SWIFT_TARGET) -O $(SWIFT_DEBUG_FLAG) \
 		-framework Cocoa -framework SwiftUI -framework IOKit \
 		-framework DiskArbitration -framework ServiceManagement \
 		-framework UserNotifications \

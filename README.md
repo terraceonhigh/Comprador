@@ -76,25 +76,29 @@ See [docs/BUILDING.md](docs/BUILDING.md) for full build instructions.
 
 ## Architecture
 
-Comprador has three components:
+Comprador has two main components:
 
-**Go WebDAV Bridge** — A standalone binary that connects to the phone
-via libmtp (cgo) and serves its filesystem over HTTP WebDAV on localhost.
+**Go NFS Bridge** — A standalone binary that connects to the phone
+via libmtp (cgo) and serves its filesystem over NFSv3 on a loopback
+port. macOS speaks NFSv3 natively, so no kernel extension is needed
+on the Mac side.
 
 **Swift Menu Bar App** — Watches for USB devices via IOKit (matched by
 known Android vendor IDs *or* USB Still Image / PTP class), spawns the
-bridge when an MTP/PTP device is detected, and mounts the WebDAV server
-as a Finder volume via `NetFSMountURLSync`.
+bridge when an MTP/PTP device is detected, and mounts the bridge's NFS
+endpoint as a Finder volume via `/sbin/mount -t nfs` to localhost
+(no privileged helper required — verified on macOS 13+).
 
-**Privileged Helper** *(optional)* — A small Go LaunchDaemon, registered
-via `SMAppService.daemon`, that owns a managed block in `/etc/hosts`. It
-lets the bridge advertise URLs like `http://Pixel-6:port/` so Finder
-mounts the volume as `/Volumes/Pixel-6` instead of `/Volumes/Pixel-6.local`.
-The user is prompted once on first launch; without the helper the app
-falls back to mDNS-registered `<DeviceName>.local` hostnames.
+**Privileged Helper** *(optional, cosmetic only)* — A small Go LaunchDaemon
+registered via `SMAppService.daemon`. The mount path doesn't need it; the
+only thing it still does is drop the `.local` suffix from the Finder
+sidebar (`/Volumes/Pixel-6` instead of `/Volumes/Pixel-6.local`) by
+managing an `/etc/hosts` block. The user is prompted once on first
+launch; without the helper everything works, the volume just keeps the
+`.local` form.
 
 ```
-Phone ←USB→ libmtp ←cgo→ Go bridge ←HTTP→ WebDAV ←mount→ Finder
+Phone ←USB→ libmtp ←cgo→ Go bridge ←NFSv3 (localhost)→ Finder
                                 ↑
                          hostname from
                        Settings.Global.DEVICE_NAME
@@ -132,9 +136,10 @@ of the phone.
 
 **Does Comprador see my files? Are they uploaded anywhere?**
 No. Everything is local: your phone over USB, Comprador as a small
-WebDAV server bound to `localhost`, Finder as the WebDAV client. No
-cloud, no telemetry, no internet round-trips. The bridge process can't
-even *reach* the public internet without you configuring it to.
+NFS server bound to `localhost`, Finder as the NFS client. No cloud,
+no telemetry, no internet round-trips. The bridge binds only to the
+loopback interface and can't be reached from the LAN, let alone the
+public internet.
 
 **Does it work over Wi-Fi?**
 No. USB only. Wireless MTP is technically possible but isn't widely
@@ -183,14 +188,14 @@ session-locked protocol doesn't map well to File Provider's pull-based model.
 - [Architecture](docs/ARCHITECTURE.md) — Component design, data flow
 - [Building](docs/BUILDING.md) — Prerequisites, build targets
 - [Testing](docs/TESTING.md) — Test suites, manual testing, debugging
-- [Mistakes](docs/MISTAKES.md) — 23 pitfalls we hit and how we fixed them
+- [Mistakes](docs/MISTAKES.md) — 41 pitfalls we hit and how we fixed them
 
 ## Credits
 
 Comprador began as a fork of [OpenMTP](https://github.com/ganeshrvel/openmtp)
 by Ganesh Rathinavel, but no source from that project remains — Comprador
-is a clean reimplementation with a different architecture (Go WebDAV
-bridge + Swift menu bar app, in place of Electron + Node.js).
+is a clean reimplementation with a different architecture (Go NFS bridge +
+Swift menu bar app, in place of Electron + Node.js).
 
 ## Support
 

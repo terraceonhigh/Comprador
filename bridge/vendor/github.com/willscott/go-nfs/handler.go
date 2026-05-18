@@ -21,7 +21,15 @@ type Handler interface {
 	// Optional methods - generic helpers or trivial implementations can be sufficient depending on use case.
 
 	// Fill in information about a file system's free space.
-	FSStat(context.Context, billy.Filesystem, *FSStat) error
+	//
+	// Comprador patch (2026-05-11): receives the resolved path so handlers
+	// can implement per-storage quotas. Upstream FSStat doesn't get the
+	// requesting path because nfs_onfsstat resolves it from the file
+	// handle but doesn't forward it to the handler. We need it to route
+	// FSStat between Internal storage / SD card on multi-storage phones.
+	// See docs/PLAN-MULTI-STORAGE.md "The complication" for context.
+	// Worth proposing upstream after we prove it.
+	FSStat(context.Context, billy.Filesystem, []string, *FSStat) error
 
 	// represent file objects as opaque references
 	// Can be safely implemented via helpers/cachinghandler.

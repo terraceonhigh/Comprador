@@ -96,6 +96,18 @@ the simpler approach demonstrably fails.
   (vs. the current 10 GB), `VM_ALLOCATE` regions count stays under
   ~50 (vs. 409).
 
+- **Partial empirical confirmation (2026-05-11).** After a
+  full ECON101 directory transfer through the bridge (432 files,
+  49.6 MB total), the bridge process RSS sat at 8.4 MB and total
+  VSZ at the Go-runtime baseline. Pre-fix arithmetic would have
+  predicted ~50 MB of `VM_ALLOCATE` regions accumulated from the
+  per-callback allocations across hundreds of WriteThrough cycles;
+  the absence of that accumulation is direct evidence that buffer
+  reuse is doing what it should. The full 9 GiB stress test
+  remains the proper acceptance check (this was 49 MB across
+  smaller chunks, not a single multi-GiB transfer), but the early
+  signal is unambiguous.
+
 - **If insufficient:** profile again, look for residual C-side
   allocations inside libmtp's PTP transaction layer; revisit #2
   (C-side buffer) or escalate to #4/#5 if libmtp itself is the
@@ -112,3 +124,121 @@ the simpler approach demonstrably fails.
 
 **Proceeded:** path #1 implementation begins immediately after this
 journal entry lands.
+
+---
+
+## 2026-05-11 — ImageCaptureCore investigation: declined as libmtp replacement
+
+**Context.** [Letter 09](../correspondence/09-ptpcamerad-was-a-broker/letter.md)
+identified that `ptpcamerad` is a userspace XPC broker, not a USB
+exclusive-claim adversary, and proposed pivoting Comprador's USB
+access path from libmtp + seizure-race + helper toward
+ImageCaptureCore's `ICDevice` session API as a co-resident client of
+the broker. The pivot promised to eliminate the kill-and-claim race,
+the privileged helper, the DriverKit dext, and to make MAS
+distribution plausible. Four empirical tests were sketched in
+[RESEARCH-IMAGECAPTURECORE.md](RESEARCH-IMAGECAPTURECORE.md) to test
+the proposal. Tests 1 and 2 ran on 2026-05-11.
+
+**Empirical findings:**
+
+- **Test 1 (coexistence):** PASS for PTP-mode devices. `ICDevice.requestOpenSession`
+  returns `nil` while `ptpcamerad` is alive; the broker's PID is unchanged
+  across the session lifecycle; Image Capture.app remains functional
+  alongside our session. *But:* `ICDeviceBrowser` does not enumerate
+  Android phones in File Transfer (MTP) mode — confirmed across Pixel 6
+  (Google) and Sony Xperia 10 III (Sony). The Xperia exposes no PTP
+  option in its USB-mode picker at all.
+- **Test 2 (read throughput):** PASS. 19 MB/s sustained over 1.4 GiB,
+  p99 chunk latency 215 ms, RSS flat at ~26 MiB throughout — no
+  cgo-callback-style allocation leak.
+- **The protocol-level scope ceiling:** PTP exposes camera content
+  only (DCIM/Pictures). MTP — Microsoft's extension of PTP — is what
+  exposes the general filesystem (Music, Downloads, app data) that
+  Comprador exists to address. Per Test 2's catalog, all 2,351 items
+  surfaced through ICCore on the Pixel were camera-roll videos.
+
+**Alternatives considered.**
+
+1. **Wholesale replacement of libmtp with ImageCaptureCore.** Letter 09's
+   framing. Would eliminate the seizure race, the helper, the dext
+   roadmap, and unlock MAS. Falsified by Test 1's MTP-invisibility
+   finding — most users' phones are MTP-mode by default; for Sony,
+   MTP is the only option.
+
+2. **Dual backend, mode-aware** (libmtp for MTP-mode phones, ICCore
+   for PTP-mode phones). Test 2 wrote this into its Conclusion before
+   the scope-ceiling implication was named. Falsified by the
+   protocol-level fact that PTP-mode phones don't expose non-camera
+   content: even with both backends wired and Tests 3/4 passing,
+   ICCore-routed users would lose access to Music/Downloads/app
+   data — which is the use case Comprador exists for.
+
+3. **Narrow opt-in: ICCore as a read-only fast-path for camera
+   content specifically.** Some residual value (cleaner memory
+   profile for photo-import use cases) but a small wedge of the
+   product surface, duplicating what Image Capture.app already does
+   natively. Not worth the code surface or the per-device mode
+   negotiation.
+
+4. **Decline the pivot.** Close the investigation, keep libmtp as the
+   primary path, complete the architecture the established stack
+   enables (multi-storage, multi-device per the existing plans).
+
+**Decision.** Path **#4** — decline.
+
+**Why.** ImageCaptureCore's scope ceiling (camera content) is upstream
+of macOS, in the PTP-vs-MTP protocol distinction at the USB-interface
+level. macOS reflects what the phone exposes; the phone exposes
+camera content under PTP and the general filesystem under MTP. No
+amount of macOS-side framework work changes that. Comprador's product
+positioning is "phone as a general Finder volume" (per
+[USER.md](USER.md)) — Music, Downloads, app data, the user's
+non-camera content. ICCore can't address those regions of the
+filesystem on any phone, regardless of mode, because phones decline
+to expose them under PTP. The pivot was the right shape for a
+hypothetical product whose scope was camera content; for Comprador's
+actual scope it doesn't pay out.
+
+#3 might one day become interesting if Comprador grows a
+camera-content-specific feature surface (e.g., faster photo-import
+mode), but YAGNI today. Tests 3 (writes via `requestSendPTPCommand`)
+and 4 (sandbox/MAS compatibility) are skipped — they would measure
+properties of a path whose architectural utility was already
+foreclosed by the scope finding.
+
+**Consequences.**
+
+- **The libmtp path remains primary and load-bearing.** The seizure
+  race, the privileged helper (slated for v0.4.0 removal per
+  [SECURITY.md](SECURITY.md)), the DriverKit dext on the roadmap,
+  and the cgo-callback buffer-reuse imperative (per
+  [TODO.md](../TODO.md)) all retain their current status. Letter 09's
+  optimistic catalogue of "wins this would unlock" should not be
+  read as having unlocked anything.
+- **The investigation receipts stay.** [RESEARCH-IMAGECAPTURECORE.md](RESEARCH-IMAGECAPTURECORE.md)
+  retains the full Test 1 + Test 2 results, the scope-correction
+  section, and the (unrun) Test 3 and Test 4 specifications for
+  archival completeness. Future contributors evaluating a similar
+  pivot have the empirical evidence in one place.
+- **The probe binaries** at
+  `bridge/cmd/ictest1/main.swift` and
+  `bridge/cmd/ictest2/main.swift` are research-only — phony Makefile
+  targets, gitignored output, not wired into any production build.
+  Deletable in a single commit once the receipt in
+  RESEARCH-IMAGECAPTURECORE.md is sufficient on its own.
+- **Methodological lesson recorded in
+  [letter 11](../correspondence/11-narrowing-the-pivot/letter.md)
+  part three.** When a clean test result lines up with the
+  architectural story you wanted to tell, check the *scope* of the
+  evidence, not just its quality. Order candidate falsifications by
+  how *broadly* they would invalidate the architectural claim, not
+  by how *cheaply* they would.
+
+**Proceeded:** the next work is completing the libmtp-side
+architecture per
+[PLAN-MULTI-STORAGE.md](PLAN-MULTI-STORAGE.md) and
+[PLAN-MULTI-DEVICE.md](PLAN-MULTI-DEVICE.md), in that order, with
+the cgo callback buffer-reuse fix
+([TODO.md](../TODO.md) "Roadmap imperative") landing between them
+to unblock multi-device.

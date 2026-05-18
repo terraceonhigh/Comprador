@@ -48,7 +48,6 @@ func onWrite(ctx context.Context, w *response, userHandle Handler) error {
 	if req.How != uint32(unstable) && req.How != uint32(dataSync) && req.How != uint32(fileSync) {
 		return &NFSStatusError{NFSStatusInval, os.ErrInvalid}
 	}
-	Log.Infof("WRITE how=%d offset=%d count=%d", req.How, req.Offset, req.Count)
 
 	// stat first for pre-op wcc.
 	fullPath := fs.Join(path...)

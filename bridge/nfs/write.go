@@ -209,6 +209,44 @@ func (h *stagingHandle) Lock() error   { return nil }
 func (h *stagingHandle) Unlock() error { return nil }
 func (h *stagingHandle) Close() error  { return nil } // owned by registry, not caller
 
+// discardingHandle is the billy.File returned by Create for AppleDouble
+// (`._*`) paths. Writes are silently dropped; reads return EOF. The point
+// is that macOS Finder sees NFSStatusOk for every WRITE+COMMIT on the
+// AppleDouble companion file it tries to make, so the drag-drop doesn't
+// surface an error — but no bytes reach the phone. See
+// isAppleDoubleBasename in fs.go for the rationale.
+//
+// Lives in this file rather than fs.go to sit alongside stagingHandle:
+// they're sibling billy.File implementations and reading them together
+// makes the contrast obvious.
+type discardingHandle struct {
+	name string
+	pos  int64
+}
+
+func (h *discardingHandle) Name() string                          { return h.name }
+func (h *discardingHandle) Write(p []byte) (int, error)           { h.pos += int64(len(p)); return len(p), nil }
+func (h *discardingHandle) Read(_ []byte) (int, error)            { return 0, io.EOF }
+func (h *discardingHandle) ReadAt(_ []byte, _ int64) (int, error) { return 0, io.EOF }
+func (h *discardingHandle) Seek(offset int64, whence int) (int64, error) {
+	switch whence {
+	case io.SeekStart:
+		h.pos = offset
+	case io.SeekCurrent:
+		h.pos += offset
+	case io.SeekEnd:
+		h.pos = offset
+	}
+	if h.pos < 0 {
+		h.pos = 0
+	}
+	return h.pos, nil
+}
+func (h *discardingHandle) Truncate(_ int64) error { return nil }
+func (h *discardingHandle) Lock() error            { return nil }
+func (h *discardingHandle) Unlock() error          { return nil }
+func (h *discardingHandle) Close() error           { return nil }
+
 // commit flushes the staging file for mtpPath to the MTP device.
 // Called from two paths: mtpNFSHandler.Commit (explicit client COMMIT RPC)
 // and the per-entry idle timer set up in register/touch. The atomic delete

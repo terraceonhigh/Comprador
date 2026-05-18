@@ -52,6 +52,21 @@ func cleanPath(p string) string {
 	return p
 }
 
+// isAppleDoubleBasename reports whether the basename of p starts with "._".
+// macOS Finder writes one of these "AppleDouble" companion files alongside
+// every file dropped onto a non-HFS+ filesystem to preserve extended
+// attributes (Finder labels, resource forks, custom icons). Phones have no
+// use for them and the user's "I copied 432 files" expectation is for the
+// data files only — the 432-becomes-702 confusion in the 2026-05-11 ECON101
+// transfer was almost entirely these. See docs/V0.3.3.md item #3.
+//
+// Filter only basenames prefixed with "._" — not all dotfiles, since some
+// legitimate apps create hidden files (and we already pass through
+// non-AppleDouble ones like .git, .hidden_user_doc, etc.).
+func isAppleDoubleBasename(p string) bool {
+	return strings.HasPrefix(filepath.Base(p), "._")
+}
+
 // mtpFileInfo implements os.FileInfo from an ObjectMeta.
 type mtpFileInfo struct {
 	meta *mtp.ObjectMeta
@@ -85,6 +100,11 @@ func (fs *MTPFileSystem) Stat(filename string) (os.FileInfo, error) {
 	if p == "/" {
 		return rootFileInfo{}, nil
 	}
+	// Synthetic sentinel files (e.g. /.metadata_never_index) are served
+	// directly by the bridge without touching MTP. See sentinels.go.
+	if data, ok := sentinelInfo(p); ok {
+		return sentinelFileInfo{name: filepath.Base(p), size: int64(len(data))}, nil
+	}
 	// Check staging first — a file being written is not in ObjectMap yet.
 	if sf := fs.writes.get(p); sf != nil {
 		return sf.stat()
@@ -110,9 +130,20 @@ func (fs *MTPFileSystem) ReadDir(path string) ([]os.FileInfo, error) {
 	}
 	fs.session.EnsurePopulated(p)
 	children := fs.session.Objects.ListChildren(p)
-	infos := make([]os.FileInfo, len(children))
-	for i, meta := range children {
-		infos[i] = &mtpFileInfo{meta: meta}
+	infos := make([]os.FileInfo, 0, len(children)+1)
+	for _, meta := range children {
+		infos = append(infos, &mtpFileInfo{meta: meta})
+	}
+	// Surface any synthetic sentinel files whose parent is p. The mount
+	// root sees /.metadata_never_index so macOS Spotlight skips the
+	// volume entirely on first browse. See sentinels.go.
+	for spath, data := range sentinelContent {
+		if filepath.Dir(spath) == p {
+			infos = append(infos, sentinelFileInfo{
+				name: filepath.Base(spath),
+				size: int64(len(data)),
+			})
+		}
 	}
 	return infos, nil
 }
@@ -127,6 +158,17 @@ func (fs *MTPFileSystem) Open(filename string) (billy.File, error) {
 // Otherwise write flags are not permitted for existing MTP objects.
 func (fs *MTPFileSystem) OpenFile(filename string, flag int, perm os.FileMode) (billy.File, error) {
 	p := cleanPath(filename)
+
+	// Synthetic sentinel files (e.g. /.metadata_never_index) are served
+	// directly. Read-only; write flags get the same ErrReadOnly any other
+	// MTP-resident object would. See sentinels.go.
+	if data, ok := sentinelInfo(p); ok {
+		const writeMask = os.O_WRONLY | os.O_RDWR | os.O_APPEND | os.O_CREATE | os.O_TRUNC
+		if flag&writeMask != 0 {
+			return nil, billy.ErrReadOnly
+		}
+		return &sentinelHandle{name: filename, data: data}, nil
+	}
 
 	if sf := fs.writes.get(p); sf != nil {
 		return &stagingHandle{name: filename, sf: sf}, nil
@@ -145,13 +187,33 @@ func (fs *MTPFileSystem) OpenFile(filename string, flag int, perm os.FileMode) (
 	if meta.IsDir {
 		return nil, os.ErrInvalid
 	}
+	// Log every READ-path open so we can see which files macOS is
+	// probing (Spotlight, QuickLook, mdworker, FSEvents — any
+	// background subsystem that respects .metadata_never_index OR
+	// not). Helps diagnose the 2026-05-16 stall.
+	log.Printf("OpenFile read-path: path=%q size=%d", p, meta.Size)
 	return fs.cache.open(meta.Name, meta.ID, fs.session)
 }
 
 // Create registers a staging entry and returns a writable billy.File.
 // The file is not sent to MTP until COMMIT.
+//
+// AppleDouble companion files (`._*` basenames) are accepted by returning
+// a discarding handle that silently no-ops writes — the phone never sees
+// them. See isAppleDoubleBasename for the rationale; the user-visible
+// effect is that a Finder drag-drop of N files produces N entries on the
+// phone (not 2N as it did before this filter landed).
 func (fs *MTPFileSystem) Create(filename string) (billy.File, error) {
+	if isAppleDoubleBasename(filename) {
+		return &discardingHandle{name: filename}, nil
+	}
 	p := cleanPath(filename)
+	// Synthetic sentinels are read-only — refuse CREATE on them rather
+	// than letting it stage a phantom write that would shadow the virtual
+	// content. See sentinels.go.
+	if _, ok := sentinelInfo(p); ok {
+		return nil, os.ErrPermission
+	}
 	sf, err := fs.writes.register(p, filename)
 	if err != nil {
 		return nil, err
@@ -177,6 +239,14 @@ func (fs *MTPFileSystem) Rename(oldpath, newpath string) error {
 	oldP := cleanPath(oldpath)
 	newP := cleanPath(newpath)
 	if oldP == newP {
+		return nil
+	}
+
+	// AppleDouble paths were never staged (Create returned a discarding
+	// handle) and aren't on MTP either. A rename touching one would fall
+	// through to slow-path copy+delete and fail "src not found". Return
+	// success — the file exists nowhere we care about.
+	if isAppleDoubleBasename(oldP) || isAppleDoubleBasename(newP) {
 		return nil
 	}
 
@@ -284,6 +354,14 @@ func (fs *MTPFileSystem) Rename(oldpath, newpath string) error {
 // Remove deletes an MTP object or discards a staging entry.
 func (fs *MTPFileSystem) Remove(filename string) error {
 	p := cleanPath(filename)
+
+	// Synthetic sentinels cannot be removed — they're not on the device.
+	// Refuse explicitly rather than fall through to ObjectMap and surface
+	// ErrNotExist (which would be misleading; the file does exist from
+	// the client's perspective). See sentinels.go.
+	if _, ok := sentinelInfo(p); ok {
+		return os.ErrPermission
+	}
 
 	if sf := fs.writes.delete(p); sf != nil {
 		sf.tmp.Close()

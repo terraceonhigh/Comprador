@@ -28,11 +28,37 @@ class BridgeProcess {
     /// replug), and releases. This is the only reliable way to break the
     /// macOS kernel driver's bind on a class-6 PTP interface so libusb's
     /// claim_interface can succeed on the bridge's first attempt.
-    func start(useNFS: Bool = false, seizeForVendor: UInt16 = 0, seizeForProduct: UInt16 = 0) async throws -> Int {
+    ///
+    /// If `locationID` is non-zero, it is passed to the bridge as
+    /// `--device-loc-id=<hex>` so the bridge claims the specific USB
+    /// device matching that IOKit Location ID rather than the first
+    /// detected MTP device. Required for multi-device operation: with
+    /// two or more phones plugged in, the bridge would otherwise be
+    /// non-deterministic about which one it claims. See
+    /// docs/PLAN-MULTI-DEVICE.md §6 option A.
+    func start(useNFS: Bool = false,
+               seizeForVendor: UInt16 = 0,
+               seizeForProduct: UInt16 = 0,
+               locationID: UInt32 = 0) async throws -> Int {
         let bridgePath = findBridgeBinary()
         guard FileManager.default.fileExists(atPath: bridgePath) else {
             throw BridgeError.binaryNotFound(bridgePath)
         }
+
+        // Kill macOS processes that auto-claim MTP/PTP USB interfaces
+        // BEFORE the IOKit seize preflight, not after. ptpcamerad holds
+        // each phone's USB Imaging Class interface in exclusive-access
+        // mode; an immediately-following USBDeviceOpenSeize() will
+        // return kIOReturnExclusiveAccess (0xE00002C5) and the seize
+        // (and the kernel-binding break that depends on it) will
+        // silently fail. Empirically reproducible with N>=2 devices
+        // pre-attached: the first session's seize fires against a
+        // still-alive ptpcamerad and fails; the second session's seize
+        // benefits from the first session's killCompetingProcesses
+        // call and succeeds. Swapping the order makes both seizes run
+        // against an already-dead ptpcamerad. See MISTAKES.md entry
+        // 19b for the full trace.
+        BridgeProcess.killCompetingProcesses()
 
         // IOKit preflight: force a software replug so the bridge sees a
         // fresh, kernel-unclaimed device. This sequence (seize → reset →
@@ -68,13 +94,17 @@ class BridgeProcess {
 
         NSLog("Comprador: Starting bridge at %@", bridgePath)
 
-        // Kill macOS processes that auto-claim MTP/PTP USB interfaces
-        BridgeProcess.killCompetingProcesses()
-
         let p = Process()
         p.executableURL = URL(fileURLWithPath: bridgePath)
         p.currentDirectoryURL = URL(fileURLWithPath: NSTemporaryDirectory())
-        p.arguments = useNFS ? ["--nfs"] : []
+        var args: [String] = []
+        if useNFS {
+            args.append("--nfs")
+        }
+        if locationID != 0 {
+            args.append(String(format: "--device-loc-id=0x%08x", locationID))
+        }
+        p.arguments = args
 
         // Ensure libmtp can be found when launched from app bundle
         var env = ProcessInfo.processInfo.environment
