@@ -380,6 +380,28 @@ for context.
 Items the launch playbook ([LAUNCH-PLAYBOOK-DRAFT.md](docs/LAUNCH-PLAYBOOK-DRAFT.md))
 assumes have shipped before Day 0. Block the v0.4.0 tag.
 
+- [ ] **Finder copy-progress regression — progress window tracks
+      Mac→NFS-cache, not Mac→phone.** Observed 2026-05-18 evening
+      during the step3 yield-test setup, against build `74702901`.
+      Finder reports a Mac→phone copy as "done" when the bytes have
+      landed in the bridge's local staging dir, but the libmtp send
+      to the phone is still in flight. User sees "100%" while the
+      file is not yet on the device.
+
+      Architect characterised this as a *regression* — earlier
+      Comprador versions reportedly tracked the MTP-send completion
+      accurately. Bisect candidate: the resumable-upload commit-
+      decoupling work in `bridge/webdav/resume_endpoint.go` and the
+      NFS COMMIT path in `bridge/nfs/write.go`. The hypothesis is
+      that COMMIT now returns when staging is complete rather than
+      when libmtp confirms — investigate before v0.4.0 because the
+      UX dishonesty (user thinks the file is on the phone, ejects,
+      and it isn't) is a launch-grade trust problem.
+
+      Not Step-3-introduced (Step 3 only touched READ-side cache
+      code; the WRITE/COMMIT path is unchanged). Reported here so
+      the next investigation has a durable record.
+
 - [ ] **User-facing disclosure of the `ptpcamerad` kill.** Comprador's
       bridge kills `ptpcamerad` (and `AMPDeviceDiscoveryAgent`) to win
       the USB interface claim from macOS's photo-import broker (see
