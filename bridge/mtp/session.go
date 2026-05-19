@@ -189,6 +189,7 @@ const (
 	OpCreateFolder
 	OpListDir // lazy enumeration of a single directory
 	OpRefreshStorages // re-query LIBMTP_Get_Storage to refresh free/max bytes per storage
+	OpGetPartial // partial-range read for chunked prefetch — see cache.download
 )
 
 // Priority controls which lane a request enters in the session goroutine's
@@ -209,6 +210,15 @@ const (
 )
 
 // MTPRequest is sent to the session goroutine.
+//
+// Field roles by op:
+//   OpGetFile        : ObjectID, Writer
+//   OpGetPartial     : ObjectID, Offset, Size (chunk maxBytes), Writer
+//   OpSendFile       : ParentID, StorageID, Name, Size, Reader
+//   OpDelete         : ObjectID
+//   OpCreateFolder   : Name, ParentID, StorageID
+//   OpListDir        : Path
+//   OpRefreshStorages: (no inputs)
 type MTPRequest struct {
 	Op        MTPOp
 	Priority  Priority
@@ -216,7 +226,8 @@ type MTPRequest struct {
 	ParentID  uint32
 	StorageID uint32
 	Name      string
-	Size      uint64
+	Size      uint64 // OpSendFile: total payload; OpGetPartial: chunk maxBytes
+	Offset    uint64 // OpGetPartial: byte offset within the source object
 	Path      string // for OpListDir: the directory path
 	Writer    io.Writer
 	Reader    io.Reader
@@ -224,10 +235,17 @@ type MTPRequest struct {
 }
 
 // MTPResponse is returned from the session goroutine.
+//
+// BytesRead is populated by OpGetPartial and reports how many bytes
+// libmtp actually returned (may be 0 at EOF, or shorter than the
+// requested Size near end-of-file). The cache's chunked-prefetch loop
+// uses BytesRead == 0 as its EOF signal, complementing the
+// offset >= size cap.
 type MTPResponse struct {
-	Entries  []*ObjectMeta
-	ObjectID uint32
-	Err      error
+	Entries   []*ObjectMeta
+	ObjectID  uint32
+	BytesRead uint32
+	Err       error
 }
 
 // Session owns the MTP device and serialises all operations.
@@ -468,6 +486,17 @@ func (s *Session) dispatch(req MTPRequest) MTPResponse {
 	case OpGetFile:
 		err := s.device.GetFileToWriter(req.ObjectID, req.Writer)
 		return MTPResponse{Err: err}
+	case OpGetPartial:
+		data, err := s.device.GetPartialObject(req.ObjectID, req.Offset, uint32(req.Size))
+		if err != nil {
+			return MTPResponse{Err: err}
+		}
+		if len(data) > 0 {
+			if _, werr := req.Writer.Write(data); werr != nil {
+				return MTPResponse{Err: werr}
+			}
+		}
+		return MTPResponse{BytesRead: uint32(len(data))}
 	case OpSendFile:
 		parentID := s.resolveParentID(req.ParentID, req.StorageID)
 		id, err := s.device.SendFileFromReader(parentID, req.StorageID, req.Name, req.Size, req.Reader)

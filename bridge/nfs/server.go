@@ -79,7 +79,7 @@ func Serve(listener net.Listener, session *mtp.Session) error {
 		if !ok || meta.IsDir {
 			return false
 		}
-		return fs.cache.beginPrefetch(meta.Name, meta.ID, session)
+		return fs.cache.beginPrefetch(meta.Name, meta.ID, meta.Size, session)
 	}
 
 	return gonfs.Serve(listener, cacheHelper)

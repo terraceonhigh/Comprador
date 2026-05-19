@@ -192,7 +192,7 @@ func (fs *MTPFileSystem) OpenFile(filename string, flag int, perm os.FileMode) (
 	// background subsystem that respects .metadata_never_index OR
 	// not). Helps diagnose the 2026-05-16 stall.
 	log.Printf("OpenFile read-path: path=%q size=%d", p, meta.Size)
-	return fs.cache.open(meta.Name, meta.ID, fs.session)
+	return fs.cache.open(meta.Name, meta.ID, meta.Size, fs.session)
 }
 
 // Create registers a staging entry and returns a writable billy.File.
