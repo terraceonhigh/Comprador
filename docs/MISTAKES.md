@@ -1426,6 +1426,110 @@ QuickLook icon-view alert also reduced: yesterday's tests
 showed multiple stacked alerts; with prefetch, only one alert
 fired and the file became previewable on cache populate.
 
+**2026-05-18 morning — v0.3.3 shipped, immediately retracted.**
+The same `a405ed48` async prefetch code, with no source changes
+between the 2026-05-17 verification above and this morning,
+produced a **whole-system cascade-freeze** on first reproduction
+after v0.3.3 was tagged + released:
+
+- Architect installed CI-built v0.3.3 DMG from GitHub Releases
+- Sent a small HTML file into `Internal Shared Storage/Download/`
+  (which contained Attenborough.mkv 9 GB + a 139 MB documentary)
+- Finder copy progress hung
+- Finder stopped responding to clicks
+- Dock failed to launch processes
+- Keyboard input died in regular apps
+- Recovery required SSH-from-phone-via-tmux + `sudo killall -9
+  bridge` + `sudo umount -f`
+
+Forensics in `/Library/Logs/DiagnosticReports/`:
+
+- `bridge_2026-05-18-160548_gala.diag` — bridge writing 2.15 GB
+  file-backed memory in 196 sec (libmtp downloading to prefetch
+  cache temp file)
+- `bridge_2026-05-18-161814_gala.diag` — same shape, different run
+- `bridge_2026-05-18-165146_gala.diag` — same shape, the
+  reproduction directly observed
+- `Comprador_2026-05-18-165532_gala.cpu_resource.diag` — Swift
+  app at 92% CPU in its stderr `readabilityHandler` closure
+  (the `NSConcreteFileHandle._monitor` callback inside
+  `BridgeProcess.start(useNFS:...)`), hot-looping to drain the
+  bridge's per-read logging firehose
+
+Forensically reconstructed chain: small WRITE landed fast →
+parent dir mtime bumped → Finder icon-view fired READs against
+directory members → Attenborough.mkv hit JUKEBOX threshold →
+`cache.beginPrefetch` dispatched a goroutine calling
+`session.Do(OpGetFile)` → libmtp session goroutine locked for
+the full ~5 min download → all other NFS RPCs queued indefinitely
+→ kernel marked mount "not responding" (`Status flags: 0x2` per
+`nfsstat -m`) → `hard,nointr` mount option cascaded the
+unresponsiveness to every system process that touched the mount
+path.
+
+**2026-05-18 evening — same code, different machine state, no
+freeze.** Architect rebuilt commit `92d4e6d5` (code-equivalent to
+the retracted v0.3.3 — the chain from `92d4e6d5` to the
+merge `8f818bc1` is one docs-only commit) and tested the same
+reproduction shape (drag small HTML into `Download/` containing
+Attenborough + 139 MB doc). **Worked end-to-end.** No system
+freeze. No "Server connections interrupted" alert. No bridge
+death.
+
+The diff between the two runs is environmental, not source:
+
+| | Morning run (cascade) | Evening run (clean) |
+|---|---|---|
+| Source code | `a405ed48` (via `8f818bc1`) | `92d4e6d5` (same source) |
+| Binary | CI-notarized DMG from GitHub Release | Locally-built `make app-swiftc` |
+| Phone | Xperia XQ-BT52 | Xperia XQ-BT52 |
+| Destination dir contents | Attenborough + 139 MB doc | Attenborough + 139 MB doc |
+| Drag target | Small HTML | Small HTML |
+| Outcome | System cascade-freeze | Clean end-to-end |
+
+Between the runs:
+- Multiple `killall Comprador`, `killall -9 bridge`, `killall
+  Finder` cycles
+- `make clean` runs that wiped build artifacts
+- `/Applications/Comprador.app` deleted and reinstalled (different
+  bundle each install)
+- `~/Library/Application Support/Comprador`, `~/Library/Caches/
+  com.comprador.app`, `~/Library/Preferences/
+  com.comprador.app.plist` all deleted
+- Orphan `dns-sd` for `Comprador-XQ-BT52` killed
+- Xperia physically unplugged + replugged at some point
+- Worktrees touched
+- Probably mds_stores / fseventsd state shifted
+
+**What this tells us:**
+
+1. **The cascade mechanism (prefetch monopolizes session goroutine
+   + `hard,nointr` mount cascades) is real** — the .diag forensics
+   are unambiguous. The 2.15 GB file-backed-write trail through
+   `runtime.asmcgocall → write` is exactly what `cache.download`
+   does.
+2. **The cascade trigger is non-deterministic.** Same code does
+   not always cascade. Some accumulated state (Spotlight queue
+   depth? mds_stores backlog? fseventsd state? a specific timing
+   between mount and Spotlight crawler start?) puts the system
+   into the catastrophic regime.
+3. **A bug that *sometimes* cascade-freezes the system is still
+   unshippable.** Even if the worst case is rare, "rare" on a
+   feature that wants 0-stars-to-respectable-middleware
+   adoption translates to "the user who hits it once stops
+   trusting the software."
+4. **The fix direction is unchanged.** The chunked-yield
+   prefetch redesign (PLAN-PREFETCH-REDESIGN.md Option D) plus
+   the soft-mount safety boundary (Step 5) addresses both: the
+   mechanism gets broken (no multi-minute libmtp lock), and the
+   safety net catches future unrelated faults.
+
+**What we don't know:** which environmental factor flipped the
+state between morning-cascade and evening-clean. Without that,
+we can't deterministically reproduce — but we don't need to.
+The forensic record from the morning is sufficient; the fix
+addresses the mechanism, not the trigger.
+
 ## SMAppService / Helper
 
 > **Section status — helper itself slated for v0.4.0 retirement.**

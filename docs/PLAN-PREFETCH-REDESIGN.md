@@ -263,6 +263,26 @@ I.azw3, 135 MB). Findings captured in the "Empirical findings"
 section above. Verdict: **chunked-yield viable on both phones, 16 MB
 chunks chosen for the production design.**
 
+### Step 1.5 — Exogenous-trigger experiment (2026-05-18 evening)
+
+Architect rebuilt commit `92d4e6d5` (code-equivalent to retracted
+v0.3.3) in a worktree, installed via `cp -R` (no notarization, no
+DMG), reproduced the morning's drag-and-drop scenario against the
+same Xperia + same destination directory. **No cascade. Clean
+end-to-end.**
+
+This confirms the morning's cascade was **non-deterministic** —
+same source, different environmental state, different outcome.
+Receipts in MISTAKES.md entry 4 "2026-05-18 evening — same code,
+different machine state, no freeze."
+
+Implication for the plan: **proceed with the redesign anyway.**
+A rarely-triggering cascade is still unshippable; the mechanism
+is broken even if the trigger is hard to summon. The chunked-
+yield design addresses the mechanism; Step 5 (soft-mount safety
+boundary) addresses the broader "any future bridge fault could
+cascade" class regardless of cause.
+
 ### Step 2 — Session priority queue (1 day)
 
 Modify `bridge/mtp/session.go`:
