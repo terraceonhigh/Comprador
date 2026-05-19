@@ -45,11 +45,23 @@ if [ -n "$stragglers" ]; then
     echo "$stragglers" | /usr/bin/sed 's/^/      /'
 fi
 
-# 4. Force-unmount any per-device NFS mount Comprador left behind
+# 4. Force-unmount any per-device NFS mount Comprador left behind.
+# The mount-output mount-point may contain spaces ("Library/Application
+# Support/..."), so awk $3 mangles the path — instead, regex-extract
+# everything between " on " and the trailing " (options)". Without this,
+# the previous awk-$3 implementation silently umount-failed on the
+# real-world path and clean.sh's subdir-existence gate had to catch
+# the still-live mount (which it did, on 2026-05-18 evening, exposing
+# this bug).
 echo "  force-unmounting Comprador NFS mounts..."
-/sbin/mount | /usr/bin/grep '\.local:/' | /usr/bin/awk '{print $3}' | while read mp; do
+/sbin/mount | /usr/bin/grep '\.local:/' \
+            | /usr/bin/sed -E 's/^[^ ]+ on (.+) \([^()]*\)$/\1/' \
+            | while IFS= read -r mp; do
+    if [ -z "$mp" ]; then continue; fi
     echo "    umount -f $mp"
-    sudo /sbin/umount -f "$mp" 2>/dev/null
+    if ! sudo /sbin/umount -f "$mp"; then
+        echo "      WARNING: umount -f failed for $mp"
+    fi
 done
 
 # 5. Restart Finder (kills any process still wedged on the dead mount)
