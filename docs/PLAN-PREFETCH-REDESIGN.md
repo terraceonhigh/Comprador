@@ -271,17 +271,30 @@ DMG), reproduced the morning's drag-and-drop scenario against the
 same Xperia + same destination directory. **No cascade. Clean
 end-to-end.**
 
-This confirms the morning's cascade was **non-deterministic** —
-same source, different environmental state, different outcome.
-Receipts in MISTAKES.md entry 4 "2026-05-18 evening — same code,
-different machine state, no freeze."
+Initial framing was "non-deterministic — same code, different
+outcome." **Subsequent log grep falsified that framing.** The
+evening's bridge stderr (captured via `log stream --predicate
+'process == "bridge" OR process == "Comprador"'`) contains zero
+`cache.beginPrefetch START` lines. The prefetch path **never
+engaged** during the evening's drag — Finder/Spotlight/QuickLook
+didn't issue the READs that trigger JUKEBOX.
 
-Implication for the plan: **proceed with the redesign anyway.**
-A rarely-triggering cascade is still unshippable; the mechanism
-is broken even if the trigger is hard to summon. The chunked-
-yield design addresses the mechanism; Step 5 (soft-mount safety
-boundary) addresses the broader "any future bridge fault could
-cascade" class regardless of cause.
+The cascade is **deterministic on Finder probe behavior**, which is
+itself a function of macOS's per-volume indexing state. The cascade
+requires three coincidences (bridge prefetchable + Finder probing
+large directory members + `hard,nointr` mount semantics). The
+morning had all three; the evening had only two. See MISTAKES.md
+entry 4 "Verified via log grep 2026-05-18 evening" for the full
+receipt.
+
+**Implication for the plan: proceed unchanged.** A bug that fires
+on *first user encounter* (when the volume is new to Spotlight,
+icon view default, fresh QuickLook crawl) and then mysteriously
+stops repro'ing is *worse* than a deterministic one — it sandbags
+every new user. The chunked-yield design neutralizes the
+mechanism; the soft-mount safety boundary (Step 5) catches any
+future fault. Both are right regardless of which Finder-behavior
+delta gates the trigger.
 
 ### Step 2 — Session priority queue (1 day)
 

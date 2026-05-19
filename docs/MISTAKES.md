@@ -1501,34 +1501,77 @@ Between the runs:
 - Worktrees touched
 - Probably mds_stores / fseventsd state shifted
 
+**Verified via log grep 2026-05-18 evening:**
+
+Architect re-ran `log stream --predicate 'process == "bridge" OR
+process == "Comprador"' > /tmp/bridge-92d4e6d5.log` covering the
+drag-and-drop window. Grep for `cache.beginPrefetch|JUKEBOX|onread`:
+**zero hits.** The bridge's per-read logging (which produced
+hundreds of stderr lines per second during the morning's cascade,
+visible in the Comprador 16:55 .diag's heaviest stack) was silent
+during the evening's drag. The Swift parent's `readabilityHandler`
+NSLogs every chunk of bridge stderr into unified logging via
+"Comprador bridge: %@" — so absence in the unified log means the
+bridge didn't write those lines, which means the prefetch path
+never engaged.
+
+**Conclusion: the cascade is gated on Finder/Spotlight READ-probe
+activity, not on our code path running unconditionally.** The morning
+cascade required three things to align:
+
+1. Bridge running with `cache.beginPrefetch` dispatchable (any
+   code path that issues a >50 MB MTP READ against a known-large
+   phone-resident file)
+2. **Finder/Spotlight/QuickLook actively issuing parallel READs**
+   against directory members in the prefetch-eligible size range —
+   typically when the volume is new to Spotlight's per-volume
+   index, icon-view is rendering thumbnails, or a fresh
+   `mds_stores` is crawling
+3. `hard,nointr` mount semantics turning the resulting libmtp lockup
+   into a system-wide cascade
+
+The morning's reproduction had all three. The evening's reproduction
+had (1) and (3) but not (2). So the cascade didn't happen — not
+because the code is non-deterministic, but because the **trigger
+condition** (Finder probing during the drag window) didn't fire.
+
 **What this tells us:**
 
-1. **The cascade mechanism (prefetch monopolizes session goroutine
-   + `hard,nointr` mount cascades) is real** — the .diag forensics
-   are unambiguous. The 2.15 GB file-backed-write trail through
+1. **The cascade mechanism is real** — the .diag forensics are
+   unambiguous. The 2.15 GB file-backed-write trail through
    `runtime.asmcgocall → write` is exactly what `cache.download`
-   does.
-2. **The cascade trigger is non-deterministic.** Same code does
-   not always cascade. Some accumulated state (Spotlight queue
-   depth? mds_stores backlog? fseventsd state? a specific timing
-   between mount and Spotlight crawler start?) puts the system
-   into the catastrophic regime.
-3. **A bug that *sometimes* cascade-freezes the system is still
-   unshippable.** Even if the worst case is rare, "rare" on a
-   feature that wants 0-stars-to-respectable-middleware
-   adoption translates to "the user who hits it once stops
-   trusting the software."
-4. **The fix direction is unchanged.** The chunked-yield
-   prefetch redesign (PLAN-PREFETCH-REDESIGN.md Option D) plus
-   the soft-mount safety boundary (Step 5) addresses both: the
-   mechanism gets broken (no multi-minute libmtp lock), and the
-   safety net catches future unrelated faults.
+   does. The mechanism reliably cascades the system *when* it
+   fires.
+2. **The cascade trigger is deterministic on Finder behavior**,
+   which is itself a function of macOS's per-volume indexing
+   state. Conditions that increase trigger probability:
+   - First-time-seeing-this-volume Spotlight crawl (fresh
+     `XQ-BT52.local` or fresh phone)
+   - Finder icon-view active during the drag (thumbnail
+     generation fires per-file READs)
+   - QuickLook backlog from a previous session unable to
+     complete (large-file READs queued from a prior crash)
+   The *worst-case user scenario* is exactly the launch demo:
+   first-time user, plugs phone in, the mount is brand-new to
+   Spotlight, Finder is in icon view (the default), user drops
+   a file. **First-impression cascade.**
+3. **A bug that fires under specific-but-common conditions
+   is still unshippable.** A bug that "always fires on first
+   user encounter, then mysteriously stops repro'ing on
+   subsequent attempts" is *worse* than a deterministic one —
+   it makes the architect look incompetent ("works on my
+   machine") while sandbagging every new user.
+4. **The fix direction is unchanged.** Chunked-yield prefetch
+   (PLAN-PREFETCH-REDESIGN.md Option D) breaks the mechanism;
+   soft-mount safety boundary (Step 5) catches any future
+   unrelated fault.
 
-**What we don't know:** which environmental factor flipped the
-state between morning-cascade and evening-clean. Without that,
-we can't deterministically reproduce — but we don't need to.
-The forensic record from the morning is sufficient; the fix
-addresses the mechanism, not the trigger.
+**What we don't know:** which exact Finder-behavior delta gates
+the trigger. Could be (a) Spotlight's per-volume first-encounter
+backlog, (b) Finder view mode at drag time, (c) QuickLook
+backlog, (d) something else. Resolving (a)/(b)/(c) is interesting
+but not load-bearing for the fix — the redesign neutralizes the
+mechanism regardless of which trigger condition obtains.
 
 ## SMAppService / Helper
 
