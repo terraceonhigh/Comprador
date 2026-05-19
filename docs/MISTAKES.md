@@ -1743,6 +1743,75 @@ unshippable") is reinforced, not weakened, by today's clean runs.
   stale mount. The harness-as-self-test property letter 15
   argued for has paid for itself within hours of landing.
 
+**2026-05-18 night — Step 3 shipped, yield test passes, cascade
+mechanism broken by construction.** [Commit
+`74702901`](../bridge/nfs/cache.go), `claude/prefetch-redesign` HEAD.
+`cache.download` now loops over the object in 16 MB chunks via
+`OpGetPartial` at `PriorityLow` (Step 2's queue, commit `f5db97cd`).
+Between chunks, the priority pump in `bridge/mtp/session.go` drains
+high-priority requests before pulling the next low-priority chunk.
+
+The discriminating test (not the cascade test — that one remains
+environmentally gated tonight): **does a high-priority operation
+arriving mid-prefetch land in seconds, or does it wait the full
+multi-minute libmtp transfer?** The yield test against build
+`74702901`, run 2026-05-18 ~20:41:
+
+```
+20:41:06.792  cache.beginPrefetch START  Attenborough.mkv (9 GB, id=14)
+20:41:06.792  cache.download START       Attenborough  ← Step 3 chunked loop begins
+20:41:12.586  Lazy enumerate /Download   (Finder browse during prefetch — landed normally)
+20:41:13.642  OpenFile read-path         Red_Castle.html (137 KB)
+20:41:13.642  cache.download START       Red_Castle.html
+20:41:13.825  cache.download END (OK)    dt=183ms  ★
+```
+
+**183 milliseconds end-to-end for the 137 KB high-pri read while
+the 9 GB low-pri prefetch was actively running.** Well inside the
+600 ms one-chunk-budget the plan sized for. Log:
+`/tmp/test-step3-203247.log`.
+
+**Cascade-fix analysis — is v0.3.3 fixed?**
+
+The v0.3.3 cascade required four links:
+
+1. Session goroutine locked for minutes on a single libmtp transfer.
+2. Other NFS RPCs queueing indefinitely behind it.
+3. macOS NFSv3 client marking the mount `not responding` (~30 s).
+4. `hard,nointr` semantics cascading the unresponsiveness to every
+   process touching the mount path.
+
+Step 3 breaks link 1 by construction: chunks are bounded at 16 MB
+and the priority pump drains high-pri requests between them, so
+the session goroutine is never unavailable to high-pri work for
+more than ~600 ms. The yield test is the direct measurement of
+link 1 being broken — 183 ms is well under the 1 s `timeo=10`
+first-timeout window, which is well under the ~30 s mount-down
+threshold. Without link 1, links 2–4 cannot fire.
+
+**Two honest caveats, both worth naming for posterity:**
+
+1. We did not reproduce-then-suppress the cascade. The trigger
+   conditions (cold Spotlight + Finder probe storm) did not fire
+   tonight on prod, step2, or step3 — the environmental gate
+   we narrowed earlier is still narrowed-but-not-pinned. The
+   yield test is the empirical proxy: it measures the mechanism
+   being broken, not the cascade being prevented in vivo. The
+   two are equivalent given the chain analysis but they are not
+   identical evidence.
+2. The universal safety boundary (Step 5, soft/interruptible
+   mount) is not yet shipped. Step 3 makes *this* class of bug
+   impossible. A different bug — a different libmtp pathology,
+   a deadlock we have not seen, a kernel-side substrate issue —
+   could still produce the same chain if it locks the bridge
+   for long enough. Step 5 catches any future fault regardless
+   of cause; until it ships, "the v0.3.3 cascade cannot happen"
+   is precise but "the system cannot cascade" is not.
+
+**Status:** the v0.3.3 cascade as observed is fixed. The class of
+cascade requires Step 5 to also be impossible. Both are in the
+v0.3.4 release plan ([docs/PLAN-V0.3.4-RELEASE.md](PLAN-V0.3.4-RELEASE.md)).
+
 ## SMAppService / Helper
 
 > **Section status — helper itself slated for v0.4.0 retirement.**
