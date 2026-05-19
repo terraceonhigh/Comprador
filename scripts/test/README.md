@@ -103,7 +103,8 @@ its `.app` and dropping it into `dist-compare/` with the
 | `dev` | (verify with `make app-swiftc` + check Info.plist) | `prod` with `SWIFT_DEBUG=1`. Build identity unverified — re-stamp before relying on it. |
 | `notarized` | `aef6c89b` (per letter 15 — verify before relying) | Developer ID + stapled. |
 | `92d4e6d5` | `92d4e6d5` (per letter 15 — verify before relying) | Historical commit, code-equivalent to retracted v0.3.3. |
-| `step2` | `54c01f78` | `claude/prefetch-redesign` HEAD. Priority-queue refactor in [bridge/mtp/session.go](../../bridge/mtp/session.go) with no `PriorityLow` callers — behaviourally a no-op for the current execution path. Confirmed inert vs `prod` by the side-by-side prod control run on 2026-05-18 evening (see [docs/MISTAKES.md entry 4](../../docs/MISTAKES.md)). |
+| `step2` | `54c01f78` | Priority-queue refactor in [bridge/mtp/session.go](../../bridge/mtp/session.go) with no `PriorityLow` callers — behaviourally a no-op for the current execution path. Confirmed inert vs `prod` by the side-by-side prod control run on 2026-05-18 evening (see [docs/MISTAKES.md entry 4](../../docs/MISTAKES.md)). |
+| `step3` | `74702901` | Chunked prefetch on `PriorityLow`. The actual cascade fix — yields the session goroutine between 16 MB libmtp chunks, so a high-priority NFS RPC arriving mid-prefetch waits at most one chunk's latency (~600 ms) rather than the full multi-minute libmtp transfer. **The discriminating test is the yield test, not the cascade test** — start a large-file prefetch (Attenborough), then drag a small file or browse a different directory; with `prod`/`step2` that operation waits ~4–6 min, with `step3` it should complete in seconds. |
 
 **Trust the in-binary BuildID, not the table.** Variants get rebuilt
 in place during iteration and the README drifts. Every variant log
