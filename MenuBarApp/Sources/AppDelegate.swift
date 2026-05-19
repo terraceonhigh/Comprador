@@ -167,19 +167,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                                 action: #selector(quitApp),
                                 keyEquivalent: "q"))
 
-#if DEBUG
         menu.addItem(NSMenuItem.separator())
         // Build identifier, clickable — copies BuildInfo.id to the
-        // clipboard so the architect can paste it into a bug report or
-        // a journal note without retyping. Brief "Copied!" flash on
-        // click as confirmation; reverts after ~1 s.
+        // clipboard so the user (or the architect) can paste it into
+        // a bug report or a journal note without retyping. Brief
+        // "Copied!" flash on click as confirmation; reverts after ~1 s.
+        //
+        // Promoted out of #if DEBUG 2026-05-18 after the v0.3.3
+        // retraction: when a production user hits a regression, the
+        // first thing we need from them is "which exact build are you
+        // running?" Burying this behind a debug flag means the answer
+        // is unavailable to the people who most need to surface it.
         let buildItem = NSMenuItem(title: "Build: \(BuildInfo.id)",
                                    action: #selector(copyBuildID(_:)),
                                    keyEquivalent: "")
         buildItem.target = self
         buildItem.toolTip = "Click to copy the build identifier to the clipboard"
         menu.addItem(buildItem)
-#endif
 
         statusItem.menu = menu
     }
