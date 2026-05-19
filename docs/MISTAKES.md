@@ -1580,6 +1580,78 @@ backlog, (d) something else. Resolving (a)/(b)/(c) is interesting
 but not load-bearing for the fix — the redesign neutralizes the
 mechanism regardless of which trigger condition obtains.
 
+**2026-05-18 evening (later) — step2 variant tested, prefetch fired,
+no cascade.** First test through the post-letter-15 harness. Build
+`54c01f78` carries (i) the priority-queue refactor in
+`bridge/mtp/session.go` (no PriorityLow callers — behaviourally a
+no-op for current execution paths) and (ii) the strict
+`scripts/test/clean.sh` Volumes/ check.
+
+Pre-flight: `recover.sh` clean state, `Volumes/` absent, no
+Comprador processes. Procedure: `setup.sh step2` →
+`mdutil -E "<mount-path>"` → architect copied
+`How_a_Computer_Works.webm` (135 MB) into `Download/` (which already
+contained Attenborough.mkv 9 GB + the original webm). `finish.sh step2`.
+
+Log: `/tmp/test-step2-194515.log` (311 lines).
+
+| Signature | Count | What it means |
+|---|---|---|
+| `cache.beginPrefetch START` | 4 | Prefetch path engaged for Attenborough, webm (id=19), `.nfs.20051025.1b50` silly-rename, webm (id=36) |
+| `cache.download START` | 3 | One per distinct MTP object descent |
+| `cache.download END (OK)` | 4 | All completed (3 unique + the original webm under id=19 hidden by silly-rename) |
+| `READ JUKEBOX` | 10 | NFS client retried 7× for `.nfs.20051025.1b50` in 3 s |
+| `not responding` | **0** | No kernel mount-down signal |
+| `Server connection` | **0** | No Finder "interrupted" alert |
+| `cache.open` per-RPC storm | **0** | Stderr quiet during the wait |
+| `Adding notification request CE85` | 0 | No USB-claim race |
+
+Session-goroutine serialization confirmed: Attenborough.mkv took
+4m16s on the libmtp wire; the webm (id=19) entered the channel
+buffer at the same millisecond and completed 4 s later (so the
+session goroutine pulled it the instant Attenborough returned and
+the smaller libmtp transfer finished in ~5 s). This is what the
+single-channel implementation would have done before Step 2 —
+exactly as predicted, since no caller sets `PriorityLow` yet.
+
+**Verdict bucket** (per the pre-committed criteria, *not* re-framed
+after the run): row 3 — **`cache.beginPrefetch START` present, no
+cascade fired.** Datapoint of interest.
+
+**Honest accounting of what this run does and does not show:**
+
+- **Does show:** the harness fix held (no `clean.sh` cascade,
+  `finish.sh` ran to completion), Step 2's priority queue is wired
+  correctly and inert (no deadlock, no goroutine leak, no behaviour
+  delta vs single-channel for the same call site set), and the
+  cascade trigger conditions met but did not fire — the session
+  goroutine was tied up for 4+ minutes returning JUKEBOX on every
+  parallel READ, and macOS did not mark the mount "not responding."
+- **Does not show:** that Step 2 "fixed" or "changed" the cascade
+  in any way. Step 2 has zero `PriorityLow` callers — claiming
+  otherwise would be precisely the imprecise framing this section
+  burned a day discovering it must not do. The cascade trigger is
+  what failed to fire, not the mechanism.
+
+**Candidate Finder-state deltas vs the morning's cascade run:**
+
+- The 2026-05-18 morning was post-fresh-DMG-install, post-mount-with-
+  cold-Spotlight on the volume.
+- This evening was post-`recover.sh`-cleanup, post-many-mount-cycles
+  across the day, with `mdutil -E` flush invoked *after* the mount
+  came up (not "never been seen by Spotlight" cold, but
+  "index flushed and pending re-crawl" cold — a different regime).
+
+This narrows but does not pin down the gate. The pending control
+is a same-procedure run against `prod` (HEAD `32ee45cd` ad-hoc,
+no Step 2 commits) under the same post-letter-15 system state.
+If `prod` *also* runs clean, the gate is environmental. If `prod`
+cascades, then either (a) something between `32ee45cd` and
+`54c01f78` other than the priority queue suppresses it, or (b)
+the priority-queue refactor has an effect even with no
+`PriorityLow` callers — both worth investigating before declaring
+Step 2 a true no-op.
+
 ## SMAppService / Helper
 
 > **Section status — helper itself slated for v0.4.0 retirement.**
