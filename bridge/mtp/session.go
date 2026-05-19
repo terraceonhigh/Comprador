@@ -191,9 +191,27 @@ const (
 	OpRefreshStorages // re-query LIBMTP_Get_Storage to refresh free/max bytes per storage
 )
 
+// Priority controls which lane a request enters in the session goroutine's
+// run loop. The zero value (PriorityHigh) preserves pre-priority-queue
+// behaviour for callers that don't set it explicitly.
+//
+// PriorityLow is reserved for background chunked prefetch work introduced by
+// docs/PLAN-PREFETCH-REDESIGN.md Step 3 — small libmtp transfers that the
+// session goroutine should yield between, so a high-priority NFS RPC
+// arriving mid-prefetch waits at most one chunk's worth of latency
+// (~600 ms at 16 MB chunks per the empirical probe) rather than the full
+// multi-minute download.
+type Priority int
+
+const (
+	PriorityHigh Priority = iota // default: real NFS RPCs, UI-driven operations
+	PriorityLow                  // background prefetch chunks
+)
+
 // MTPRequest is sent to the session goroutine.
 type MTPRequest struct {
 	Op        MTPOp
+	Priority  Priority
 	ObjectID  uint32
 	ParentID  uint32
 	StorageID uint32
@@ -213,6 +231,15 @@ type MTPResponse struct {
 }
 
 // Session owns the MTP device and serialises all operations.
+//
+// Requests enter via Do(), which routes to highPri or lowPri based on
+// req.Priority. The run loop drains highPri preferentially; lowPri is
+// only consumed when highPri is empty (see run() for the canonical
+// priority-select pattern). closing is a signal-only channel used by
+// Close() to terminate the run loop without closing the data channels —
+// closing a data channel that an in-flight Do() is mid-send into would
+// panic; the signal pattern keeps the use-after-Close contract enforced
+// by convention rather than by panic.
 type Session struct {
 	device   *Device
 	Objects  *ObjectMap
@@ -223,7 +250,9 @@ type Session struct {
 	// goroutines read it via TotalBytes / FreeBytes / StorageForPath.
 	storages   []Storage
 	storagesMu sync.RWMutex
-	requests   chan MTPRequest
+	highPri    chan MTPRequest
+	lowPri     chan MTPRequest
+	closing    chan struct{}
 	done       chan struct{}
 }
 
@@ -313,10 +342,12 @@ func NewSessionForLocation(locationID uint32) (*Session, error) {
 	}
 
 	s := &Session{
-		device:   dev,
-		Objects:  NewObjectMap(),
-		requests: make(chan MTPRequest, 16),
-		done:     make(chan struct{}),
+		device:  dev,
+		Objects: NewObjectMap(),
+		highPri: make(chan MTPRequest, 16),
+		lowPri:  make(chan MTPRequest, 16),
+		closing: make(chan struct{}),
+		done:    make(chan struct{}),
 	}
 
 	if err := s.initStorages(); err != nil {
@@ -334,16 +365,24 @@ func (s *Session) DeviceName() string {
 }
 
 // Close shuts down the session goroutine and releases the device.
+// Calling Do() after Close() is a contract violation and will leak the
+// caller's goroutine on a blocked send (no panic, since the data channels
+// are intentionally never closed — see the Session doc comment).
 func (s *Session) Close() {
-	close(s.requests)
+	close(s.closing)
 	<-s.done
 	s.device.Close()
 }
 
 // Do sends a request to the session goroutine and waits for the response.
+// req.Priority routes to the high (default) or low lane.
 func (s *Session) Do(req MTPRequest) MTPResponse {
 	req.Response = make(chan MTPResponse, 1)
-	s.requests <- req
+	if req.Priority == PriorityLow {
+		s.lowPri <- req
+	} else {
+		s.highPri <- req
+	}
 	return <-req.Response
 }
 
@@ -394,11 +433,33 @@ func (s *Session) EnsureInMap(dirPath string) bool {
 	return ok
 }
 
+// run is the canonical Go priority-select pattern. The outer select
+// non-blockingly checks the high-priority lane: if a high-pri request is
+// waiting it runs immediately. Only when high-pri is empty does the
+// inner blocking select pick from either lane — and when both are ready
+// at that instant, Go's random pick may take low-pri, in which case the
+// next iteration still runs the high-pri request after at most one
+// dispatch's worth of latency. With 16 MB prefetch chunks (~600 ms
+// worst case) that latency budget is well inside macOS NFSv3's
+// timeo=10 (1 sec) first-timeout window. See docs/PLAN-PREFETCH-REDESIGN.md
+// "Amortization math" for the derivation.
 func (s *Session) run() {
 	defer close(s.done)
-	for req := range s.requests {
-		resp := s.dispatch(req)
-		req.Response <- resp
+	for {
+		select {
+		case req := <-s.highPri:
+			req.Response <- s.dispatch(req)
+			continue
+		default:
+		}
+		select {
+		case req := <-s.highPri:
+			req.Response <- s.dispatch(req)
+		case req := <-s.lowPri:
+			req.Response <- s.dispatch(req)
+		case <-s.closing:
+			return
+		}
 	}
 }
 
