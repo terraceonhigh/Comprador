@@ -25,7 +25,7 @@ BUILD_ID := $(shell git rev-parse --short HEAD 2>/dev/null)$(shell git diff --qu
 # with a tagged release.
 RELEASE_VERSION := 0.3.4-dev
 
-.PHONY: bridge bridge-test helper helper-test nfs-stub ictest1 ictest2 test-md5 icon app app-debug app-signed app-notarized app-swiftc dev dev-nfs run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
+.PHONY: bridge bridge-test helper helper-test nfs-stub ictest1 ictest2 test-md5 prefetch-probe icon app app-debug app-signed app-notarized app-swiftc dev dev-nfs run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
 
 ICON_SRC := images/icon.png
 ICON_OUT := MenuBarApp/Resources/Comprador.icns
@@ -109,6 +109,21 @@ ictest2:
 # without the ~90s WebDAV quota wait.
 nfs-stub:
 	cd bridge && $(GO) build -o ../$(NFS_STUB_OUT) ./cmd/nfsstub
+
+# Empirical probe for the prefetch redesign (docs/PLAN-PREFETCH-REDESIGN.md
+# Step 1). Measures whether LIBMTP_GetPartialObject is viable for the
+# chunked-yield design. Run with a phone connected in File Transfer mode;
+# auto-picks the first file > 100 MB on the device.
+#
+#   make prefetch-probe
+#   ./build/prefetch-probe                      # 4 MB chunks (default), 64 MB total
+#   ./build/prefetch-probe -chunk=16 -bytes=128 # 16 MB chunks, 128 MB total
+#   ./build/prefetch-probe -skip-control        # skip the full-object read
+prefetch-probe:
+	@mkdir -p build
+	cd bridge && $(GO) build -o ../build/prefetch-probe ./cmd/prefetch-probe
+	@echo "Built: build/prefetch-probe"
+	@echo "Run:   ./build/prefetch-probe (with a phone connected in File Transfer mode)"
 
 # Bundle bridge + all dylibs into an app directory, fix rpaths
 define BUNDLE_BRIDGE
