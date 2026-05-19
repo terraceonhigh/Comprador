@@ -97,17 +97,19 @@ See `dist-compare/` for available variants. Add a new one by building
 its `.app` and dropping it into `dist-compare/` with the
 `Comprador-<name>.app` naming convention.
 
-| Variant (as of 2026-05-18) | Source | Signing | Hardened runtime |
-|---|---|---|---|
-| `prod` | HEAD `32ee45cd` | ad-hoc | ✓ (via app-swiftc) |
-| `dev` | HEAD `32ee45cd` + SWIFT_DEBUG=1 | ad-hoc | ✓ |
-| `notarized` | HEAD `aef6c89b` | Developer ID + stapled | ✓ |
-| `92d4e6d5` | historical commit | ad-hoc | ✓ |
-| `step2` | HEAD `54c01f78` (`claude/prefetch-redesign`) | ad-hoc | ✓ |
+| Variant | In-binary BuildID (authoritative) | Note |
+|---|---|---|
+| `prod` | `6941a487-dirty` | originally labeled HEAD `32ee45cd`; actual bundle was rebuilt from `6941a487` with cprLog-conversion changes in a dirty working tree. Confirmed via the bridge stderr `Comprador build:` line in the 2026-05-18 evening prod control run. |
+| `dev` | (verify with `make app-swiftc` + check Info.plist) | `prod` with `SWIFT_DEBUG=1`. Build identity unverified — re-stamp before relying on it. |
+| `notarized` | `aef6c89b` (per letter 15 — verify before relying) | Developer ID + stapled. |
+| `92d4e6d5` | `92d4e6d5` (per letter 15 — verify before relying) | Historical commit, code-equivalent to retracted v0.3.3. |
+| `step2` | `54c01f78` | `claude/prefetch-redesign` HEAD. Priority-queue refactor in [bridge/mtp/session.go](../../bridge/mtp/session.go) with no `PriorityLow` callers — behaviourally a no-op for the current execution path. Confirmed inert vs `prod` by the side-by-side prod control run on 2026-05-18 evening (see [docs/MISTAKES.md entry 4](../../docs/MISTAKES.md)). |
 
-`step2` carries the priority-queue refactor of [bridge/mtp/session.go](../../bridge/mtp/session.go)
-(`PriorityLow` lane added, no callers yet). Behaviour should be byte-identical
-to `prod` until Step 3 lands; this variant exists as the regression anchor —
-if `step2` cascades in a Spotlight regime where `prod` does, the mechanism is
-unchanged, and if it does *not*, that is a datapoint worth examining (likely
-Spotlight-warm, not Step 2 having an effect).
+**Trust the in-binary BuildID, not the table.** Variants get rebuilt
+in place during iteration and the README drifts. Every variant log
+starts with `Comprador build: <BuildID>` (the in-Info.plist
+`CFBundleVersion` is the same string, verifiable via
+`/usr/libexec/PlistBuddy -c "Print :CFBundleVersion"
+dist-compare/Comprador-<variant>.app/Contents/Info.plist`). If a
+test makes a claim about which commit a variant represents,
+verify the stamp before publishing the claim.

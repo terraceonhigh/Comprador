@@ -1652,6 +1652,97 @@ the priority-queue refactor has an effect even with no
 `PriorityLow` callers — both worth investigating before declaring
 Step 2 a true no-op.
 
+**2026-05-18 evening (later still) — prod control run also clean,
+environmental-gate hypothesis confirmed.** Same procedure
+(`setup.sh prod` → `mdutil -E` → copy a webm into `Download/`).
+Log: `/tmp/test-prod-200338.log` (264 lines).
+
+**Side-finding via build-identity stamp**: `prod` did *not* match
+the README's claimed `32ee45cd`. The bundle's bridge log emits
+`Comprador build: 6941a487-dirty` on startup. So the variant
+labeled "HEAD ad-hoc, cprLog-converted" was actually built when
+HEAD was `6941a487` (the chain-Pane-B harness commit) with the
+cprLog conversion in the working tree but not yet committed. The
+README was point-in-time correct when written and then drifted.
+
+This is *the* use case for build-identity stamping — without
+the in-bundle BuildID, the comparison would have been
+silently miscalibrated. The README is corrected separately;
+**trust the in-binary stamp, not the variants table.**
+
+The tighter comparison this actually represents:
+
+| Variant | Build identity | Includes priority queue? |
+|---|---|---|
+| `prod` | `6941a487-dirty` | No (one commit before f5db97cd) |
+| `step2` | `54c01f78` | Yes (no `PriorityLow` callers) |
+
+Side-by-side log signatures:
+
+| Signature | step2 | prod |
+|---|---|---|
+| `cache.beginPrefetch START` | 4 | 3 |
+| `cache.download START` | 3 | 3 |
+| `cache.download END (OK)` | 4 | 3 |
+| `JUKEBOX` returns | 10 | 3 |
+| `not responding` | **0** | **0** |
+| `Server connection` | **0** | **0** |
+| `cache.open` storm | **0** | **0** |
+| `Adding notification request CE85` | 0 | 0 |
+
+Both serialized through the session goroutine. Different FIFO
+ordering across runs — step2 dispatched Attenborough first (4m16s)
+then webm (4s); prod dispatched webm first (6.2s) then Attenborough
+(5m45.1s, channel-wait included). Ordering is driven by which NFS
+READ arrived at the bridge first, not by any code-path
+difference. **Both completed cleanly.** The user-visible drag
+landed in both cases after the prefetch window.
+
+**Conclusion: the cascade trigger is environmental, not gated on
+code between `6941a487` and `54c01f78`.** Step 2 is now also
+confirmed to have no detectable behaviour delta vs. the
+harness-only twin — as predicted, since the priority lane has no
+`PriorityLow` callers yet.
+
+**Sharpened gate framing:** the cascade requires a high JUKEBOX-
+return rate (many parallel READs hitting the size threshold during
+the prefetch window). The morning's .diag forensics showed many
+concurrent prefetches; this evening's runs saw only 1–2 active
+at a time. The Spotlight/QuickLook probe rate is the proximate
+driver — itself a function of Spotlight's per-volume-index cold/
+warm state. We have not pinned the exact macOS-side variable
+because we cannot trivially reproduce "Spotlight has never seen
+this volume" without a reboot, a new mount-point path, or a
+DMG-install cycle.
+
+**What this tells us about Step 3:** the chunked-yield prefetch
+still removes the mechanism even if the morning-regime trigger is
+hard to reliably reproduce. A bug that fires on first user
+encounter (cold Spotlight) and then stops repro'ing
+(warm Spotlight) is precisely the user-impact shape worth fixing
+unconditionally. The conclusion from the morning's MISTAKES update
+("A bug that fires under specific-but-common conditions is still
+unshippable") is reinforced, not weakened, by today's clean runs.
+
+**Methodological notes for the next cascade-investigation round:**
+
+- Build-identity stamping caught a silent README/binary drift
+  that would otherwise have miscalibrated this control. Keep
+  it on every variant; never trust a label without verifying the
+  stamp.
+- A genuine "cold Spotlight" reproduction probably needs either
+  a reboot or a fresh mount-point path (Comprador currently puts
+  mounts at `~/Library/Application Support/Comprador/Volumes/
+  <DeviceName>`; using a per-test-run subdirectory would
+  guarantee Spotlight has never indexed it). Worth considering
+  if we want to make the morning's regime reproducible at will.
+- The recover.sh path-with-spaces bug exposed today (umount
+  silently failing on the actual mount path because awk-$3
+  tokenized "Application Support") would have masked far worse
+  failures had clean.sh's new gate not refused to walk into the
+  stale mount. The harness-as-self-test property letter 15
+  argued for has paid for itself within hours of landing.
+
 ## SMAppService / Helper
 
 > **Section status — helper itself slated for v0.4.0 retirement.**
