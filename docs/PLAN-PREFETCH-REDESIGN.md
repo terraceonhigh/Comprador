@@ -149,47 +149,119 @@ through the mount for the full ~6 minutes.
 ### Option D — Chunked-yield with cooperative checkpoints (recommended)
 
 Hybrid of A and C, leaning toward A. Prefetch is chunked using
-`LIBMTP_GetPartialObject` for 4-8 MB chunks. The session goroutine
-runs a simple priority pump (A). Additionally: before pulling the
-next prefetch chunk, the session goroutine sleeps briefly if the
+`LIBMTP_GetPartialObject` for 16 MB chunks (see "Empirical findings"
+below for the chunk-size derivation). The session goroutine runs a
+simple priority pump (A). Additionally: before pulling the next
+prefetch chunk, the session goroutine sleeps briefly if the
 high-priority queue has been empty for less than 100 ms — this
 "smooths" busy periods where RPCs arrive in clumps.
 
 **Effort:** 3 days. The chunked-libmtp work is the long pole.
 
-## Open empirical questions
+## Empirical findings (probe run 2026-05-18 17:55 — 18:08)
 
-Before committing to D, we need to verify:
+`bridge/cmd/prefetch-probe` ran against both target devices. The three
+questions in the original "Open empirical questions" section have hard
+answers now.
 
-1. **Does `LIBMTP_GetPartialObject` work on the Xperia XQ-BT52
-   and the Google Pixel 6?** Some MTP implementations refuse partial
-   reads. If both phones reject, fall back to A's handler-callback
-   approach (more work but should be universal).
-2. **What's the per-chunk overhead?** If `GetPartialObject` is ~200
-   ms setup + bytes, 4 MB chunks at 27 MB/sec = 200 ms transfer +
-   200 ms setup = 50% efficiency loss. May need to go to larger
-   chunks (16 MB) or use the handler-callback approach.
-3. **Does libmtp serialize partial-object calls correctly?** I.e.,
-   if we call `GetPartialObject(offset=0, length=4MB)` then
-   `GetPartialObject(offset=4MB, length=4MB)`, does libmtp resume
-   cleanly or rebuild USB state each time?
+### Q1: Does `LIBMTP_GetPartialObject` work on Xperia + Pixel?
 
-These get answered with a small probe binary in `bridge/cmd/prefetch-probe/`
-that exercises GetPartialObject against a real device. ~half day to
-build and measure.
+**Yes on both.** `LIBMTP_DEVICECAP_GetPartialObject` advertises `true`
+on Sony Xperia XQ-BT52 (VID 0x0fce, PID 0x520d) and Google Pixel 6
+(VID 0x18d1, PID 0x4ee1), and the calls actually succeed against
+Attenborough.mkv (9 GB) and Genki I.azw3 (135 MB) respectively. No
+fallback to handler-callback needed for Comprador's current target
+hardware.
+
+### Q2: What's the per-chunk overhead?
+
+| Phone | Chunk size | Median chunk | Mean chunk | Max chunk | Throughput | vs full-read |
+|---|---|---|---|---|---|---|
+| Xperia | 4 MB | 143 ms | 157 ms | 299 ms¹ | 25.4 MB/s | 30.6 MB/s, ~17% slower |
+| Pixel | 4 MB | 148 ms | 151 ms | 178 ms | 26.4 MB/s | 29.8 MB/s, ~11% slower |
+
+¹ Single outlier on the Xperia, chunk 13. Probably USB jitter; no pattern.
+
+**Per-chunk fixed overhead is ~17 ms.** Derived from: 4 MB transfer at
+30 MB/sec = 133 ms of bytes-on-wire; total chunk time ~150 ms; delta
+~17 ms is the MTP-transaction setup. This is the load-bearing number
+for chunk-size selection.
+
+### Amortization math — why 16 MB is the chunk size
+
+The setup cost is per-call, not per-byte. Larger chunks amortize it:
+
+| Chunk size | Transfer time @ 30 MB/s | + 17 ms setup | Setup overhead % | Yield latency (worst-case) |
+|---|---|---|---|---|
+| 4 MB | 133 ms | 150 ms | **11%** | 150 ms |
+| 8 MB | 267 ms | 284 ms | 6% | 284 ms |
+| **16 MB** | **533 ms** | **550 ms** | **3.1%** | **~600 ms** (with jitter) |
+| 32 MB | 1067 ms | 1084 ms | 1.6% | 1100 ms ⚠ |
+
+**Chosen chunk size: 16 MB.** Sweet spot between:
+
+- **Amortization:** 3% overhead is acceptable; full reads are the
+  upper bound (zero overhead) and we want to stay within a few % of
+  them.
+- **Yield latency:** ~600 ms worst-case wait for a high-priority RPC
+  is *below* macOS NFSv3 client's `timeo=10` (1 second) first-timeout
+  budget, so a Finder browse during prefetch will see at most one
+  chunk's latency, not a kernel-side retry.
+- **Avoided regime:** 32 MB chunks tip into 1100 ms worst-case, which
+  crosses NFS's first-timeout boundary. Even if our retry handling is
+  correct, we'd be inviting kernel-side timeout-retry cascades that
+  *might* surface as cosmetic "Server connections interrupted"
+  alerts.
+
+The amortization breakeven is generous: chunk sizes from 8 MB to 24
+MB are all defensible. 16 MB is the round-number midpoint that's
+easy to remember and reason about. Encode as a tunable constant
+`prefetchChunkSize` in `cache.go` with a comment pointing at this
+section.
+
+### Q3: Does libmtp serialize partial-object calls correctly?
+
+**Yes.** Sequential calls with increasing offsets at the same object
+ID work without state rebuild. Per-chunk wall times stay within a
+narrow band across the run (143–299 ms on Xperia, 140–178 ms on
+Pixel) — no monotonically-increasing pattern that would suggest
+libmtp is re-doing per-call setup.
+
+### Cascade-fix math (what this buys us)
+
+Current behavior on the v0.3.3 reproduction: prefetch locks the
+libmtp session for the full Attenborough download (~5 min). Every
+NFS RPC during that window queues. The kernel marks the mount "not
+responding" after ~30 sec of unanswered RPCs. Finder cascades.
+
+With chunked-yield at 16 MB: each chunk locks the session for ~600
+ms. After each chunk, the priority pump drains queued high-priority
+RPCs (each ~single-digit ms). **A Finder browse during prefetch sees
+~600 ms lag once per chunk, then immediate response.** Order-of-
+magnitude improvement; well within human-tolerable interactivity.
+
+### Bonus observation (out-of-scope for this plan)
+
+The Pixel's `LIBMTP_Get_Files_And_Folders(storage=65537, parent=0x0)`
+took **3 min 31 sec** to enumerate the storage root, vs the Xperia's
+instant return. Same call, both freshly-opened MTP sessions. Likely a
+Pixel-specific quirk (many objects at root, or libmtp doing per-object
+GetObjectInfo serially for thousands of objects).
+
+Not a prefetch concern — affects first-mount-after-replug enumeration
+latency. **Worth filing as a separate investigation item** before any
+release that wants Pixel-equality with the Xperia for first-browse
+responsiveness.
 
 ## Plan
 
-### Step 1 — Empirical probe (half day)
+### Step 1 — Empirical probe (✓ done 2026-05-18)
 
-Build `bridge/cmd/prefetch-probe/main.go` that:
-- Opens an MTP session on the first connected device
-- Picks a phone-resident file > 100 MB (Attenborough on the Xperia
-  is a known target)
-- Calls `LIBMTP_GetPartialObject` for sequential 4 MB chunks, 16 MB
-  chunks, and full-object as control
-- Measures per-chunk wall time and total throughput
-- Reports whether chunked is viable
+Built `bridge/cmd/prefetch-probe/main.go` (commit `32ee45cd`). Ran
+against Xperia XQ-BT52 (Attenborough.mkv, 9 GB) and Pixel 6 (Genki
+I.azw3, 135 MB). Findings captured in the "Empirical findings"
+section above. Verdict: **chunked-yield viable on both phones, 16 MB
+chunks chosen for the production design.**
 
 ### Step 2 — Session priority queue (1 day)
 
