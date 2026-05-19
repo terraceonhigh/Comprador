@@ -2,52 +2,69 @@
 
 ## ⚠ NEXT SESSION — start here
 
-The state below this header is from 2026-05-17 and **is partially
-outdated**. The "NFS READ stall fixed via JUKEBOX + async prefetch"
-claim was empirically falsified on 2026-05-18 morning: the async
-prefetch (commit `a405ed48`) is the cause of a whole-system
-cascade-freeze when Finder/Spotlight/QuickLook probe a directory
-containing files >50 MB. **v0.3.3 was retracted** within an hour
-of release.
+State as of **2026-05-18 night** (Step 3 landed, yield test passed,
+cascade fix verified by construction + empirically via the
+discriminating yield test).
 
-Canonical handoff for the day's diagnostic + state:
+**Live spec for the next stretch:** [`docs/PLAN-V0.3.4-RELEASE.md`](docs/PLAN-V0.3.4-RELEASE.md).
+It carries the go/no-go gates for the v0.3.4 release, the
+remaining test rounds, and the build/tag work.
 
-- **[`correspondence/15-the-day-the-harness-bit-twice/letter.md`](correspondence/15-the-day-the-harness-bit-twice/letter.md)** —
-  end-of-day reflection: the verified mechanism, the four framings
-  that fell, the fix direction, what's pushed where, and an honest
-  accounting of the two times the test harness triggered the same
-  cascade it was investigating.
-- **[`docs/PLAN-PREFETCH-REDESIGN.md`](docs/PLAN-PREFETCH-REDESIGN.md)** —
-  the working spec for Scope C (chunked-yield + priority queue +
-  soft mount + log strip). Step 1 (empirical probe) is done; **next
-  session opens on Step 2** (priority queue in
-  `bridge/mtp/session.go`).
-- **[`docs/MISTAKES.md`](docs/MISTAKES.md)** entry 4 — full receipt
-  of the cascade mechanism, the .diag forensics, the v0.3.3
-  retraction, and the verified gating conditions.
+**Where the cascade fix stands:** the v0.3.3 cascade *as observed*
+is fixed. Step 3 (chunked prefetch at PriorityLow, commit `74702901`)
+breaks the session-goroutine-locked-for-minutes link of the cascade
+chain by construction. The yield test on 2026-05-18 ~20:41 measured
+183 ms for a 137 KB high-pri read while a 9 GB low-pri prefetch was
+running — well inside the kernel-side mount-down threshold. The
+*class* of cascade is one ship away from being impossible: Step 5
+(soft/interruptible mount, ~1 hour of work) catches any future
+fault regardless of cause.
 
-Branches / PRs:
+**Canonical receipts:**
 
-- `claude/build-identity` (PR #25, 10 commits) — all of today's
-  durable work: build-identity stamping, prefetch probe + plan +
-  results, test harness scripts, NSLog→cprLog conversion. **Review
-  + merge at architect's pace.**
-- `claude/changelog-v0.3.3` (PR #24, 1 commit) — stale CHANGELOG
-  for the retracted v0.3.3. **Close.**
+- [`docs/PLAN-V0.3.4-RELEASE.md`](docs/PLAN-V0.3.4-RELEASE.md) — live
+  release spec, go/no-go gates, remaining test rounds (T1–T7).
+- [`docs/MISTAKES.md`](docs/MISTAKES.md) entry 4 — full receipt of
+  the cascade investigation arc, including the step2 control,
+  prod control, step3 yield-test, and the "is v0.3.3 fixed"
+  framing with caveats.
+- [`docs/PLAN-PREFETCH-REDESIGN.md`](docs/PLAN-PREFETCH-REDESIGN.md) —
+  the original working spec for Scope C. Steps 1, 2, 3 done; Steps
+  4 (decide in/defer), 5 (soft mount), 6 (logging strip) remain.
+- [`correspondence/15-the-day-the-harness-bit-twice/letter.md`](correspondence/15-the-day-the-harness-bit-twice/letter.md) —
+  the post-cascade reflection that framed the methodological
+  lessons. Still load-bearing for harness discipline; the
+  by-construction fix did not invalidate any of letter 15's
+  framings, only added a positive empirical receipt.
 
-Two known-real bugs in the test harness that **need fixing before
-the next reproduction round**:
+**Next concrete moves, in order:**
 
-1. `scripts/test/clean.sh` walks into the NFS mount-point
-   subdirectory even after the kernel has reaped the mount entry.
-   Triggered the cascade twice on 2026-05-18 evening. Safety check
-   needs to refuse on subdir-existence, not just `mount`-output
-   presence. (The cascade happens because `rmtree`'s `stat()` on
-   `~/Library/Application Support/Comprador/Volumes/XQ-BT52`
-   wedges on residual dead NFS dirent state.)
-2. mDNS `dns-sd` orphans may survive `recover.sh` even after the
-   3-round SIGKILL loop. Worth investigating with the next
-   reproduction; not blocking.
+1. **Step 5 — soft/interruptible mount.** [MountManager.swift](MenuBarApp/Sources/MountManager.swift).
+   ~1 hour. Universal safety boundary; ships with v0.3.4 regardless.
+2. **Step 6 — strip per-RPC logging.** ~2 hours. Removes the
+   stderr-firehose CPU load that contributed to the morning's
+   cascade footprint.
+3. **Decide on Step 4 (OpSendFile chunking).** In v0.3.4 or
+   deferred to v0.3.5 with disclosure. See the release plan.
+4. **T1 cold-Spotlight cascade-shape test** (one reboot + one
+   drag). Produces the in-vivo cascade-suppression evidence the
+   yield test is a proxy for.
+5. **CHANGELOG + tag + DMG + GitHub release.**
+
+**Branches currently in play:**
+
+- `master` — at `v0.3.3` merge (`8f818bc1`), unchanged since the
+  retraction.
+- `claude/changelog-v0.3.3` (PR #24) — stale CHANGELOG for retracted
+  v0.3.3. **Close.**
+- `claude/build-identity` (PR #25, 10 commits) — build-identity
+  stamping + harness + cprLog conversion. **Should rebase into
+  the v0.3.4 release path** (or merge first, depending on review
+  preference — see release plan B1).
+- `claude/prefetch-redesign` (this branch, ahead of build-identity)
+  — Steps 2 + 3, harness fixes, all of today's durable work.
+  **This is the branch v0.3.4 ships from** after Steps 4/5/6 land
+  and tests pass.
 
 ---
 
