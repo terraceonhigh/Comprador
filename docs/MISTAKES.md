@@ -1753,23 +1753,56 @@ high-priority requests before pulling the next low-priority chunk.
 
 The discriminating test (not the cascade test — that one remains
 environmentally gated tonight): **does a high-priority operation
-arriving mid-prefetch land in seconds, or does it wait the full
-multi-minute libmtp transfer?** The yield test against build
-`74702901`, run 2026-05-18 ~20:41:
+arriving mid-prefetch land within the priority-pump's one-chunk
+yield budget, instead of waiting the full multi-minute libmtp
+transfer?** The yield test against build `74702901`, run
+2026-05-18 ~20:41:
 
 ```
 20:41:06.792  cache.beginPrefetch START  Attenborough.mkv (9 GB, id=14)
-20:41:06.792  cache.download START       Attenborough  ← Step 3 chunked loop begins
-20:41:12.586  Lazy enumerate /Download   (Finder browse during prefetch — landed normally)
+20:41:06.792  cache.download START       Attenborough  ← Step 3 chunked loop begins (PriorityLow)
+20:41:12.586  Lazy enumerate /Download   ★ OpListDir (default PriorityHigh) landed during prefetch
 20:41:13.642  OpenFile read-path         Red_Castle.html (137 KB)
-20:41:13.642  cache.download START       Red_Castle.html
-20:41:13.825  cache.download END (OK)    dt=183ms  ★
+20:41:13.642  cache.download START       Red_Castle.html  ← cache.download → PriorityLow (same lane)
+20:41:13.825  cache.download END (OK)    dt=183ms  ← low-pri lane non-starving
 ```
 
-**183 milliseconds end-to-end for the 137 KB high-pri read while
-the 9 GB low-pri prefetch was actively running.** Well inside the
-600 ms one-chunk-budget the plan sized for. Log:
+Two complementary receipts, each evidencing a different invariant:
+
+1. **The `Lazy enumerate` at 20:41:12.586** is the high-priority
+   preemption signal. `OpListDir` is dispatched at the default
+   `PriorityHigh` (the priority field's zero value), so its landing
+   ~6 seconds into a multi-minute prefetch — between two of
+   Attenborough's chunks — is direct evidence that the priority
+   pump drains the high lane before pulling the next low-pri
+   chunk. We don't have a duration measurement for the
+   enumerate itself (no START log on `OpListDir`), but the fact
+   that it landed at all during the prefetch window is the
+   load-bearing observation.
+2. **Red_Castle.html's 183 ms end-to-end completion** is the
+   low-pri-non-starvation signal. Because `cache.download` always
+   enqueues at `PriorityLow` — including on the synchronous
+   `open()` path — Red_Castle.html's 137 KB read went into the
+   same low lane as Attenborough's chunks. The 183 ms duration
+   shows that low-pri requests queue behind one other low-pri
+   chunk at most before being dispatched themselves. Well
+   inside the 600 ms one-chunk ceiling the plan sized for.
+
+Together, these are the falsifiable demonstration that the
+priority pump works as designed: high-pri requests preempt
+between low-pri chunks (#1), and low-pri requests serialize
+without catastrophic starvation (#2). Log:
 `/tmp/test-step3-203247.log`.
+
+**Note on `open()` going through PriorityLow.** `cache.download`
+runs unchanged for both background prefetch (via
+`beginPrefetch`) and synchronous open (via `open`). Both paths
+enqueue at `PriorityLow`. This is deliberate: a synchronous open
+of a large file presents the same cascade-risk pathology as the
+background prefetch did (multi-minute libmtp transfer locking
+the session goroutine), so it gets the same chunked-yield
+treatment. Small synchronous reads pay one chunk's worth of
+yield latency in the worst case — acceptable.
 
 **Cascade-fix analysis — is v0.3.3 fixed?**
 

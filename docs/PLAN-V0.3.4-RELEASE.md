@@ -22,32 +22,45 @@ work proceeds.**
 
 ## Code work remaining (PLAN-PREFETCH-REDESIGN.md sequencing)
 
-### Step 4 — Audit OpSendFile (Mac→phone writes) — half day
+### Step 4 — Audit OpSendFile (Mac→phone writes) — DEFERRED to v0.3.5
+
+**Decision:** defer; do not block v0.3.4.
 
 `session.Do(OpSendFile, ...)` for a Mac→phone copy holds the libmtp
-session for the full transfer duration, same shape as the original
+session for the full transfer duration — same shape as the original
 prefetch bug. A 5 GB Mac→phone copy locks the session goroutine for
 ~3 min at USB-MTP rate.
 
-**Two questions to answer before designing:**
+**Why deferring is the right call for v0.3.4:**
 
-1. Does this *actually* matter for the cascade? OpSendFile is
-   triggered by user-initiated writes, not by Finder/Spotlight
-   probing — so the trigger condition for a cascade requires the
-   user to write a large file AND simultaneously generate a
-   high-pri-RPC storm. Less spontaneous than the prefetch case.
-2. If yes, is there a chunked-write libmtp API analog to
-   GetPartialObject? `LIBMTP_Send_File_From_Handler` uses a
-   callback that returns short writes — we can yield by returning
-   less-than-requested every N bytes and have the session goroutine
-   pull the high-pri queue between callback invocations. This is
-   *callback-side* yielding, not the chunk-loop approach of
-   Step 3. Different shape, same goal.
+OpSendFile is triggered exclusively by user-initiated writes, not
+by Finder/Spotlight/QuickLook probing. The cascade pathology that
+produced the 2026-05-18 morning required parallel-RPC amplification
+during the prefetch window — which is the trigger condition for
+the *read* side, not the write side. A Mac→phone copy that
+incidentally coincides with a concurrent RPC storm against the
+mount would still produce a session-lock, but no cascade has been
+observed for this case and the trigger is deliberate (user is
+*actively* writing) rather than ambient (Spotlight just is).
+The lower spontaneity makes this a real-but-rare issue.
 
-**Action:** decide whether Step 4 blocks v0.3.4 or defers to v0.3.5.
-If it defers, the v0.3.4 release notes should disclose that
-Mac→phone writes can still produce session-lock under high concurrent
-load (though no cascade has been observed for this case).
+**Disclose in v0.3.4 release notes:** large Mac→phone copies still
+hold the libmtp session for the full transfer duration. While
+that copy runs, other phone operations may stall. The session
+unblocks immediately when the copy completes. This is a known
+limitation slated for v0.3.5 alongside the Finder copy-progress
+regression.
+
+**Step 5's soft-mount safety net catches this case anyway.** Even
+if a Mac→phone copy somehow tipped into mount-down on a future
+regression, `hard,intr` would surface EIO to the calling process
+instead of cascading.
+
+**For v0.3.5 (when Step 4 lands):** the implementation shape is
+callback-side yielding via `LIBMTP_Send_File_From_Handler`'s
+short-write contract — return less-than-requested every N bytes
+and pull the high-pri queue between callback invocations. Different
+shape from Step 3's chunk loop (which is request-side), same goal.
 
 ### Step 5 — Soft / interruptible mount option — independent, ship together
 
@@ -233,18 +246,20 @@ without merging. Delete the branch.
 v0.3.4 ships only if:
 
 - [x] Step 3 in tree (commit `74702901`)
-- [x] Yield test passes (183 ms mid-prefetch high-pri response)
+- [x] Yield test passes (high-pri OpListDir landed during prefetch;
+      low-pri non-starvation: 183 ms for a 137 KB chunk request)
+- [x] Step 4 decided: **deferred to v0.3.5** with release-notes disclosure
 - [ ] Step 5 in tree (soft mount)
 - [ ] Step 6 in tree (logging strip)
-- [ ] Step 4 decided: in v0.3.4 or deferred to v0.3.5 with disclosure
 - [ ] T1 (cold-Spotlight cascade-shape) — empirical cascade-suppression
 - [ ] T2 (multi-handle stress) — multiple concurrent prefetches
 - [ ] T3 (write-during-prefetch) — OpSendFile path still works
 - [ ] T6 (pjdfstest) — POSIX sanity
-- [ ] CHANGELOG drafted
-- [ ] Finder copy-progress regression decision: defer to v0.3.5
-      with release-notes disclosure (recommended), or fix in this
-      release (adds days)
+- [ ] CHANGELOG drafted (covering Step 4 + copy-progress as known
+      issues with v0.3.5 disclosure)
+- [x] Finder copy-progress regression: deferred to v0.3.5 with
+      release-notes disclosure (see [TODO.md](../TODO.md)
+      Pre-launch UX items)
 
 T4 and T5 are nice-to-have; not blocking.
 

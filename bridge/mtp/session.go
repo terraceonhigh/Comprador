@@ -383,9 +383,29 @@ func (s *Session) DeviceName() string {
 }
 
 // Close shuts down the session goroutine and releases the device.
-// Calling Do() after Close() is a contract violation and will leak the
-// caller's goroutine on a blocked send (no panic, since the data channels
-// are intentionally never closed — see the Session doc comment).
+//
+// Two contract notes that changed in the Step 2 priority-queue refactor
+// (commit f5db97cd):
+//
+//   1. Calling Do() AFTER Close() is a contract violation and will leak
+//      the caller's goroutine on a blocked send. (Pre-refactor: would
+//      have panicked on send-to-closed-channel; post-refactor: the data
+//      channels are intentionally never closed, see the Session doc
+//      comment, so the leak is the silent failure mode.)
+//
+//   2. Calling Do() that is IN FLIGHT (already on highPri/lowPri but
+//      not yet dispatched) when Close() fires will likewise leak the
+//      caller's goroutine. The closing signal causes the run loop to
+//      return immediately rather than drain pending requests.
+//      (Pre-refactor: `for req := range s.requests` would drain
+//      buffered requests before exit.) In practice this only matters
+//      at process exit, where the leaked goroutines die with the
+//      process; the single caller (bridge/main.go:53 deferred) fires
+//      at that exact moment, so the change is operationally a no-op.
+//
+// If a future caller of Close() needs the drain-on-close property,
+// add a drain phase here that pumps highPri then lowPri to empty
+// before signaling closing.
 func (s *Session) Close() {
 	close(s.closing)
 	<-s.done
