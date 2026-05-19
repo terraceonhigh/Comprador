@@ -20,16 +20,24 @@ Where `<variant>` is one of the names in `dist-compare/` (e.g. `prod`,
 (`/tmp/test-<variant>-<timestamp>.log`) and tees to your terminal so
 you can see live output. Ctrl-C to stop after the test.
 
-**Pane B — operator pane** (one command at a time):
+**Pane B — operator pane** (two chained commands per test):
 
 ```
-sudo ./scripts/test/recover.sh         # kill everything, force unmount
-./scripts/test/clean.sh                # wipe user-side caches/prefs
-./scripts/test/install.sh <variant>    # cp -R from dist-compare/ to /Applications
-./scripts/test/launch.sh               # open the app, poll for mount
-# (now: manually drag-drop in Finder. Capture the result behavior.)
-./scripts/test/analyze.sh <variant> <log-path>   # grep, verdict
+sudo ./scripts/test/setup.sh <variant>
+# (now: perform the drag-drop manually in Finder. Observe behavior.)
+# (Ctrl-C the tail.sh pane in Pane A to stop log capture.)
+sudo ./scripts/test/finish.sh <variant>   # log path auto-detected from /tmp
 ```
+
+`setup.sh` runs `recover → clean → install → launch` in sequence and exits
+when the mount is live. `finish.sh` runs `analyze → recover` in sequence,
+auto-detecting the most recent log file for the variant if you don't pass
+a path explicitly. Two commands per test, predictable order, all failure
+modes named.
+
+If you want to run the underlying steps one-at-a-time (e.g. for debugging
+a script), they're still individually invokable: `recover.sh`, `clean.sh`,
+`install.sh`, `launch.sh`, `analyze.sh`.
 
 ## What the scripts predetermine
 
@@ -54,6 +62,23 @@ sudo ./scripts/test/recover.sh         # kill everything, force unmount
   `analyze.sh` reports it but the operator has to physically replug.
 - Spotlight cache state — we can't precisely control whether the
   per-volume index is cold or warm at test time.
+
+## Known footguns these scripts protect against
+
+- **`clean.sh` walking into an active NFS mount.** The 2026-05-18
+  evening test hit this exact failure mode: Python's `shutil.rmtree`
+  descended into `~/Library/Application Support/Comprador/Volumes/
+  XQ-BT52` (a still-mounted hard,nointr NFS share), wedged on a
+  kernel uninterruptible syscall, and cascaded Finder + keyboard
+  input. `clean.sh` now refuses to run when any `.local:/` mount is
+  active and points at `recover.sh` as the prerequisite.
+  `setup.sh` always runs `recover.sh` before `clean.sh`, so the
+  chained path is safe by construction.
+- **Trailing `&` on log captures silently dropping data.** Bit us
+  earlier. `tail.sh` is foreground-only with `tee`.
+- **Inconsistent log paths across runs.** `tail.sh` uses a
+  deterministic `/tmp/test-<variant>-<HHMMSS>.log` pattern, and
+  `finish.sh` auto-detects the most recent one for the variant.
 
 ## Variants
 

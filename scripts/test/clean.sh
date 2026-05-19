@@ -9,6 +9,30 @@
 set +e
 echo "=== clean.sh — wiping Comprador user state ==="
 
+# SAFETY CHECK: refuse to run if any Comprador NFS mount is active.
+# Walking into a still-mounted directory under hard,nointr semantics
+# wedges the rmtree process and cascades to every system service that
+# touches the path. The architect hit this exact failure mode on
+# 2026-05-18 evening — Finder crashed and keyboard input died because
+# Python's shutil.rmtree walked into ~/Library/Application Support/
+# Comprador/Volumes/XQ-BT52, which was a still-mounted bridge-locked
+# NFS share.
+#
+# If the safety check fires, run scripts/test/recover.sh first to
+# force-unmount, THEN re-run this script.
+if /sbin/mount | /usr/bin/grep -q '\.local:/'; then
+    echo ""
+    echo "REFUSING TO RUN — Comprador NFS mount is still active:"
+    /sbin/mount | /usr/bin/grep '\.local:/' | /usr/bin/sed 's/^/  /'
+    echo ""
+    echo "Walking into a mounted hard,nointr share will wedge this shell"
+    echo "and cascade to system services. Run recover.sh first:"
+    echo ""
+    echo "  sudo ./scripts/test/recover.sh"
+    echo ""
+    exit 1
+fi
+
 # Python because the harness blocks 'rm -rf <path-with-slashes>' patterns
 # in some configurations. shutil.rmtree is functionally equivalent.
 /usr/bin/python3 << 'EOF'
