@@ -15,6 +15,16 @@ DIST_DIR   := dist
 # Format: short SHA + "-dirty" if the worktree has uncommitted changes.
 BUILD_ID := $(shell git rev-parse --short HEAD 2>/dev/null)$(shell git diff --quiet 2>/dev/null || echo "-dirty")
 
+# Release version stamped into the .app's Info.plist CFBundleShortVersionString
+# so macOS reports the actual release (not the long-stale "0.1.0" hardcoded
+# in MenuBarApp/Info.plist). BUILD_ID rides into CFBundleVersion so .diag
+# files, the About box, and Spotlight metadata can name the exact commit.
+#
+# Bumped manually at release-cut time, alongside CHANGELOG.md and the tag.
+# Worktree-aware: dev builds report "<version>-dev" so they're never confused
+# with a tagged release.
+RELEASE_VERSION := 0.3.4-dev
+
 .PHONY: bridge bridge-test helper helper-test nfs-stub ictest1 ictest2 test-md5 icon app app-debug app-signed app-notarized app-swiftc dev dev-nfs run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
 
 ICON_SRC := images/icon.png
@@ -226,6 +236,14 @@ app-swiftc: bridge helper icon
 	          $(SWIFT_APP)/Contents/Library/LaunchDaemons
 	cp $(SWIFT_BIN) $(SWIFT_APP)/Contents/MacOS/$(APP_NAME)
 	cp MenuBarApp/Info.plist $(SWIFT_APP)/Contents/Info.plist
+	@# Stamp real version + git hash into the bundle's Info.plist.
+	@# Must run BEFORE codesign so the signature covers the updated plist.
+	@# See docs/PLAN-BUILD-IDENTITY.md for the rationale (the 2026-05-18
+	@# Comprador.diag reported Version: 0.1.0 (1), masking the actual build).
+	/usr/libexec/PlistBuddy \
+		-c "Set :CFBundleShortVersionString $(RELEASE_VERSION)" \
+		-c "Set :CFBundleVersion $(BUILD_ID)" \
+		$(SWIFT_APP)/Contents/Info.plist
 	cp MenuBarApp/Resources/VendorIDs.plist $(SWIFT_APP)/Contents/Resources/
 	cp MenuBarApp/Resources/Comprador.icns $(SWIFT_APP)/Contents/Resources/
 	@printf 'APPL????' > $(SWIFT_APP)/Contents/PkgInfo
