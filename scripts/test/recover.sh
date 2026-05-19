@@ -17,11 +17,33 @@ sudo /usr/bin/killall -9 Comprador 2>/dev/null
 echo "  killing bridge (if running)..."
 sudo /usr/bin/killall -9 bridge 2>/dev/null
 
-# 3. Kill mDNS announcer orphans
-echo "  killing dns-sd orphans..."
-/usr/bin/pgrep -f "dns-sd.*Comprador" 2>/dev/null | while read pid; do
-    kill "$pid" 2>/dev/null
+# 3. Kill mDNS announcer orphans. dns-sd processes may have been reparented
+# to launchd when the bridge crashed; they keep advertising
+# Comprador-<device>.local on the network even after Comprador is gone, and
+# the next test run gets confused by the duplicate registration. SIGKILL +
+# verify-loop because SIGTERM was leaving stuck dns-sd's after the
+# 2026-05-18 evening tests.
+echo "  killing dns-sd orphans (SIGKILL + verify)..."
+for round in 1 2 3; do
+    pids=$(/usr/bin/pgrep -f "dns-sd.*Comprador" 2>/dev/null)
+    if [ -z "$pids" ]; then
+        echo "    round $round: no dns-sd orphans"
+        break
+    fi
+    echo "    round $round: killing $pids"
+    echo "$pids" | while read pid; do
+        kill -9 "$pid" 2>/dev/null
+    done
+    sleep 1
 done
+
+# 3b. Final verification — if anything dns-sd-shaped is still up, surface it
+# rather than continuing silently.
+stragglers=$(/usr/bin/pgrep -lf "dns-sd.*Comprador" 2>/dev/null)
+if [ -n "$stragglers" ]; then
+    echo "    WARNING: dns-sd processes survived SIGKILL after 3 rounds:"
+    echo "$stragglers" | /usr/bin/sed 's/^/      /'
+fi
 
 # 4. Force-unmount any per-device NFS mount Comprador left behind
 echo "  force-unmounting Comprador NFS mounts..."

@@ -27,6 +27,11 @@ echo "=== tail.sh — capturing to $LOG ==="
 echo ""
 echo "Foreground capture (no '&'). The log file persists after Ctrl-C."
 echo ""
+echo "Predicate is on subsystem == 'com.comprador.app' (the cprLog shim's"
+echo "subsystem). This catches the public-marked content from AppDelegate,"
+echo "BridgeProcess, DeviceSession, etc. — the NSLog→cprLog conversion"
+echo "(commit landing 2026-05-18 evening) was the prerequisite."
+echo ""
 echo "After the test, in the other pane, run:"
 echo "  ./scripts/test/analyze.sh $VARIANT $LOG"
 echo ""
@@ -34,7 +39,9 @@ echo "Starting capture in 2 sec..."
 sleep 2
 echo "--------------------------------------------------------------"
 
+# We OR on process == "bridge" so the bridge's own log output (if it ever
+# starts using OSLog directly instead of stderr) also gets captured.
 exec /usr/bin/log stream \
-    --predicate 'process == "bridge" OR process == "Comprador"' \
+    --predicate 'subsystem == "com.comprador.app" OR process == "bridge"' \
     --style compact \
     | /usr/bin/tee "$LOG"

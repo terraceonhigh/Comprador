@@ -89,7 +89,7 @@ final class DeviceSession {
     // MARK: - Status text plumbing
 
     func setConnectStatus(_ s: String) {
-        NSLog("Comprador: [status] %@", s)
+        cprLog("Comprador: [status] %@", s)
         let isFirstCall = connectStartedAt == nil
         connectStatus = s
         if isFirstCall {
@@ -202,7 +202,7 @@ final class DeviceSession {
                 }
 
                 await MainActor.run {
-                    NSLog("Comprador: Device mounted as volume")
+                    cprLog("Comprador: Device mounted as volume")
                     stopConnectTimer()
                     connectStatus = ""
                     isConnecting = false
@@ -210,7 +210,7 @@ final class DeviceSession {
                 }
                 return
             } catch let bridgeErr as BridgeError where bridgeErr == .timeout {
-                NSLog("Comprador: Bridge timeout — prompting user")
+                cprLog("Comprador: Bridge timeout — prompting user")
                 BridgeProcess.postFileTransferNotification()
                 bp.stop()
                 self.bridge = nil
@@ -225,9 +225,9 @@ final class DeviceSession {
                 bp.stop()
                 self.bridge = nil
                 if attempt < retryDelays.count - 1 {
-                    NSLog("Comprador: Attempt %d failed (%@), retrying...", attempt + 1, err.localizedDescription)
+                    cprLog("Comprador: Attempt %d failed (%@), retrying...", attempt + 1, err.localizedDescription)
                 } else {
-                    NSLog("Comprador: All attempts failed — %@", err.localizedDescription)
+                    cprLog("Comprador: All attempts failed — %@", err.localizedDescription)
                     BridgeProcess.postFileTransferNotification()
                     await MainActor.run {
                         stopConnectTimer()
@@ -255,7 +255,7 @@ final class DeviceSession {
             do {
                 try HelperClient.removeHost(host)
             } catch {
-                NSLog("Comprador: helper removeHost(%@) failed: %@",
+                cprLog("Comprador: helper removeHost(%@) failed: %@",
                       host, error.localizedDescription)
             }
             registeredHostname = nil
@@ -274,10 +274,10 @@ final class DeviceSession {
         do {
             try HelperClient.addHost(label)
             registeredHostname = label
-            NSLog("Comprador: registered hostname %@ via helper", label)
+            cprLog("Comprador: registered hostname %@ via helper", label)
             return label
         } catch {
-            NSLog("Comprador: helper addHost(%@) failed: %@",
+            cprLog("Comprador: helper addHost(%@) failed: %@",
                   label, error.localizedDescription)
             return nil
         }

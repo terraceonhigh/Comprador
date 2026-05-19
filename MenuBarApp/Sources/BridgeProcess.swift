@@ -71,7 +71,7 @@ class BridgeProcess {
             )
             switch result {
             case .success:
-                NSLog("Comprador: IOKit preflight OK (seized + re-enumerated 0x%04X:0x%04X)",
+                cprLog("Comprador: IOKit preflight OK (seized + re-enumerated 0x%04X:0x%04X)",
                       seizeForVendor, seizeForProduct)
                 // Wait for USB to settle after re-enumeration. ~1s is
                 // enough for IOKit to surface the new device handle;
@@ -79,20 +79,20 @@ class BridgeProcess {
                 // claim attempt.
                 try? await Task.sleep(nanoseconds: 1_200_000_000)
             case .deviceNotFound:
-                NSLog("Comprador: IOKit preflight skipped (device 0x%04X:0x%04X not found)",
+                cprLog("Comprador: IOKit preflight skipped (device 0x%04X:0x%04X not found)",
                       seizeForVendor, seizeForProduct)
             case .pluginCreateFailed(let rc):
-                NSLog("Comprador: IOKit preflight skipped (IOCreatePlugInInterfaceForService → 0x%X)",
+                cprLog("Comprador: IOKit preflight skipped (IOCreatePlugInInterfaceForService → 0x%X)",
                       UInt32(bitPattern: Int32(rc)))
             case .interfaceQueryFailed(let rc):
-                NSLog("Comprador: IOKit preflight skipped (QueryInterface → %d)", rc)
+                cprLog("Comprador: IOKit preflight skipped (QueryInterface → %d)", rc)
             case .openSeizeFailed(let rc):
-                NSLog("Comprador: IOKit preflight skipped (USBDeviceOpenSeize → 0x%X)",
+                cprLog("Comprador: IOKit preflight skipped (USBDeviceOpenSeize → 0x%X)",
                       UInt32(bitPattern: Int32(rc)))
             }
         }
 
-        NSLog("Comprador: Starting bridge at %@", bridgePath)
+        cprLog("Comprador: Starting bridge at %@", bridgePath)
 
         let p = Process()
         p.executableURL = URL(fileURLWithPath: bridgePath)
@@ -125,7 +125,7 @@ class BridgeProcess {
         stderrPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-            NSLog("Comprador bridge: %@", text.trimmingCharacters(in: .whitespacesAndNewlines))
+            cprLog("Comprador bridge: %@", text.trimmingCharacters(in: .whitespacesAndNewlines))
             guard let cb = self?.onStatusLine else { return }
             for line in text.components(separatedBy: .newlines) {
                 if line.contains("Open attempt") {
@@ -142,7 +142,7 @@ class BridgeProcess {
 
         try p.run()
         self.process = p
-        NSLog("Comprador: Bridge process started (PID %d)", p.processIdentifier)
+        cprLog("Comprador: Bridge process started (PID %d)", p.processIdentifier)
 
         // Read PORT=, HOST=, and DEVICE= from stdout with timeout
         let result = try await withThrowingTaskGroup(of: BridgeStartupInfo.self) { group in
@@ -163,7 +163,7 @@ class BridgeProcess {
         self.host = result.host ?? "127.0.0.1"
         self.deviceName = result.device
         self.proto = result.proto ?? "webdav"
-        NSLog("Comprador: Bridge ready — proto=%@, addr=%@:%d, device: %@",
+        cprLog("Comprador: Bridge ready — proto=%@, addr=%@:%d, device: %@",
               self.proto, self.host, result.port, result.device ?? "unknown")
         return result.port
     }
@@ -177,13 +177,13 @@ class BridgeProcess {
             return
         }
 
-        NSLog("Comprador: Stopping bridge (PID %d)", p.processIdentifier)
+        cprLog("Comprador: Stopping bridge (PID %d)", p.processIdentifier)
         p.terminate()
 
         // Give it a moment to exit cleanly, then force kill
         DispatchQueue.global().asyncAfter(deadline: .now() + 2) { [weak p] in
             if let p = p, p.isRunning {
-                NSLog("Comprador: Force killing bridge")
+                cprLog("Comprador: Force killing bridge")
                 p.interrupt()
             }
         }
@@ -226,7 +226,7 @@ class BridgeProcess {
             try? task.run()
             task.waitUntilExit()
             if task.terminationStatus == 0 {
-                NSLog("Comprador: Killed %@", name)
+                cprLog("Comprador: Killed %@", name)
             }
         }
     }

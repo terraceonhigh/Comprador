@@ -71,7 +71,7 @@ final class ResumeCompanion {
     /// Begin polling. Replaces any existing poll task.
     func start() {
         stop()
-        NSLog("ResumeCompanion: starting poll loop against %@", baseURL.absoluteString)
+        cprLog("ResumeCompanion: starting poll loop against %@", baseURL.absoluteString)
         task = Task { [weak self] in
             await self?.runPollLoop()
         }
@@ -84,7 +84,7 @@ final class ResumeCompanion {
             do {
                 let sessions = try await fetchSessions()
                 if !firstPollLogged {
-                    NSLog("ResumeCompanion: first poll succeeded, %d session(s) pending", sessions.count)
+                    cprLog("ResumeCompanion: first poll succeeded, %d session(s) pending", sessions.count)
                     firstPollLogged = true
                 }
                 pollFailures = 0
@@ -104,25 +104,25 @@ final class ResumeCompanion {
                 // without spamming the log on transient blips.
                 pollFailures += 1
                 if pollFailures == 1 || pollFailures % 12 == 0 {
-                    NSLog("ResumeCompanion: poll #%d failed: %@", pollFailures, "\(error)")
+                    cprLog("ResumeCompanion: poll #%d failed: %@", pollFailures, "\(error)")
                 }
             }
             try? await Task.sleep(nanoseconds: UInt64(pollInterval * 1_000_000_000))
         }
-        NSLog("ResumeCompanion: poll loop exited")
+        cprLog("ResumeCompanion: poll loop exited")
     }
 
     // MARK: - Per-session work
 
     private func handle(session: SessionMeta) async {
         defer { inFlight.remove(session.id) }
-        NSLog("ResumeCompanion: handling stranded session %@ (%@) %lld/%lld",
+        cprLog("ResumeCompanion: handling stranded session %@ (%@) %lld/%lld",
               session.id, session.baseName, session.receivedSize, session.expectedSize)
 
         let candidates = await findSourceCandidates(name: session.baseName, expectedSize: session.expectedSize)
         switch candidates.count {
         case 0:
-            NSLog("ResumeCompanion: no source candidate for %@ (size %lld) — needs chooser fallback",
+            cprLog("ResumeCompanion: no source candidate for %@ (size %lld) — needs chooser fallback",
                   session.baseName, session.expectedSize)
             await postNotification(
                 title: "Couldn't auto-complete \(session.baseName)",
@@ -135,14 +135,14 @@ final class ResumeCompanion {
             do {
                 try await complete(session: session, sourceURL: candidates[0])
                 done.insert(session.id)
-                NSLog("ResumeCompanion: completed %@ via %@", session.baseName, candidates[0].path)
+                cprLog("ResumeCompanion: completed %@ via %@", session.baseName, candidates[0].path)
             } catch {
-                NSLog("ResumeCompanion: complete failed for %@: %@", session.baseName, "\(error)")
+                cprLog("ResumeCompanion: complete failed for %@: %@", session.baseName, "\(error)")
                 // Don't mark as done — let the next poll retry.
             }
 
         default:
-            NSLog("ResumeCompanion: %d candidates for %@ — needs chooser fallback",
+            cprLog("ResumeCompanion: %d candidates for %@ — needs chooser fallback",
                   candidates.count, session.baseName)
             await postNotification(
                 title: "Multiple files match \(session.baseName)",

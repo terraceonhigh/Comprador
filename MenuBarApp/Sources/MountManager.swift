@@ -33,7 +33,7 @@ class MountManager {
         let serverURL = URL(string: "http://\(host):\(port)/")! as CFURL
         let mountDir = URL(fileURLWithPath: "/Volumes") as CFURL
 
-        NSLog("Comprador: Mounting WebDAV from %@:%d", host, port)
+        cprLog("Comprador: Mounting WebDAV from %@:%d", host, port)
 
         return try await withCheckedThrowingContinuation { continuation in
             var mountPoints: Unmanaged<CFArray>?
@@ -64,7 +64,7 @@ class MountManager {
             )
 
             if rc != 0 {
-                NSLog("Comprador: Mount failed with error %d", rc)
+                cprLog("Comprador: Mount failed with error %d", rc)
                 continuation.resume(throwing: MountError.mountFailed(rc))
                 return
             }
@@ -78,7 +78,7 @@ class MountManager {
             }
 
             self.mountPath = resolvedPath
-            NSLog("Comprador: Mounted at %@", resolvedPath.path)
+            cprLog("Comprador: Mounted at %@", resolvedPath.path)
             continuation.resume(returning: resolvedPath)
         }
     }
@@ -86,17 +86,17 @@ class MountManager {
     /// Unmounts the currently mounted volume.
     func unmount() async {
         guard let path = mountPath else { return }
-        NSLog("Comprador: Unmounting %@", path.path)
+        cprLog("Comprador: Unmounting %@", path.path)
 
         if let session = daSession,
            let disk = DADiskCreateFromVolumePath(kCFAllocatorDefault, session, path as CFURL) {
             DADiskUnmount(disk, DADiskUnmountOptions(kDADiskUnmountOptionDefault), { disk, dissenter, _ in
                 if let dissenter = dissenter {
                     let status = DADissenterGetStatus(dissenter)
-                    NSLog("Comprador: Clean unmount failed (status %d), forcing", status)
+                    cprLog("Comprador: Clean unmount failed (status %d), forcing", status)
                     DADiskUnmount(disk, DADiskUnmountOptions(kDADiskUnmountOptionForce), nil, nil)
                 } else {
-                    NSLog("Comprador: Unmounted")
+                    cprLog("Comprador: Unmounted")
                 }
             }, nil)
         } else {
@@ -171,7 +171,7 @@ class MountManager {
         try FileManager.default.createDirectory(at: mountpoint,
                                                 withIntermediateDirectories: false)
 
-        NSLog("Comprador: Mounting NFS on port %d at %@", port, mountpoint.path)
+        cprLog("Comprador: Mounting NFS on port %d at %@", port, mountpoint.path)
 
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/sbin/mount")
@@ -191,7 +191,7 @@ class MountManager {
             let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
             let errMsg = String(data: errData, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            NSLog("Comprador: mount(8) failed with status %d: %@",
+            cprLog("Comprador: mount(8) failed with status %d: %@",
                   p.terminationStatus, errMsg)
             // Best-effort cleanup of the empty mountpoint we created.
             try? FileManager.default.removeItem(at: mountpoint)
@@ -199,7 +199,7 @@ class MountManager {
         }
 
         self.mountPath = mountpoint
-        NSLog("Comprador: NFS mounted at %@", mountpoint.path)
+        cprLog("Comprador: NFS mounted at %@", mountpoint.path)
         return mountpoint
     }
 
@@ -231,7 +231,7 @@ class MountManager {
                 guard let onRange = s.range(of: " on "),
                       let parenRange = s.range(of: " (webdav") else { continue }
                 let mp = String(s[onRange.upperBound..<parenRange.lowerBound])
-                NSLog("Comprador: cleaning up stale WebDAV mount %@", mp)
+                cprLog("Comprador: cleaning up stale WebDAV mount %@", mp)
                 forceUnmount(mp)
                 continue
             }
@@ -256,10 +256,10 @@ class MountManager {
                 let isOurPath = mp.contains("/Comprador/Volumes/")
                     || mp.hasPrefix("/Volumes/")  // legacy helper path
                 guard isOurPath else {
-                    NSLog("Comprador: skipping NFS mount at %@ (source looks ours, path doesn't)", mp)
+                    cprLog("Comprador: skipping NFS mount at %@ (source looks ours, path doesn't)", mp)
                     continue
                 }
-                NSLog("Comprador: cleaning up stale NFS mount %@", mp)
+                cprLog("Comprador: cleaning up stale NFS mount %@", mp)
                 forceUnmount(mp)
             }
         }

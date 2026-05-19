@@ -28,15 +28,21 @@ fi
 echo "=== analyze.sh — variant=$VARIANT log=$LOG ==="
 echo ""
 
-# Counts
+# Counts. Use `grep | wc -l` instead of `grep -c` because the latter
+# returns "0" on stdout with exit 1 when there are no matches, and the
+# `|| echo 0` recovery appends another "0" — earlier rev had this bug
+# and the verdict heuristic broke on the resulting "0\n0" values.
+_count() { /usr/bin/grep "$1" "$LOG" 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' '; }
+_count_i() { /usr/bin/grep -i "$1" "$LOG" 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' '; }
+
 count_total=$(/usr/bin/wc -l < "$LOG" | /usr/bin/tr -d ' ')
-count_bridge_lines=$(/usr/bin/grep -c "Comprador bridge:" "$LOG" 2>/dev/null || echo 0)
-count_prefetch=$(/usr/bin/grep -c "cache.beginPrefetch" "$LOG" 2>/dev/null || echo 0)
-count_jukebox=$(/usr/bin/grep -ci "JUKEBOX" "$LOG" 2>/dev/null || echo 0)
-count_filetransfer_notif=$(/usr/bin/grep -c "Adding notification request CE85" "$LOG" 2>/dev/null || echo 0)
-count_bridge_ready=$(/usr/bin/grep -c "Bridge ready" "$LOG" 2>/dev/null || echo 0)
-count_force_kill=$(/usr/bin/grep -c "Force killing bridge" "$LOG" 2>/dev/null || echo 0)
-count_open_attempt=$(/usr/bin/grep -c "Open attempt" "$LOG" 2>/dev/null || echo 0)
+count_bridge_lines=$(_count "Comprador bridge:")
+count_prefetch=$(_count "cache.beginPrefetch")
+count_jukebox=$(_count_i "JUKEBOX")
+count_filetransfer_notif=$(_count "Adding notification request CE85")
+count_bridge_ready=$(_count "Bridge ready")
+count_force_kill=$(_count "Force killing bridge")
+count_open_attempt=$(_count "Open attempt")
 
 echo "  Signal counts:"
 printf "    %-50s %s\n" "total log lines:" "$count_total"
@@ -76,7 +82,11 @@ fi
 
 echo ""
 echo "  Last 10 'Comprador bridge: ...' lines (most informative substream):"
-/usr/bin/grep "Comprador bridge:" "$LOG" | /usr/bin/tail -10 | /usr/bin/sed 's/^/    /'
+/usr/bin/grep "Comprador bridge:" "$LOG" 2>/dev/null | /usr/bin/tail -10 | /usr/bin/sed 's/^/    /'
+echo ""
+echo "  Last 15 NON-system 'Comprador:' lines (cprLog content via Log.swift):"
+/usr/bin/grep -E "Comprador\[[0-9]+:[0-9a-f]+\] \(default\)" "$LOG" 2>/dev/null \
+    | /usr/bin/tail -15 | /usr/bin/sed 's/^/    /'
 
 echo ""
 echo "=== analyze.sh done ==="

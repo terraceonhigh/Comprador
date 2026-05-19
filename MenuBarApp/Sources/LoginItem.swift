@@ -24,10 +24,10 @@ enum LoginItem {
     static func enable() -> Bool {
         do {
             try SMAppService.mainApp.register()
-            NSLog("Comprador: Registered as login item")
+            cprLog("Comprador: Registered as login item")
             return true
         } catch {
-            NSLog("Comprador: Failed to register login item: %@", error.localizedDescription)
+            cprLog("Comprador: Failed to register login item: %@", error.localizedDescription)
             return false
         }
     }
@@ -37,10 +37,10 @@ enum LoginItem {
     static func disable() -> Bool {
         do {
             try SMAppService.mainApp.unregister()
-            NSLog("Comprador: Unregistered as login item")
+            cprLog("Comprador: Unregistered as login item")
             return true
         } catch {
-            NSLog("Comprador: Failed to unregister login item: %@", error.localizedDescription)
+            cprLog("Comprador: Failed to unregister login item: %@", error.localizedDescription)
             return false
         }
     }

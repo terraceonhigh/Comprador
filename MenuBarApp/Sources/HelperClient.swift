@@ -58,10 +58,10 @@ enum HelperClient {
         if svc.status == .enabled { return true }
         do {
             try svc.register()
-            NSLog("Comprador: helper register() OK, status now %@", statusDescription)
+            cprLog("Comprador: helper register() OK, status now %@", statusDescription)
             return true
         } catch {
-            NSLog("Comprador: helper register() failed: %@", error.localizedDescription)
+            cprLog("Comprador: helper register() failed: %@", error.localizedDescription)
             return false
         }
     }
@@ -74,7 +74,7 @@ enum HelperClient {
             try svc.unregister()
             return true
         } catch {
-            NSLog("Comprador: helper unregister() failed: %@", error.localizedDescription)
+            cprLog("Comprador: helper unregister() failed: %@", error.localizedDescription)
             return false
         }
     }

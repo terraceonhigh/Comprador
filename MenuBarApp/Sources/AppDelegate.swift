@@ -24,7 +24,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSLog("Comprador build: %@", BuildInfo.id)
+        cprLog("Comprador build: %@", BuildInfo.id)
 
         // Clear out any leftover webdav mounts from a prior session — otherwise
         // NetFS auto-suffixes today's mount as /Volumes/Pixel-6-1 and Finder
@@ -353,7 +353,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleDeviceAttached(_ device: USBDevice) {
-        NSLog("Comprador: Device attached — \(device.displayName) (vendor: 0x%04X, product: 0x%04X, locID: 0x%08X)",
+        cprLog("Comprador: Device attached — \(device.displayName) (vendor: 0x%04X, product: 0x%04X, locID: 0x%08X)",
               device.vendorID, device.productID, device.locationID)
 
         // If a session for the same physical device (matched by USB
@@ -367,11 +367,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // ~/Library/Application Support/Comprador/Volumes/<deviceName>.
         if let existing = sessions[device.locationID] {
             if existing.isConnecting {
-                NSLog("Comprador: Ignoring attach — connection already in progress")
+                cprLog("Comprador: Ignoring attach — connection already in progress")
                 return
             }
             if existing.isMounted {
-                NSLog("Comprador: Reattach while unmount in flight — queuing (entry 19a)")
+                cprLog("Comprador: Reattach while unmount in flight — queuing (entry 19a)")
                 existing.pendingAttach = device
                 return
             }
@@ -393,7 +393,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleDeviceDetached(_ device: USBDevice) {
-        NSLog("Comprador: Device detached — \(device.displayName) (vendor: 0x%04X, product: 0x%04X, locID: 0x%08X)",
+        cprLog("Comprador: Device detached — \(device.displayName) (vendor: 0x%04X, product: 0x%04X, locID: 0x%08X)",
               device.vendorID, device.productID, device.locationID)
 
         guard let active = sessions[device.locationID] else {
@@ -409,7 +409,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Ignore spurious detach events during connection — USB re-enumeration
         // causes rapid detach/attach cycles when the phone switches to MTP mode
         if active.isConnecting {
-            NSLog("Comprador: Ignoring detach — connection in progress (USB re-enumeration)")
+            cprLog("Comprador: Ignoring detach — connection in progress (USB re-enumeration)")
             return
         }
 
@@ -457,7 +457,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func ejectDevice(_ sender: Any?) {
         guard let active = sessionFor(sender) else { return }
-        NSLog("Comprador: Eject requested for \(active.displayName)")
+        cprLog("Comprador: Eject requested for \(active.displayName)")
         active.isConnecting = false
         active.pendingAttach = nil
         active.stopConnectTimer()
@@ -499,7 +499,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// isMounted == true, and should queue via pendingAttach rather than discarding.
     @objc private func syntheticFlutter(_ sender: Any?) {
         guard let device = sessionFor(sender)?.device else { return }
-        NSLog("Comprador: ⚡ synthetic flutter — firing detach+reattach on \(device.displayName)")
+        cprLog("Comprador: ⚡ synthetic flutter — firing detach+reattach on \(device.displayName)")
         handleDeviceDetached(device)
         handleDeviceAttached(device)
     }
