@@ -1,5 +1,56 @@
 # Comprador — TODO
 
+## ⚠ NEXT SESSION — start here
+
+The state below this header is from 2026-05-17 and **is partially
+outdated**. The "NFS READ stall fixed via JUKEBOX + async prefetch"
+claim was empirically falsified on 2026-05-18 morning: the async
+prefetch (commit `a405ed48`) is the cause of a whole-system
+cascade-freeze when Finder/Spotlight/QuickLook probe a directory
+containing files >50 MB. **v0.3.3 was retracted** within an hour
+of release.
+
+Canonical handoff for the day's diagnostic + state:
+
+- **[`correspondence/15-the-day-the-harness-bit-twice/letter.md`](correspondence/15-the-day-the-harness-bit-twice/letter.md)** —
+  end-of-day reflection: the verified mechanism, the four framings
+  that fell, the fix direction, what's pushed where, and an honest
+  accounting of the two times the test harness triggered the same
+  cascade it was investigating.
+- **[`docs/PLAN-PREFETCH-REDESIGN.md`](docs/PLAN-PREFETCH-REDESIGN.md)** —
+  the working spec for Scope C (chunked-yield + priority queue +
+  soft mount + log strip). Step 1 (empirical probe) is done; **next
+  session opens on Step 2** (priority queue in
+  `bridge/mtp/session.go`).
+- **[`docs/MISTAKES.md`](docs/MISTAKES.md)** entry 4 — full receipt
+  of the cascade mechanism, the .diag forensics, the v0.3.3
+  retraction, and the verified gating conditions.
+
+Branches / PRs:
+
+- `claude/build-identity` (PR #25, 10 commits) — all of today's
+  durable work: build-identity stamping, prefetch probe + plan +
+  results, test harness scripts, NSLog→cprLog conversion. **Review
+  + merge at architect's pace.**
+- `claude/changelog-v0.3.3` (PR #24, 1 commit) — stale CHANGELOG
+  for the retracted v0.3.3. **Close.**
+
+Two known-real bugs in the test harness that **need fixing before
+the next reproduction round**:
+
+1. `scripts/test/clean.sh` walks into the NFS mount-point
+   subdirectory even after the kernel has reaped the mount entry.
+   Triggered the cascade twice on 2026-05-18 evening. Safety check
+   needs to refuse on subdir-existence, not just `mount`-output
+   presence. (The cascade happens because `rmtree`'s `stat()` on
+   `~/Library/Application Support/Comprador/Volumes/XQ-BT52`
+   wedges on residual dead NFS dirent state.)
+2. mDNS `dns-sd` orphans may survive `recover.sh` even after the
+   3-round SIGKILL loop. Worth investigating with the next
+   reproduction; not blocking.
+
+---
+
 ## Current state — end-of-stretch 2026-05-17
 
 **Two pre-launch blockers cleared in this stretch:** the NFS READ
