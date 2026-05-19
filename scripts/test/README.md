@@ -103,3 +103,11 @@ its `.app` and dropping it into `dist-compare/` with the
 | `dev` | HEAD `32ee45cd` + SWIFT_DEBUG=1 | ad-hoc | ✓ |
 | `notarized` | HEAD `aef6c89b` | Developer ID + stapled | ✓ |
 | `92d4e6d5` | historical commit | ad-hoc | ✓ |
+| `step2` | HEAD `54c01f78` (`claude/prefetch-redesign`) | ad-hoc | ✓ |
+
+`step2` carries the priority-queue refactor of [bridge/mtp/session.go](../../bridge/mtp/session.go)
+(`PriorityLow` lane added, no callers yet). Behaviour should be byte-identical
+to `prod` until Step 3 lands; this variant exists as the regression anchor —
+if `step2` cascades in a Spotlight regime where `prod` does, the mechanism is
+unchanged, and if it does *not*, that is a datapoint worth examining (likely
+Spotlight-warm, not Step 2 having an effect).
