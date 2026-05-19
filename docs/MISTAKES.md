@@ -1547,10 +1547,17 @@ condition** (Finder probing during the drag window) didn't fire.
    state. Conditions that increase trigger probability:
    - First-time-seeing-this-volume Spotlight crawl (fresh
      `XQ-BT52.local` or fresh phone)
-   - Finder icon-view active during the drag (thumbnail
-     generation fires per-file READs)
+   - Fresh QuickLook thumbnail generation backlog (no cached
+     thumbs for the directory contents)
    - QuickLook backlog from a previous session unable to
      complete (large-file READs queued from a prior crash)
+   **View mode is not the gating variable** — architect confirmed
+   2026-05-18 evening that both morning's cascade run and
+   evening's clean run were in **icon view**. So the differentiator
+   between them is purely macOS's per-volume indexing/thumbnail
+   cache state, which was cold in the morning (fresh DMG install,
+   fresh mount) and warm by the evening (many mount/unmount
+   cycles + cache wipes that didn't touch `mds_stores`).
    The *worst-case user scenario* is exactly the launch demo:
    first-time user, plugs phone in, the mount is brand-new to
    Spotlight, Finder is in icon view (the default), user drops
