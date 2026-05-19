@@ -65,15 +65,26 @@ a script), they're still individually invokable: `recover.sh`, `clean.sh`,
 
 ## Known footguns these scripts protect against
 
-- **`clean.sh` walking into an active NFS mount.** The 2026-05-18
-  evening test hit this exact failure mode: Python's `shutil.rmtree`
-  descended into `~/Library/Application Support/Comprador/Volumes/
-  XQ-BT52` (a still-mounted hard,nointr NFS share), wedged on a
-  kernel uninterruptible syscall, and cascaded Finder + keyboard
-  input. `clean.sh` now refuses to run when any `.local:/` mount is
-  active and points at `recover.sh` as the prerequisite.
+- **`clean.sh` walking into an active or stale NFS mount.** The
+  2026-05-18 morning test hit this exact failure mode: Python's
+  `shutil.rmtree` descended into `~/Library/Application Support/
+  Comprador/Volumes/XQ-BT52` (a still-mounted hard,nointr NFS share),
+  wedged on a kernel uninterruptible syscall, and cascaded Finder +
+  keyboard input. The same evening it fired a *second* time after the
+  initial fix — the kernel had reaped the mount-table entry but a
+  stale dirent for `XQ-BT52/` survived, and `stat()` on it during
+  rmtree wedged just as hard. `clean.sh` now runs **two** safety
+  checks before touching anything:
+  1. Mount-table grep — refuses on any `.local:/` mount.
+  2. `os.listdir(Volumes)` inside a fork-bounded 5 s timeout — refuses
+     if any entry survives regardless of mount-table state, with
+     timeout-then-refuse on the pathological readdir-wedge case.
+
+  Both checks point at `sudo recover.sh` as the prerequisite.
   `setup.sh` always runs `recover.sh` before `clean.sh`, so the
-  chained path is safe by construction.
+  chained path is safe by construction. The safety logic has a
+  standalone regression test at `probe_volumes_test.py` exercising
+  the absent / empty / occupied cases against synthetic temp dirs.
 - **Trailing `&` on log captures silently dropping data.** Bit us
   earlier. `tail.sh` is foreground-only with `tee`.
 - **Inconsistent log paths across runs.** `tail.sh` uses a
