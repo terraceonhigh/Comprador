@@ -29,8 +29,12 @@ branch and we pin to it, or (b) a local `replace github.com/terraceonhigh/galate
 => /Users/terrace/Labs/Galatea/.claude/worktrees/unruffled-dijkstra-7f1e6d` in
 `bridge/go.mod`. **Resolved (2026-06-07):** the harness uses a separate
 `bridge/galatea.mod` carrying the canonical require+replace, so production
-`bridge/go.mod` stays pristine. (The build tag is gone; reads are proven —
-see below.)
+`bridge/go.mod` stays pristine. `mtpfsal` + `cmd/galatea-serve` stay behind
+`//go:build galatea` (so default `go build ./...` / `make bridge-test` skip
+them — they can't resolve galatea under the pristine vendored go.mod); the
+`galatea-dev` target builds them with `-tags galatea -modfile=galatea.mod`.
+The tag comes off only at the main.go cutover, when the production vendor
+story is solved. Reads are proven — see below.
 
 ### READ PATH DONE — LIVE-PROVEN on a Pixel 6 (2026-06-07, commit `ac6b5193`).
 
@@ -39,6 +43,14 @@ vers=4.0), browses the full Android tree, and reads files correctly with **no
 JUKEBOX**. Receipts: a 3.1 MB JPEG byte-exact + md5-stable across reads; a
 **95 MB mp4 (1.9× the old 50 MB JUKEBOX threshold) streamed clean in 17 s,
 exit 0** — the willscott path would have refused it with NFS3ERR_JUKEBOX.
+Ground truth (not just md5-self-consistency): both JPEGs `file`-decode with
+full EXIF + SOF dimensions (3072×4080) + trailing FFD9 — correct bytes across
+all offsets, so OpGetPartial seeks right. **One-cursor seam answered (Galatea
+Correspondance/04 Q1):** a small read of a *different* file returned correct
+bytes in ~1.26 s **while the 95 MB read was in flight** — no starvation, no
+deadlock. Because each VirtualRead is one rsize-bounded OpGetPartial, the
+session goroutine interleaves chunks rather than holding for a whole file (the
+old synchronous willscott download is exactly what it doesn't do). Tell Daedalus.
 Run it: `make galatea-dev` → note `PORT=` → `make galatea-mount PORT=N` →
 browse/read `/tmp/galmnt` → `make galatea-umount`. Build plumbing: harness is
 `bridge/cmd/galatea-serve` built via the separate `bridge/galatea.mod`

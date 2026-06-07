@@ -202,7 +202,7 @@ dev-nfs: bridge
 GALATEA_OUT := build/galatea-serve
 galatea-dev:
 	@mkdir -p build
-	cd bridge && CGO_CFLAGS="-I$(CURDIR)/bridge/cvendor" CGO_LDFLAGS="-L/opt/homebrew/lib" $(GO) build -modfile=galatea.mod -mod=mod -o ../$(GALATEA_OUT) ./cmd/galatea-serve
+	cd bridge && CGO_CFLAGS="-I$(CURDIR)/bridge/cvendor" CGO_LDFLAGS="-L/opt/homebrew/lib" $(GO) build -tags galatea -modfile=galatea.mod -mod=mod -o ../$(GALATEA_OUT) ./cmd/galatea-serve
 	DYLD_LIBRARY_PATH=/opt/homebrew/lib ./$(GALATEA_OUT) 2>&1
 
 # Mount the running galatea-dev server (pass PORT=N from its PORT= line).
