@@ -1,5 +1,3 @@
-//go:build galatea
-
 // Package mtpfsal implements Galatea's FSAL (github.com/terraceonhigh/galatea
 // /pkg/virtual: Directory / Leaf / Node) over a live MTP session, so an Android
 // phone's object store can be served as a userspace NFSv4 volume by
@@ -35,12 +33,31 @@ import (
 	"encoding/binary"
 	"io"
 	"path"
+	"sort"
 	"time"
 
 	"github.com/terraceonhigh/galatea/pkg/virtual"
 
 	"comprador/bridge/mtp"
 )
+
+// sliceWriter fills a fixed buffer, used to adapt the libmtp OpGetPartial
+// io.Writer into NFSv4's read-into-buffer model. Writes past the buffer end
+// report io.ErrShortWrite (libmtp shouldn't overrun a bounded request, but
+// stay defensive).
+type sliceWriter struct {
+	buf []byte
+	n   int
+}
+
+func (w *sliceWriter) Write(p []byte) (int, error) {
+	c := copy(w.buf[w.n:], p)
+	w.n += c
+	if c < len(p) {
+		return c, io.ErrShortWrite
+	}
+	return c, nil
+}
 
 // node is the shared state of every MTP-backed FSAL node: the session it
 // belongs to and the object's path in ObjectMap form (leading slash, "/" root).
@@ -141,12 +158,18 @@ func fillCommon(meta *mtp.ObjectMeta, id uint32, requested virtual.AttributesMas
 	if requested&virtual.AttributesMaskInodeNumber != 0 {
 		a.SetInodeNumber(uint64(id))
 	}
+	mt := meta.ModTime
+	if mt.IsZero() {
+		mt = time.Unix(0, 0)
+	}
 	if requested&virtual.AttributesMaskLastDataModificationTime != 0 {
-		mt := meta.ModTime
-		if mt.IsZero() {
-			mt = time.Unix(0, 0)
-		}
 		a.SetLastDataModificationTime(mt)
+	}
+	// ChangeID is mandatory-when-requested (the server panics otherwise — the
+	// M-006 lesson). Derive it from the modification time, like osfs: it
+	// advances whenever the object's data changes.
+	if requested&virtual.AttributesMaskChangeID != 0 {
+		a.SetChangeID(uint64(mt.UnixNano()))
 	}
 }
 
@@ -163,6 +186,9 @@ func (d *mtpDir) VirtualGetAttributes(ctx context.Context, requested virtual.Att
 	}
 	if requested&virtual.AttributesMaskPermissions != 0 {
 		a.SetPermissions(virtual.PermissionsRead | virtual.PermissionsWrite | virtual.PermissionsExecute)
+	}
+	if requested&virtual.AttributesMaskSizeBytes != 0 {
+		a.SetSizeBytes(0)
 	}
 	if requested&virtual.AttributesMaskLinkCount != 0 {
 		a.SetLinkCount(virtual.EmptyDirectoryLinkCount)
@@ -215,6 +241,9 @@ func (n *node) VirtualOpenNamedAttributes(ctx context.Context, createDirectory b
 // bridge/nfs/fs.go Stat/Lstat. EnsurePopulated lazily fills the directory's
 // children on first touch (a single MTP enumeration, serialised in session.Do).
 func (d *mtpDir) VirtualLookup(ctx context.Context, name virtual.Component, requested virtual.AttributesMask, out *virtual.Attributes) (virtual.DirectoryChild, virtual.Status) {
+	if d.mpath != "/" {
+		d.session.EnsureInMap(d.mpath)
+	}
 	d.session.EnsurePopulated(d.mpath)
 	childPath := path.Join(d.mpath, name.String())
 	meta, ok := d.session.Objects.GetByPath(childPath)
@@ -230,34 +259,95 @@ func (d *mtpDir) VirtualLookup(ctx context.Context, name virtual.Component, requ
 	return child, virtual.StatusOK
 }
 
-// VirtualReadDir — TODO(phase4): enumerate children. ObjectMap needs a
-// children-of-path index (populateDir returns []*ObjectMeta; expose it) before
-// this can stream entries to the reporter with cookies. Mirrors fs.go ReadDir.
+// VirtualReadDir enumerates children via ObjectMap.ListChildren after ensuring
+// the directory is populated (a single libmtp OpListDir, serialised in
+// session.Do). Cookies are 1-based indices into a name-sorted stable order, so
+// an NFSv4 READDIR that resumes at firstCookie skips already-reported entries.
+// Mirrors fs.go ReadDir (minus the synthetic sentinels — deferred).
 func (d *mtpDir) VirtualReadDir(ctx context.Context, firstCookie uint64, requested virtual.AttributesMask, reporter virtual.DirectoryEntryReporter) virtual.Status {
-	return virtual.StatusErrIO
+	if d.mpath != "/" {
+		d.session.EnsureInMap(d.mpath)
+	}
+	d.session.EnsurePopulated(d.mpath)
+	children := d.session.Objects.ListChildren(d.mpath)
+	sort.Slice(children, func(i, j int) bool { return children[i].Name < children[j].Name })
+	for i, meta := range children {
+		cookie := uint64(i + 1)
+		if cookie <= firstCookie {
+			continue
+		}
+		name, ok := virtual.NewComponent(meta.Name)
+		if !ok {
+			continue // skip names that aren't valid path components
+		}
+		child := childFor(d.session, meta)
+		var attributes virtual.Attributes
+		if dir, leaf := child.GetPair(); dir != nil {
+			dir.VirtualGetAttributes(ctx, requested, &attributes)
+		} else if leaf != nil {
+			leaf.VirtualGetAttributes(ctx, requested, &attributes)
+		}
+		if !reporter.ReportEntry(cookie, name, child, &attributes) {
+			break
+		}
+	}
+	return virtual.StatusOK
 }
 
 // ---- data ops (must marshal through session.Do — see package doc) ---------
 
-// VirtualOpenSelf — TODO(phase4): MTP has no open; record the share mode and
-// validate existence. Cf. fs.go Open/OpenFile.
+// VirtualOpenSelf opens an existing leaf. MTP has no open primitive; for the
+// read-only path we validate existence and accept read access (reject writes
+// until the staged-write port lands). Truncate is a write and is refused.
 func (f *mtpFile) VirtualOpenSelf(ctx context.Context, shareAccess virtual.ShareMask, options *virtual.OpenExistingOptions, requested virtual.AttributesMask, attributes *virtual.Attributes) virtual.Status {
-	return virtual.StatusErrIO
+	if shareAccess&virtual.ShareMaskWrite != 0 || (options != nil && options.Truncate) {
+		return virtual.StatusErrROFS
+	}
+	meta, ok := f.session.Objects.GetByPath(f.mpath)
+	if !ok {
+		return virtual.StatusErrStale
+	}
+	f.VirtualGetAttributes(ctx, requested, attributes)
+	_ = meta
+	return virtual.StatusOK
 }
 
-// VirtualRead — TODO(phase4): the heart of the win. Port fs.go's read onto a
-// session.Do request that streams libmtp GetFileToHandler at the given offset.
-// NFSv4 tolerates the multi-minute read JUKEBOX existed to dodge — no threshold,
-// no prefetch goroutine, no cache.go.
+// VirtualRead is the heart of the migration: a plain ranged read straight off
+// the device via OpGetPartial(ObjectID, offset, len(buf)) — serialised through
+// the session goroutine. No JUKEBOX, no threshold, no prefetch. NFSv4 tolerates
+// the multi-minute read NFSv3's RPC-timeout window could not, so a slow/large
+// read simply streams. (Assumes libmtp's partial read genuinely seeks rather
+// than re-reading from byte 0 — verified empirically on first large read.)
 func (f *mtpFile) VirtualRead(buf []byte, offset uint64) (int, bool, virtual.Status) {
-	return 0, false, virtual.StatusErrIO
+	meta, ok := f.session.Objects.GetByPath(f.mpath)
+	if !ok {
+		return 0, false, virtual.StatusErrStale
+	}
+	bounded, eofBySize := virtual.BoundReadToFileSize(buf, offset, meta.Size)
+	if len(bounded) == 0 {
+		return 0, eofBySize, virtual.StatusOK
+	}
+	w := &sliceWriter{buf: bounded}
+	resp := f.session.Do(mtp.MTPRequest{
+		Op:       mtp.OpGetPartial,
+		ObjectID: meta.ID,
+		Offset:   offset,
+		Size:     uint64(len(bounded)),
+		Writer:   w,
+	})
+	if resp.Err != nil {
+		return 0, false, virtual.StatusErrIO
+	}
+	n := w.n
+	eof := eofBySize || n == 0 || offset+uint64(n) >= meta.Size
+	return n, eof, virtual.StatusOK
 }
 
-// VirtualWrite — TODO(phase4): port the staged-write path (write.go writeRegistry
-// + idle-flush commit). MTP has no partial write; stage to a temp file and
-// SendFileFromReader on close/flush.
+// VirtualWrite — TODO(writes increment): port the staged-write path
+// (write.go writeRegistry + idle-flush commit), extracted to a neutral package
+// so mtpfsal never imports nfs. Read-only for now.
 func (f *mtpFile) VirtualWrite(buf []byte, offset uint64) (int, virtual.Status) {
-	return 0, virtual.StatusErrIO
+	return 0, virtual.StatusErrROFS
 }
 
 func (f *mtpFile) VirtualClose(shareAccess virtual.ShareMask) {}
@@ -268,17 +358,48 @@ func (f *mtpFile) VirtualSeek(offset uint64, regionType virtual.RegionType) (*ui
 	return nil, virtual.StatusErrInval
 }
 
-// ---- mutation ops (copy+delete for rename — MTP has no native rename) ------
+// ---- mutation ops — read-only for now (writes are the next increment) ------
 //
-// All TODO(phase4); each mirrors the correspondingly-named bridge/nfs handler
-// and must run through session.Do.
+// Each returns StatusErrROFS until the staged-write path is ported. When it
+// lands: VirtualOpenChild(create)+VirtualWrite via the extracted writeRegistry,
+// VirtualMkdir via OpCreateFolder, VirtualRemove via OpDelete, VirtualRename via
+// copy+delete (MTP has no native rename) — all through session.Do.
 
+// VirtualOpenChild is the NFSv4 OPEN entry point (OPEN is parent-dir + name, so
+// even a plain read open lands here, not VirtualOpenSelf). Opening an existing
+// file for read is supported; create (createAttributes != nil), write
+// (ShareMaskWrite), and truncate are ROFS until the write port lands. Mirrors
+// osfs.VirtualOpenChild.
 func (d *mtpDir) VirtualOpenChild(ctx context.Context, name virtual.Component, shareAccess virtual.ShareMask, createAttributes *virtual.Attributes, existingOptions *virtual.OpenExistingOptions, requested virtual.AttributesMask, openedFileAttributes *virtual.Attributes) (virtual.Leaf, virtual.AttributesMask, virtual.ChangeInfo, virtual.Status) {
-	return nil, 0, virtual.ChangeInfo{}, virtual.StatusErrIO
+	ci := virtual.ChangeInfo{}
+	if d.mpath != "/" {
+		d.session.EnsureInMap(d.mpath)
+	}
+	d.session.EnsurePopulated(d.mpath)
+	childPath := path.Join(d.mpath, name.String())
+	meta, ok := d.session.Objects.GetByPath(childPath)
+	if !ok {
+		if createAttributes != nil {
+			return nil, 0, ci, virtual.StatusErrROFS // create: read-only for now
+		}
+		return nil, 0, ci, virtual.StatusErrNoEnt
+	}
+	if existingOptions == nil {
+		return nil, 0, ci, virtual.StatusErrExist // exclusive-create on an existing object
+	}
+	if meta.IsDir {
+		return nil, 0, ci, virtual.StatusErrIsDir
+	}
+	if shareAccess&virtual.ShareMaskWrite != 0 || existingOptions.Truncate {
+		return nil, 0, ci, virtual.StatusErrROFS
+	}
+	leaf := &mtpFile{node{session: d.session, mpath: childPath}}
+	leaf.VirtualGetAttributes(ctx, requested, openedFileAttributes)
+	return leaf, 0, ci, virtual.StatusOK
 }
 
 func (d *mtpDir) VirtualMkdir(name virtual.Component, requested virtual.AttributesMask, attributes *virtual.Attributes) (virtual.Directory, virtual.ChangeInfo, virtual.Status) {
-	return nil, virtual.ChangeInfo{}, virtual.StatusErrIO
+	return nil, virtual.ChangeInfo{}, virtual.StatusErrROFS
 }
 
 func (d *mtpDir) VirtualMknod(ctx context.Context, name virtual.Component, fileType virtual.FileType, requested virtual.AttributesMask, attributes *virtual.Attributes) (virtual.Leaf, virtual.ChangeInfo, virtual.Status) {
@@ -286,11 +407,11 @@ func (d *mtpDir) VirtualMknod(ctx context.Context, name virtual.Component, fileT
 }
 
 func (d *mtpDir) VirtualRemove(name virtual.Component, removeDirectory, removeLeaf bool) (virtual.ChangeInfo, virtual.Status) {
-	return virtual.ChangeInfo{}, virtual.StatusErrIO
+	return virtual.ChangeInfo{}, virtual.StatusErrROFS
 }
 
 func (d *mtpDir) VirtualRename(oldName virtual.Component, newDirectory virtual.Directory, newName virtual.Component) (virtual.ChangeInfo, virtual.ChangeInfo, virtual.Status) {
-	return virtual.ChangeInfo{}, virtual.ChangeInfo{}, virtual.StatusErrIO
+	return virtual.ChangeInfo{}, virtual.ChangeInfo{}, virtual.StatusErrROFS
 }
 
 func (d *mtpDir) VirtualLink(ctx context.Context, name virtual.Component, leaf virtual.Leaf, requested virtual.AttributesMask, attributes *virtual.Attributes) (virtual.ChangeInfo, virtual.Status) {

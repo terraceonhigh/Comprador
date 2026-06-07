@@ -25,7 +25,7 @@ BUILD_ID := $(shell git rev-parse --short HEAD 2>/dev/null)$(shell git diff --qu
 # with a tagged release.
 RELEASE_VERSION := 0.3.4-dev
 
-.PHONY: bridge bridge-test helper helper-test nfs-stub ictest1 ictest2 test-md5 prefetch-probe icon app app-debug app-signed app-notarized app-swiftc dev dev-nfs run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
+.PHONY: bridge bridge-test helper helper-test nfs-stub ictest1 ictest2 test-md5 prefetch-probe icon app app-debug app-signed app-notarized app-swiftc dev dev-nfs galatea-dev galatea-mount galatea-umount run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
 
 ICON_SRC := images/icon.png
 ICON_OUT := MenuBarApp/Resources/Comprador.icns
@@ -190,6 +190,31 @@ dev: bridge
 # Use this to verify Phase 2/3 NFS behaviour without needing the helper.
 dev-nfs: bridge
 	DYLD_LIBRARY_PATH=/opt/homebrew/lib ./$(BRIDGE_OUT) --nfs 2>&1
+
+# Phase-4 verification harness (mercer/galatea-integration): serve the live MTP
+# device over Galatea's userspace NFSv4 server instead of the patched
+# willscott/go-nfs. Read-only for now (mtpfsal mutations return ROFS). Built in
+# a SEPARATE module file (bridge/galatea.mod) that adds the canonical-Galatea
+# require+replace, so the production bridge/go.mod stays pristine and its vendored
+# build is untouched (and `go mod vendor`, which would clobber the patched go-nfs
+# fork, is never run). Prints the vers=4.0 mount_nfs command. See
+# bridge/cmd/galatea-serve, bridge/galatea.mod, and TODO.md.
+GALATEA_OUT := build/galatea-serve
+galatea-dev:
+	@mkdir -p build
+	cd bridge && CGO_CFLAGS="-I$(CURDIR)/bridge/cvendor" CGO_LDFLAGS="-L/opt/homebrew/lib" $(GO) build -modfile=galatea.mod -mod=mod -o ../$(GALATEA_OUT) ./cmd/galatea-serve
+	DYLD_LIBRARY_PATH=/opt/homebrew/lib ./$(GALATEA_OUT) 2>&1
+
+# Mount the running galatea-dev server (pass PORT=N from its PORT= line).
+# vers=4.0 (Galatea is NFSv4), unprivileged loopback mount — no root.
+galatea-mount:
+	@mkdir -p /tmp/galmnt
+	mount_nfs -o vers=4.0,port=$(PORT),mountport=$(PORT),tcp localhost:/ /tmp/galmnt
+	@mount | grep /tmp/galmnt || true
+
+galatea-umount:
+	-umount -f /tmp/galmnt 2>/dev/null || true
+	@mount | grep /tmp/galmnt >/dev/null && echo "STILL MOUNTED" || echo "unmounted"
 
 run: app-debug
 	@killall $(APP_NAME) 2>/dev/null || true
