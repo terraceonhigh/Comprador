@@ -27,35 +27,54 @@ post-release (Galatea DEC-022) and lives only on the unpushed canonical branch
 the canonical code**, via one of: (a) the Architect pushes Galatea's canonical
 branch and we pin to it, or (b) a local `replace github.com/terraceonhigh/galatea
 => /Users/terrace/Labs/Galatea/.claude/worktrees/unruffled-dijkstra-7f1e6d` in
-`bridge/go.mod`. The FSAL work (step 1) needs neither. Gated behind a `galatea` build
-tag; compile with `go build -mod=mod -tags galatea ./mtpfsal/`. The read/nav
-path (attributes, lookup, uint32-handle resolver) is wired; data/mutation ops
-are stubbed `StatusErrIO` with TODOs pointing at the `bridge/nfs` handler each
-ports.
+`bridge/go.mod`. **Resolved (2026-06-07):** the harness uses a separate
+`bridge/galatea.mod` carrying the canonical require+replace, so production
+`bridge/go.mod` stays pristine. (The build tag is gone; reads are proven —
+see below.)
 
-**Next increment (NEEDS A CONNECTED PHONE — MTP can't be mocked):**
-1. Flesh the stubbed `mtpfsal` ops, porting from `bridge/nfs/fs.go` +
-   `write.go`. **Every device-touching op MUST go through `(*mtp.Session).Do`**
-   — libmtp isn't thread-safe and Galatea calls the FSAL concurrently across
-   NFSv4 open-owners (the one-cursor seam; see Galatea `Correspondance/04`).
-   - `VirtualRead`: stream `libmtp` GetFileToHandler at offset — no JUKEBOX,
-     no threshold, no prefetch. This is the win.
-   - `VirtualReadDir`: needs a children-of-path index on `ObjectMap`
-     (`populateDir` returns `[]*ObjectMeta`; expose it).
-   - `VirtualWrite`/`VirtualOpenChild`/`VirtualSetAttributes(truncate)`: port
-     the staged-write registry + idle-flush commit from `write.go`.
-   - `VirtualRename`: copy+delete (MTP has no native rename).
-2. Replace `bridge/nfs.Serve` (the willscott/go-nfs stand-up in
-   `bridge/nfs/server.go`) with `galatea.Serve(ctx, root, resolver, addr)`.
-   Keep the `PORT=`/`HOST=`/`DEVICE=` stdout protocol and the Swift mount side
-   unchanged; verify whether v3→v4 needs different `mount_nfs`/NetFS options.
-3. **Prove read-write live under load on a real phone**, THEN delete
-   `bridge/nfs/cache.go` (JUKEBOX + prefetch) and the patched go-nfs fork.
-   Prove-then-delete; "get to delete" is the end state, not step one.
+### READ PATH DONE — LIVE-PROVEN on a Pixel 6 (2026-06-07, commit `ac6b5193`).
 
-> NB: `bridge/mtpfsal/` is currently behind `//go:build galatea` so it's
-> invisible to the default build. When the cutover wires it into the real
-> server path, drop that tag (and add galatea to go.mod + `go mod vendor`).
+`galatea.Serve` backed by `bridge/mtpfsal` mounts on macOS (headless, no root,
+vers=4.0), browses the full Android tree, and reads files correctly with **no
+JUKEBOX**. Receipts: a 3.1 MB JPEG byte-exact + md5-stable across reads; a
+**95 MB mp4 (1.9× the old 50 MB JUKEBOX threshold) streamed clean in 17 s,
+exit 0** — the willscott path would have refused it with NFS3ERR_JUKEBOX.
+Run it: `make galatea-dev` → note `PORT=` → `make galatea-mount PORT=N` →
+browse/read `/tmp/galmnt` → `make galatea-umount`. Build plumbing: harness is
+`bridge/cmd/galatea-serve` built via the separate `bridge/galatea.mod`
+(production `bridge/go.mod` stays pristine; `go mod vendor` is never run because
+it would clobber the vendor-only-patched go-nfs).
+
+Two live bugs fixed (both in the commit): NFSv4 OPEN lands in
+`VirtualOpenChild` (not OpenSelf), so a blanket-ROFS stub returned EROFS on
+every read; and `ChangeID` is a mandatory GETATTR attribute (server panics if
+requested-but-unset — the M-006 lesson).
+
+**Next increment — WRITES (needs the phone):**
+1. Extract `writeRegistry` + sentinels + AppleDouble filter from `bridge/nfs`
+   to a **neutral package** (e.g. `bridge/staging`) so `mtpfsal` never imports
+   `nfs` (wrong-direction coupling that would block deleting go-nfs).
+2. Flesh `mtpfsal` writes through `(*mtp.Session).Do` (libmtp isn't
+   thread-safe; Galatea calls the FSAL concurrently across NFSv4 open-owners —
+   the one-cursor seam, Galatea `Correspondance/04`):
+   - `VirtualOpenChild(create)` + `VirtualWrite` + `VirtualClose`: staged temp
+     + idle-flush commit via `OpSendFile` (port `write.go`).
+   - `VirtualSetAttributes(truncate)`, `VirtualMkdir` (`OpCreateFolder`),
+     `VirtualRemove` (`OpDelete`), `VirtualRename` (copy+delete — no native MTP
+     rename).
+3. **Throughput tuning** (read path works but ~5.6 MB/s vs prefetch-probe's
+   21 MB/s): small NFS rsize → many per-chunk `OpGetPartial` calls. Try a
+   larger advertised rsize / read-ahead coalescing. Also do a literal >60 s
+   MTP read once a big-enough file is available (Galatea R1 already proved
+   130 s at the protocol layer).
+4. Wire into `main.go` behind a flag (probe-bind for the port — `galatea.Serve`
+   has no listener injection; an interface-flex noted to Daedalus), keep the
+   `PORT=`/`HOST=`/`DEVICE=` stdout protocol + Swift mount side unchanged;
+   confirm v3→v4 NetFS/`mount_nfs` option deltas. Resolve the production vendor
+   story here (manual-vendor galatea, or fork go-nfs to a local replace so
+   `go mod vendor` is safe).
+5. **Prove read-write live under load**, THEN delete `bridge/nfs/cache.go`
+   (JUKEBOX + prefetch) and the patched go-nfs fork. Prove-then-delete.
 
 The reply opening Phase 4 is delivered to Daedalus's mailbox:
 `~/Labs/Galatea/Correspondance/04-phase-four-and-the-one-cursor/` (uncommitted
