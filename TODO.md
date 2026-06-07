@@ -2,11 +2,66 @@
 
 ## ⚠ NEXT SESSION — start here
 
+### PIVOT (2026-06-07): v0.3.4 prefetch is PARKED — we're moving to Galatea.
+
+The Architect chose to **pivot to Galatea now** (Phase 4 of the original
+charge). Galatea's userspace NFSv4 substrate landed and is real: a 130 s
+READ completes exit-0 (R1), a 1 GB write→remount→read is byte-identical (R7),
+live headless read-write mount with no root, conformance suite green. That
+substrate has no RPC-timeout window — which means **the entire prefetch
+redesign exists to dodge a constraint that no longer exists.** So no further
+polish goes into it; the v0.3.4 plan below is parked, not deleted (the
+receipts stay as history and as the acceptance spec the new substrate must
+keep passing).
+
+**Branch:** `mercer/galatea-integration`. **Target:** v0.4.0 on Galatea.
+
+**Done this session (commit `99e6020f`):** the Phase-4 dry-fit —
+`bridge/mtpfsal/` implements Galatea's `pkg/virtual` FSAL (Directory/Leaf/Node)
+over `*mtp.Session`, compiling green against the **public** Galatea module
+(`v0.1.0-alpha` already exposes `pkg/virtual` + `galatea.Serve`; the ~26
+unpushed canonical commits are libfuse/A1 work we don't consume — so this
+likely needs **no push** from the Architect). Gated behind a `galatea` build
+tag; compile with `go build -mod=mod -tags galatea ./mtpfsal/`. The read/nav
+path (attributes, lookup, uint32-handle resolver) is wired; data/mutation ops
+are stubbed `StatusErrIO` with TODOs pointing at the `bridge/nfs` handler each
+ports.
+
+**Next increment (NEEDS A CONNECTED PHONE — MTP can't be mocked):**
+1. Flesh the stubbed `mtpfsal` ops, porting from `bridge/nfs/fs.go` +
+   `write.go`. **Every device-touching op MUST go through `(*mtp.Session).Do`**
+   — libmtp isn't thread-safe and Galatea calls the FSAL concurrently across
+   NFSv4 open-owners (the one-cursor seam; see Galatea `Correspondance/04`).
+   - `VirtualRead`: stream `libmtp` GetFileToHandler at offset — no JUKEBOX,
+     no threshold, no prefetch. This is the win.
+   - `VirtualReadDir`: needs a children-of-path index on `ObjectMap`
+     (`populateDir` returns `[]*ObjectMeta`; expose it).
+   - `VirtualWrite`/`VirtualOpenChild`/`VirtualSetAttributes(truncate)`: port
+     the staged-write registry + idle-flush commit from `write.go`.
+   - `VirtualRename`: copy+delete (MTP has no native rename).
+2. Replace `bridge/nfs.Serve` (the willscott/go-nfs stand-up in
+   `bridge/nfs/server.go`) with `galatea.Serve(ctx, root, resolver, addr)`.
+   Keep the `PORT=`/`HOST=`/`DEVICE=` stdout protocol and the Swift mount side
+   unchanged; verify whether v3→v4 needs different `mount_nfs`/NetFS options.
+3. **Prove read-write live under load on a real phone**, THEN delete
+   `bridge/nfs/cache.go` (JUKEBOX + prefetch) and the patched go-nfs fork.
+   Prove-then-delete; "get to delete" is the end state, not step one.
+
+The reply opening Phase 4 is delivered to Daedalus's mailbox:
+`~/Labs/Galatea/Correspondance/04-phase-four-and-the-one-cursor/` (uncommitted
+in Galatea's repo — commit/push there is the Architect's hand). It poses three
+seam questions (open-owner sequencing vs. a global funnel; the uint32-handle
+gift; where MTP's reality will want the interface to flex).
+
+---
+
+### PARKED — v0.3.4 prefetch release (pre-pivot state, kept as history)
+
 State as of **2026-05-18 night** (Step 3 landed, yield test passed,
 cascade fix verified by construction + empirically via the
 discriminating yield test).
 
-**Live spec for the next stretch:** [`docs/PLAN-V0.3.4-RELEASE.md`](docs/PLAN-V0.3.4-RELEASE.md).
+**Live spec for the parked stretch:** [`docs/PLAN-V0.3.4-RELEASE.md`](docs/PLAN-V0.3.4-RELEASE.md).
 It carries the go/no-go gates for the v0.3.4 release, the
 remaining test rounds, and the build/tag work.
 
