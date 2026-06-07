@@ -19,9 +19,15 @@ keep passing).
 **Done this session (commit `99e6020f`):** the Phase-4 dry-fit —
 `bridge/mtpfsal/` implements Galatea's `pkg/virtual` FSAL (Directory/Leaf/Node)
 over `*mtp.Session`, compiling green against the **public** Galatea module
-(`v0.1.0-alpha` already exposes `pkg/virtual` + `galatea.Serve`; the ~26
-unpushed canonical commits are libfuse/A1 work we don't consume — so this
-likely needs **no push** from the Architect). Gated behind a `galatea` build
+(`v0.1.0-alpha`). **Sourcing — verified 2026-06-07:** the public release
+exposes `pkg/virtual` (the FSAL interface — the dry-fit builds against it), but
+does **NOT** contain the root `galatea.Serve` entry point. `Serve` was added
+post-release (Galatea DEC-022) and lives only on the unpushed canonical branch
+`claude/unruffled-dijkstra-7f1e6d`. So the **server-cutover step (2) below needs
+the canonical code**, via one of: (a) the Architect pushes Galatea's canonical
+branch and we pin to it, or (b) a local `replace github.com/terraceonhigh/galatea
+=> /Users/terrace/Labs/Galatea/.claude/worktrees/unruffled-dijkstra-7f1e6d` in
+`bridge/go.mod`. The FSAL work (step 1) needs neither. Gated behind a `galatea` build
 tag; compile with `go build -mod=mod -tags galatea ./mtpfsal/`. The read/nav
 path (attributes, lookup, uint32-handle resolver) is wired; data/mutation ops
 are stubbed `StatusErrIO` with TODOs pointing at the `bridge/nfs` handler each
@@ -46,6 +52,10 @@ ports.
 3. **Prove read-write live under load on a real phone**, THEN delete
    `bridge/nfs/cache.go` (JUKEBOX + prefetch) and the patched go-nfs fork.
    Prove-then-delete; "get to delete" is the end state, not step one.
+
+> NB: `bridge/mtpfsal/` is currently behind `//go:build galatea` so it's
+> invisible to the default build. When the cutover wires it into the real
+> server path, drop that tag (and add galatea to go.mod + `go mod vendor`).
 
 The reply opening Phase 4 is delivered to Daedalus's mailbox:
 `~/Labs/Galatea/Correspondance/04-phase-four-and-the-one-cursor/` (uncommitted
