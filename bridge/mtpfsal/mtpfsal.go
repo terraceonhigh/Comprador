@@ -861,38 +861,18 @@ func (d *mtpDir) VirtualRename(oldName virtual.Component, newDirectory virtual.D
 			return srcCI, dstCI, virtual.StatusOK
 		}
 		// OpSetObjectName failed — some Android MTP responders don't allow
-		// setting the ObjectFileName property. Fall back so we never regress:
-		// a file drops through to the copy+delete block below (which works
-		// same-parent); a folder is handled here.
+		// setting the ObjectFileName property. Fall back so we never regress: a
+		// folder is moved by recursive copy into the same parent under the new
+		// name; a file drops through to the copy+delete block below (which works
+		// same-parent too).
 		if srcMeta.IsDir {
-			// Only an empty folder can be "renamed" by create-new + delete-old
-			// (this is the New Folder→typed-name case). A non-empty folder would
-			// need a recursive copy — unsupported.
-			d.session.EnsurePopulated(oldPath)
-			if len(d.session.Objects.ListChildren(oldPath)) > 0 {
-				return srcCI, dstCI, virtual.StatusErrInval
-			}
 			parentMeta, ok := d.session.Objects.GetByPath(d.mpath)
 			if !ok {
 				return srcCI, dstCI, virtual.StatusErrNoEnt
 			}
-			mk := d.session.Do(mtp.MTPRequest{Op: mtp.OpCreateFolder, ParentID: parentMeta.ID, StorageID: parentMeta.StorageID, Name: newBase})
-			if mk.Err != nil {
+			if err := moveDirTree(d.session, srcMeta, parentMeta.ID, parentMeta.StorageID, newPath, newBase); err != nil {
 				return srcCI, dstCI, virtual.StatusErrIO
 			}
-			if del := d.session.Do(mtp.MTPRequest{Op: mtp.OpDelete, ObjectID: srcMeta.ID}); del.Err != nil {
-				return srcCI, dstCI, virtual.StatusErrIO
-			}
-			d.session.Objects.RemoveRecursive(oldPath)
-			d.session.Objects.Put(&mtp.ObjectMeta{
-				ID:        mk.ObjectID,
-				ParentID:  parentMeta.ID,
-				StorageID: parentMeta.StorageID,
-				Name:      newBase,
-				Path:      newPath,
-				IsDir:     true,
-				ModTime:   time.Now(),
-			})
 			bumpDirMtime(parentMeta, d.session.Objects)
 			return srcCI, dstCI, virtual.StatusOK
 		}
@@ -900,63 +880,90 @@ func (d *mtpDir) VirtualRename(oldName virtual.Component, newDirectory virtual.D
 	}
 
 	// --- cross-directory move (and same-dir file fallback) ---
-	if srcMeta.IsDir {
-		return srcCI, dstCI, virtual.StatusErrInval // directory move unsupported
-	}
 	nd.session.EnsureInMap(nd.mpath)
 	parentMeta, ok := nd.session.Objects.GetByPath(nd.mpath)
 	if !ok {
 		return srcCI, dstCI, virtual.StatusErrNoEnt
 	}
-	tmp, err := os.CreateTemp("", "comprador-rename-*")
-	if err != nil {
+	if srcMeta.IsDir {
+		if err := moveDirTree(d.session, srcMeta, parentMeta.ID, parentMeta.StorageID, newPath, newBase); err != nil {
+			return srcCI, dstCI, virtual.StatusErrIO
+		}
+	} else if err := moveFile(d.session, srcMeta, parentMeta.ID, parentMeta.StorageID, newPath, newBase); err != nil {
 		return srcCI, dstCI, virtual.StatusErrIO
 	}
-	defer func() {
-		tmp.Close()
-		os.Remove(tmp.Name())
-	}()
-	if resp := d.session.Do(mtp.MTPRequest{Op: mtp.OpGetFile, ObjectID: srcMeta.ID, Writer: tmp}); resp.Err != nil {
-		return srcCI, dstCI, virtual.StatusErrIO
-	}
-	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
-		return srcCI, dstCI, virtual.StatusErrIO
-	}
-	sendResp := d.session.Do(mtp.MTPRequest{
-		Op:        mtp.OpSendFile,
-		ParentID:  parentMeta.ID,
-		StorageID: parentMeta.StorageID,
-		Name:      newBase,
-		Size:      srcMeta.Size,
-		Reader:    tmp,
-	})
-	if sendResp.Err != nil {
-		return srcCI, dstCI, virtual.StatusErrIO
-	}
-	newMeta := &mtp.ObjectMeta{
-		ID:        sendResp.ObjectID,
-		ParentID:  parentMeta.ID,
-		StorageID: parentMeta.StorageID,
-		Name:      newBase,
-		Path:      newPath,
-		Size:      srcMeta.Size,
-		ModTime:   time.Now(),
-		IsDir:     false,
-	}
-	if delResp := d.session.Do(mtp.MTPRequest{Op: mtp.OpDelete, ObjectID: srcMeta.ID}); delResp.Err != nil {
-		// Copy succeeded, source delete failed: the file now exists at both
-		// ends. Record the destination so subsequent ops see it; the source
-		// lingers until the next session refresh.
-		d.session.Objects.Put(newMeta)
-		return srcCI, dstCI, virtual.StatusErrIO
-	}
-	d.session.Objects.Remove(oldPath)
-	d.session.Objects.Put(newMeta)
 	if srcParent, ok := d.session.Objects.GetByPath(d.mpath); ok {
 		bumpDirMtime(srcParent, d.session.Objects)
 	}
 	bumpDirMtime(parentMeta, nd.session.Objects)
 	return srcCI, dstCI, virtual.StatusOK
+}
+
+// moveFile copies a device file to a new parent (OpGetFile → temp → OpSendFile)
+// and deletes the source — MTP has no move op, so a move is copy+delete. The
+// whole file streams through the single session cursor. Updates the ObjectMap.
+func moveFile(session *mtp.Session, src *mtp.ObjectMeta, destParentID, destStorageID uint32, newPath, newName string) error {
+	tmp, err := os.CreateTemp("", "comprador-move-*")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		tmp.Close()
+		os.Remove(tmp.Name())
+	}()
+	if r := session.Do(mtp.MTPRequest{Op: mtp.OpGetFile, ObjectID: src.ID, Writer: tmp}); r.Err != nil {
+		return r.Err
+	}
+	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	snd := session.Do(mtp.MTPRequest{Op: mtp.OpSendFile, ParentID: destParentID, StorageID: destStorageID, Name: newName, Size: src.Size, Reader: tmp})
+	if snd.Err != nil {
+		return snd.Err
+	}
+	newMeta := &mtp.ObjectMeta{ID: snd.ObjectID, ParentID: destParentID, StorageID: destStorageID, Name: newName, Path: newPath, Size: src.Size, ModTime: time.Now()}
+	if del := session.Do(mtp.MTPRequest{Op: mtp.OpDelete, ObjectID: src.ID}); del.Err != nil {
+		// Copy landed, source delete failed: the file now exists at both ends.
+		// Record the destination; the source lingers until the next refresh.
+		session.Objects.Put(newMeta)
+		return del.Err
+	}
+	session.Objects.Remove(src.Path)
+	session.Objects.Put(newMeta)
+	return nil
+}
+
+// moveDirTree recursively moves a directory subtree to a new parent: create the
+// destination folder, move each child (files via moveFile, subdirs by
+// recursion), then delete the emptied source. MTP has no move op, so the whole
+// subtree streams through the single session cursor — a large tree freezes the
+// mount for the duration, and a mid-tree failure leaves a partially-moved tree
+// (no rollback). The Architect accepted this trade-off for folder moves.
+func moveDirTree(session *mtp.Session, src *mtp.ObjectMeta, destParentID, destStorageID uint32, newDirPath, newName string) error {
+	mk := session.Do(mtp.MTPRequest{Op: mtp.OpCreateFolder, ParentID: destParentID, StorageID: destStorageID, Name: newName})
+	if mk.Err != nil {
+		return mk.Err
+	}
+	newDirID := mk.ObjectID
+	session.Objects.Put(&mtp.ObjectMeta{ID: newDirID, ParentID: destParentID, StorageID: destStorageID, Name: newName, Path: newDirPath, IsDir: true, ModTime: time.Now()})
+
+	session.EnsurePopulated(src.Path)
+	for _, child := range session.Objects.ListChildren(src.Path) {
+		childNewPath := path.Join(newDirPath, child.Name)
+		if child.IsDir {
+			if err := moveDirTree(session, child, newDirID, destStorageID, childNewPath, child.Name); err != nil {
+				return err
+			}
+		} else if err := moveFile(session, child, newDirID, destStorageID, childNewPath, child.Name); err != nil {
+			return err
+		}
+	}
+
+	if del := session.Do(mtp.MTPRequest{Op: mtp.OpDelete, ObjectID: src.ID}); del.Err != nil {
+		return del.Err
+	}
+	session.Objects.RemoveRecursive(src.Path)
+	return nil
 }
 
 func (d *mtpDir) VirtualLink(ctx context.Context, name virtual.Component, leaf virtual.Leaf, requested virtual.AttributesMask, attributes *virtual.Attributes) (virtual.ChangeInfo, virtual.Status) {
