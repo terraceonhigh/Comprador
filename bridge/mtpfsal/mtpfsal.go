@@ -32,13 +32,16 @@ import (
 	"context"
 	"encoding/binary"
 	"io"
+	"log"
 	"path"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/terraceonhigh/galatea/pkg/virtual"
 
 	"comprador/bridge/mtp"
+	"comprador/bridge/staging"
 )
 
 // sliceWriter fills a fixed buffer, used to adapt the libmtp OpGetPartial
@@ -65,14 +68,19 @@ func (w *sliceWriter) Write(p []byte) (int, error) {
 // carried for ObjectMap lookups and child-path construction.
 type node struct {
 	session *mtp.Session
-	mpath   string // ObjectMap path: "/", "/DCIM", "/DCIM/Camera/IMG_0001.JPG"
+	reg     *staging.Registry // shared write-staging registry (nil-safe for reads)
+	mpath   string            // ObjectMap path: "/", "/DCIM", "/DCIM/Camera/IMG_0001.JPG"
 }
 
 // mtpDir is a virtual.Directory backed by an MTP folder object (or a storage
 // root). The map root ("/") is also an mtpDir, synthesised in Root.
 type mtpDir struct{ node }
 
-// mtpFile is a virtual.Leaf backed by an MTP file object.
+// mtpFile is a virtual.Leaf backed by an MTP file object, or — between OPEN and
+// the idle commit — by a staging entry keyed on mpath in the registry. Which one
+// a given method sees is decided by reg.Get(mpath): non-nil means the file is
+// still staging (pre-commit), nil means it's a committed device object (or a
+// plain read).
 type mtpFile struct{ node }
 
 // Root returns the FSAL root Directory for the given session, plus the
@@ -81,7 +89,17 @@ type mtpFile struct{ node }
 // support presents each storage as a child — Phase 5 of CLAUDE.md; here the map
 // already flattens them under "/").
 func Root(session *mtp.Session) (virtual.Directory, virtual.HandleResolver) {
-	return &mtpDir{node{session: session, mpath: "/"}}, newHandleResolver(session)
+	var reg *staging.Registry
+	// The idle-flush callback resolves one staged path. It closes over reg
+	// (assigned just below — the closure runs much later) and runs on the timer
+	// goroutine, off the server's request goroutines. AppleDouble sidecars
+	// (`._*`, .DS_Store) are Finder bookkeeping that has no business on the
+	// phone: we stage them so OPEN/WRITE/GETATTR don't error, then drop them
+	// here instead of committing. Everything else flushes to the device.
+	reg = staging.NewRegistry(func(mtpPath string) {
+		resolveStaged(reg, session, mtpPath)
+	})
+	return &mtpDir{node{session: session, reg: reg, mpath: "/"}}, newHandleResolver(session, reg)
 }
 
 // ---- handles -------------------------------------------------------------
@@ -100,7 +118,7 @@ func encodeHandle(id uint32) []byte {
 	return b
 }
 
-func newHandleResolver(session *mtp.Session) virtual.HandleResolver {
+func newHandleResolver(session *mtp.Session, reg *staging.Registry) virtual.HandleResolver {
 	return func(r io.ByteReader) (virtual.DirectoryChild, virtual.Status) {
 		var b [4]byte
 		for i := range b {
@@ -112,24 +130,32 @@ func newHandleResolver(session *mtp.Session) virtual.HandleResolver {
 		}
 		id := binary.BigEndian.Uint32(b[:])
 		if id == rootHandleID {
-			root := &mtpDir{node{session: session, mpath: "/"}}
+			root := &mtpDir{node{session: session, reg: reg, mpath: "/"}}
 			return virtual.DirectoryChild{}.FromDirectory(root), virtual.StatusOK
+		}
+		// A staged file's synthetic handle resolves before the device map: in
+		// the pre-commit window the object ID doesn't exist on the phone yet, so
+		// GetByID would miss. (Synthetic IDs live at 1<<31+, above any real
+		// Android object ID, so this can't shadow a device object.)
+		if mpath, ok := reg.PathForHandle(id); ok {
+			leaf := &mtpFile{node{session: session, reg: reg, mpath: mpath}}
+			return virtual.DirectoryChild{}.FromLeaf(leaf), virtual.StatusOK
 		}
 		meta, ok := session.Objects.GetByID(id)
 		if !ok {
 			return virtual.DirectoryChild{}, virtual.StatusErrStale
 		}
-		return childFor(session, meta), virtual.StatusOK
+		return childFor(session, reg, meta), virtual.StatusOK
 	}
 }
 
 // childFor wraps an ObjectMeta as the appropriate DirectoryChild.
-func childFor(session *mtp.Session, meta *mtp.ObjectMeta) virtual.DirectoryChild {
-	n := node{session: session, mpath: meta.Path}
+func childFor(session *mtp.Session, reg *staging.Registry, meta *mtp.ObjectMeta) virtual.DirectoryChild {
+	n := node{session: session, reg: reg, mpath: meta.Path}
 	if meta.IsDir {
 		return virtual.DirectoryChild{}.FromDirectory(&mtpDir{n})
 	}
-	return virtual.DirectoryChild{}.FromLeaf(&mtpFile{n})
+	return virtual.DirectoryChild{}.FromLeaf(&mtpFile{node: n})
 }
 
 // handleID returns the object ID this node's path resolves to (rootHandleID for
@@ -216,6 +242,77 @@ func fillCommon(meta *mtp.ObjectMeta, id uint32, requested virtual.AttributesMas
 	}
 }
 
+// staged returns the in-progress staging file for this leaf's path, or nil if
+// the file is a committed device object (or reg is unset, as on a pure read).
+func (f *mtpFile) staged() *staging.File {
+	if f.reg == nil {
+		return nil
+	}
+	return f.reg.Get(f.mpath)
+}
+
+// fillStaged answers GETATTR for a file that is still buffering to a temp file
+// (post-OPEN, pre-commit). Size comes from the temp file so Finder sees the
+// upload grow; the handle is the registry's synthetic ID (stable for the staged
+// life); ChangeID is the registry's per-write counter so the client's attribute
+// cache invalidates on every WRITE.
+func (f *mtpFile) fillStaged(sf *staging.File, requested virtual.AttributesMask, a *virtual.Attributes) {
+	// Mandatory regardless of the requested mask (see fillCommon / M-006).
+	a.SetFileHandle(encodeHandle(sf.Handle()))
+	a.SetHasNamedAttributes(false)
+	a.SetIsInNamedAttributeDirectory(false)
+
+	if requested&virtual.AttributesMaskFileType != 0 {
+		a.SetFileType(virtual.FileTypeRegularFile)
+	}
+	if requested&virtual.AttributesMaskPermissions != 0 {
+		a.SetPermissions(virtual.PermissionsRead | virtual.PermissionsWrite)
+	}
+	if requested&virtual.AttributesMaskSizeBytes != 0 {
+		if size, err := sf.Size(); err == nil {
+			a.SetSizeBytes(size)
+		}
+	}
+	if requested&virtual.AttributesMaskLinkCount != 0 {
+		a.SetLinkCount(1)
+	}
+	if requested&virtual.AttributesMaskInodeNumber != 0 {
+		a.SetInodeNumber(uint64(sf.Handle()))
+	}
+	if requested&virtual.AttributesMaskLastDataModificationTime != 0 {
+		a.SetLastDataModificationTime(time.Now())
+	}
+	if requested&virtual.AttributesMaskChangeID != 0 {
+		a.SetChangeID(sf.Change())
+	}
+	f.fillStatfs(requested, a)
+}
+
+// isAppleDouble reports whether an ObjectMap path is a macOS sidecar Finder
+// writes alongside real files (`._name` AppleDouble resource forks, `.DS_Store`
+// folder metadata). These are staged so OPEN/WRITE don't error, then dropped at
+// flush rather than committed to the phone (see Root's idle callback).
+func isAppleDouble(mtpPath string) bool {
+	base := path.Base(mtpPath)
+	return strings.HasPrefix(base, "._") || base == ".DS_Store"
+}
+
+// resolveStaged finalises one staged path: an AppleDouble sidecar is dropped
+// (it's Finder bookkeeping, not a file the user dragged), anything else is
+// flushed to the phone via SendFile. Shared by the idle-flush timer and
+// VirtualClose so both honour the sidecar rule. The atomic delete inside
+// Discard/Commit makes the two triggers race-safe — whichever fires first wins,
+// the other is a no-op.
+func resolveStaged(reg *staging.Registry, session *mtp.Session, mtpPath string) {
+	if isAppleDouble(mtpPath) {
+		reg.Discard(mtpPath)
+		return
+	}
+	if err := reg.Commit(mtpPath, session, session.Objects); err != nil {
+		log.Printf("staging flush %s: %v", mtpPath, err)
+	}
+}
+
 func (d *mtpDir) VirtualGetAttributes(ctx context.Context, requested virtual.AttributesMask, a *virtual.Attributes) {
 	id := d.handleID()
 	var meta mtp.ObjectMeta
@@ -241,6 +338,15 @@ func (d *mtpDir) VirtualGetAttributes(ctx context.Context, requested virtual.Att
 }
 
 func (f *mtpFile) VirtualGetAttributes(ctx context.Context, requested virtual.AttributesMask, a *virtual.Attributes) {
+	// Staging takes precedence: a file mid-upload has no device object yet, so
+	// its size/handle/changeID come from the temp file, not the ObjectMap. This
+	// must run before the GetByPath-miss early return, or a freshly created file
+	// would report type-only and Finder's post-create stat would see size 0
+	// forever.
+	if sf := f.staged(); sf != nil {
+		f.fillStaged(sf, requested, a)
+		return
+	}
 	meta, ok := f.session.Objects.GetByPath(f.mpath)
 	if !ok {
 		// Vanished mid-traversal: type-only best effort.
@@ -265,11 +371,42 @@ func (f *mtpFile) VirtualGetAttributes(ctx context.Context, requested virtual.At
 	f.fillStatfs(requested, a)
 }
 
-// VirtualSetAttributes — TODO(phase4): map size truncation onto the staged-write
-// path (bridge/nfs/write.go) and mtime onto MTP if supported; reject the rest.
-// For the dry-fit, accept no-ops so a stat round-trip doesn't error.
-func (n *node) VirtualSetAttributes(ctx context.Context, in *virtual.Attributes, requested virtual.AttributesMask, out *virtual.Attributes) virtual.Status {
-	return virtual.StatusErrInval
+// VirtualSetAttributes on a file. The macOS NFSv4 client issues SETATTR mid-copy
+// — Finder preserves the source's timestamps and mode, and uses SETATTR(size=0)
+// to truncate. We must answer it leniently or the copy aborts. Apply only what
+// `in` actually carries (its fieldsPresent), NOT what `requested` asks to read
+// back — keying off `requested` silently drops the truncate (the lesson baked
+// into memory.go's own comment). After applying, fill `out` through
+// VirtualGetAttributes so no mandatory attribute is left unset (the M-006 panic).
+func (f *mtpFile) VirtualSetAttributes(ctx context.Context, in *virtual.Attributes, requested virtual.AttributesMask, out *virtual.Attributes) virtual.Status {
+	if sf := f.staged(); sf != nil {
+		if size, ok := in.GetSizeBytes(); ok {
+			if err := sf.Truncate(int64(size)); err != nil {
+				return virtual.StatusErrIO
+			}
+		}
+		// Permissions / mtime have no home on MTP; accept them as a no-op so the
+		// metadata-preserving SETATTR doesn't abort the copy.
+		f.VirtualGetAttributes(ctx, requested, out)
+		return virtual.StatusOK
+	}
+	// Committed device object: a size change (in-place truncate) needs
+	// delete-then-restage and is a later increment, so reject it; metadata-only
+	// SETATTRs (mtime/mode) are accepted as a no-op so timestamp-preserving
+	// copies onto existing files don't error.
+	if _, ok := in.GetSizeBytes(); ok {
+		return virtual.StatusErrROFS
+	}
+	f.VirtualGetAttributes(ctx, requested, out)
+	return virtual.StatusOK
+}
+
+// VirtualSetAttributes on a directory: MTP folders have no mutable attributes,
+// but Finder sets a folder's mtime when copying into it — accept as a no-op and
+// report current attributes.
+func (d *mtpDir) VirtualSetAttributes(ctx context.Context, in *virtual.Attributes, requested virtual.AttributesMask, out *virtual.Attributes) virtual.Status {
+	d.VirtualGetAttributes(ctx, requested, out)
+	return virtual.StatusOK
 }
 
 // VirtualApply: no host-defined extension payloads.
@@ -295,7 +432,7 @@ func (d *mtpDir) VirtualLookup(ctx context.Context, name virtual.Component, requ
 	if !ok {
 		return virtual.DirectoryChild{}, virtual.StatusErrNoEnt
 	}
-	child := childFor(d.session, meta)
+	child := childFor(d.session, d.reg, meta)
 	if dir, leaf := child.GetPair(); dir != nil {
 		dir.VirtualGetAttributes(ctx, requested, out)
 	} else if leaf != nil {
@@ -325,7 +462,7 @@ func (d *mtpDir) VirtualReadDir(ctx context.Context, firstCookie uint64, request
 		if !ok {
 			continue // skip names that aren't valid path components
 		}
-		child := childFor(d.session, meta)
+		child := childFor(d.session, d.reg, meta)
 		var attributes virtual.Attributes
 		if dir, leaf := child.GetPair(); dir != nil {
 			dir.VirtualGetAttributes(ctx, requested, &attributes)
@@ -388,13 +525,35 @@ func (f *mtpFile) VirtualRead(buf []byte, offset uint64) (int, bool, virtual.Sta
 	return n, eof, virtual.StatusOK
 }
 
-// VirtualWrite — TODO(writes increment): port the staged-write path
-// (write.go writeRegistry + idle-flush commit), extracted to a neutral package
-// so mtpfsal never imports nfs. Read-only for now.
+// VirtualWrite buffers an NFSv4 WRITE into the staging temp file at the given
+// offset (no device I/O — MTP has no partial write; the whole file is sent by
+// SendFile when the idle timer fires, see staging.Commit). It only handles files
+// opened through the create path, which seeded a staging entry; a WRITE to a
+// committed device object has no entry and is refused (in-place overwrite of an
+// existing phone file is a later increment). Each WRITE resets the idle timer.
 func (f *mtpFile) VirtualWrite(buf []byte, offset uint64) (int, virtual.Status) {
-	return 0, virtual.StatusErrROFS
+	sf := f.staged()
+	if sf == nil {
+		return 0, virtual.StatusErrROFS
+	}
+	n, err := sf.WriteAt(buf, int64(offset))
+	if err != nil {
+		return n, virtual.StatusErrIO
+	}
+	return n, virtual.StatusOK
 }
 
+// VirtualClose is deliberately a no-op: the idle timer is the sole commit
+// trigger. CLOSE cannot drive the commit because the macOS NFSv4 client copies a
+// file as OPEN(create) → CLOSE(empty) → re-OPEN → WRITE → CLOSE — committing on
+// that first (empty) close would SendFile a 0-byte file, delete the staging
+// entry, and turn the re-OPEN-for-write into a write against a now-committed
+// device object, which we reject (StatusErrROFS) → Finder reports a "locked
+// volume". Letting the staging entry live across all the client's opens and
+// flushing 2 s after the *last* WRITE is the willscott-proven behaviour (1 GB
+// round-trip, R7). The trade-off — a >2 s mid-copy write stall commits a partial
+// file — is the documented follow-up, addressed later by tracking open count
+// rather than by an eager close-commit.
 func (f *mtpFile) VirtualClose(shareAccess virtual.ShareMask) {}
 
 // VirtualAllocate / VirtualSeek — MTP has neither fallocate nor sparse seeking.
@@ -422,10 +581,33 @@ func (d *mtpDir) VirtualOpenChild(ctx context.Context, name virtual.Component, s
 	}
 	d.session.EnsurePopulated(d.mpath)
 	childPath := path.Join(d.mpath, name.String())
+
+	// Already staging (created earlier this session, not yet committed): the
+	// device map has no object for it, so this must be checked before GetByPath.
+	// Hand back the same staged leaf; an O_TRUNC re-open resets the buffer.
+	if sf := d.reg.Get(childPath); sf != nil {
+		if existingOptions != nil && existingOptions.Truncate {
+			if err := sf.Truncate(0); err != nil {
+				return nil, 0, ci, virtual.StatusErrIO
+			}
+		}
+		leaf := &mtpFile{node{session: d.session, reg: d.reg, mpath: childPath}}
+		leaf.VirtualGetAttributes(ctx, requested, openedFileAttributes)
+		return leaf, 0, ci, virtual.StatusOK
+	}
+
 	meta, ok := d.session.Objects.GetByPath(childPath)
 	if !ok {
 		if createAttributes != nil {
-			return nil, 0, ci, virtual.StatusErrROFS // create: read-only for now
+			// New file: seed a staging entry (synthetic handle + temp file).
+			// WRITEs buffer there; the idle timer commits it to the phone via
+			// SendFile (or discards it, for an AppleDouble sidecar).
+			if _, err := d.reg.Register(childPath); err != nil {
+				return nil, 0, ci, virtual.StatusErrIO
+			}
+			leaf := &mtpFile{node{session: d.session, reg: d.reg, mpath: childPath}}
+			leaf.VirtualGetAttributes(ctx, requested, openedFileAttributes)
+			return leaf, 0, ci, virtual.StatusOK
 		}
 		return nil, 0, ci, virtual.StatusErrNoEnt
 	}
@@ -436,9 +618,11 @@ func (d *mtpDir) VirtualOpenChild(ctx context.Context, name virtual.Component, s
 		return nil, 0, ci, virtual.StatusErrIsDir
 	}
 	if shareAccess&virtual.ShareMaskWrite != 0 || existingOptions.Truncate {
+		// In-place overwrite/truncate of a committed device object is a later
+		// increment (it needs delete-then-restage); reads are fine.
 		return nil, 0, ci, virtual.StatusErrROFS
 	}
-	leaf := &mtpFile{node{session: d.session, mpath: childPath}}
+	leaf := &mtpFile{node{session: d.session, reg: d.reg, mpath: childPath}}
 	leaf.VirtualGetAttributes(ctx, requested, openedFileAttributes)
 	return leaf, 0, ci, virtual.StatusOK
 }
