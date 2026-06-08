@@ -146,6 +146,49 @@ func (n node) handleID() uint32 {
 
 // ---- attributes ----------------------------------------------------------
 
+// MTP exposes no inode/file counts, so statfs reports large synthetic file
+// totals — enough that Finder never treats the volume as out of inodes. The
+// byte figures, by contrast, are the device's real capacity (below).
+const (
+	statfsFilesTotal = uint64(10_000_000)
+	statfsFilesFree  = uint64(9_000_000)
+	statfsFilesAvail = uint64(9_000_000)
+)
+
+// fillStatfs answers the filesystem-wide space/inode attributes the NFSv4 client
+// requests for statfs — what Finder reads to show "N bytes available" and to
+// pre-flight a drag-and-drop copy. Without it the server encodes 0, Finder shows
+// "Zero bytes available" and refuses every copy (the precursor to error 100060).
+// Byte totals come from the live device storages (session.TotalBytes/FreeBytes,
+// RLock-guarded — no session-goroutine round-trip); statfs is per-filesystem, so
+// every node reports the same values (cf. Galatea's memory.go fillSyntheticStatfs).
+//
+// These are the storage snapshot taken at session open; they don't yet decrement
+// live after a write (the willscott bridge called RefreshStorages on each FSStat
+// for that — a follow-up if Finder's post-write number needs to be exact). For
+// unblocking drag-and-drop, the real free figure is what matters and it's here.
+func (n node) fillStatfs(requested virtual.AttributesMask, a *virtual.Attributes) {
+	if requested&virtual.AttributesMaskSpaceTotal != 0 {
+		a.SetSpaceTotal(n.session.TotalBytes())
+	}
+	if requested&virtual.AttributesMaskSpaceFree != 0 {
+		a.SetSpaceFree(n.session.FreeBytes())
+	}
+	if requested&virtual.AttributesMaskSpaceAvail != 0 {
+		// MTP has no per-user quota; available == free.
+		a.SetSpaceAvail(n.session.FreeBytes())
+	}
+	if requested&virtual.AttributesMaskFilesTotal != 0 {
+		a.SetFilesTotal(statfsFilesTotal)
+	}
+	if requested&virtual.AttributesMaskFilesFree != 0 {
+		a.SetFilesFree(statfsFilesFree)
+	}
+	if requested&virtual.AttributesMaskFilesAvail != 0 {
+		a.SetFilesAvail(statfsFilesAvail)
+	}
+}
+
 // fillCommon sets the attributes the NFSv4 server treats as mandatory (file
 // handle, named-attribute flags — see Galatea MISTAKES.md M-006) plus the
 // requested stat-like fields, from an ObjectMeta. Reads the in-memory map only.
@@ -194,6 +237,7 @@ func (d *mtpDir) VirtualGetAttributes(ctx context.Context, requested virtual.Att
 		a.SetLinkCount(virtual.EmptyDirectoryLinkCount)
 	}
 	fillCommon(&meta, id, requested, a)
+	d.fillStatfs(requested, a)
 }
 
 func (f *mtpFile) VirtualGetAttributes(ctx context.Context, requested virtual.AttributesMask, a *virtual.Attributes) {
@@ -218,6 +262,7 @@ func (f *mtpFile) VirtualGetAttributes(ctx context.Context, requested virtual.At
 		a.SetLinkCount(1)
 	}
 	fillCommon(meta, meta.ID, requested, a)
+	f.fillStatfs(requested, a)
 }
 
 // VirtualSetAttributes — TODO(phase4): map size truncation onto the staged-write
