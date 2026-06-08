@@ -49,6 +49,13 @@ byte-exact through the app's own mount. How:
   compile). Vendor mode skips go.sum, so go.sum has no galatea entry by design
   (any non-vendor command — `go mod tidy`, `go get` — will trip until one's added).
 - One Swift line: `mountNFS` `nfsvers=3,nolocks` → `vers=4.0`.
+- **statfs fixed + verified (commit `05333003`):** `mtpfsal.fillStatfs` reports
+  real device capacity (Pixel 6: 118.4 GB total / 29.9 GB free via `statvfs`,
+  was 0). Finder's "Zero bytes available" / drag-drop space-block (error 100060
+  precursor) resolved. Galatea-side was already correct; this was a Comprador
+  gap. **BUT** drag-and-drop *to the phone* still fails further along — writes
+  are ROFS until the write port lands; statfs only unblocks the space pre-flight.
+  Reads from the phone work fully.
 - **Eject answer for Daedalus (Correspondance/04 drain-shape Q):** Comprador
   needs **wait**, not server-interrupt. `DeviceSession.teardown` unmounts
   (synchronous `DADiskUnmount`, force-fallback) THEN `bridge.stop()` — so the
