@@ -92,31 +92,59 @@ Two live bugs fixed (both in the commit): NFSv4 OPEN lands in
 every read; and `ChangeID` is a mandatory GETATTR attribute (server panics if
 requested-but-unset — the M-006 lesson).
 
-**Next increment — WRITES (needs the phone):**
-1. Extract `writeRegistry` + sentinels + AppleDouble filter from `bridge/nfs`
-   to a **neutral package** (e.g. `bridge/staging`) so `mtpfsal` never imports
-   `nfs` (wrong-direction coupling that would block deleting go-nfs).
-2. Flesh `mtpfsal` writes through `(*mtp.Session).Do` (libmtp isn't
-   thread-safe; Galatea calls the FSAL concurrently across NFSv4 open-owners —
-   the one-cursor seam, Galatea `Correspondance/04`):
-   - `VirtualOpenChild(create)` + `VirtualWrite` + `VirtualClose`: staged temp
-     + idle-flush commit via `OpSendFile` (port `write.go`).
-   - `VirtualSetAttributes(truncate)`, `VirtualMkdir` (`OpCreateFolder`),
-     `VirtualRemove` (`OpDelete`), `VirtualRename` (copy+delete — no native MTP
-     rename).
-3. **Throughput tuning** (read path works but ~5.6 MB/s vs prefetch-probe's
+### WRITE PATH DONE — Finder drag-and-drop to the phone CONFIRMED on Pixel 6 (2026-06-08, commit `cdd67af3`).
+
+The money path (drag a file *to* the phone) works end to end over Galatea
+NFSv4 + MTP, **in the real menu-bar app via Finder** — not just a CLI proxy.
+Receipts: a 4135 B file dragged into `Documents/` committed via one
+`SendFile(name="period_piece.md", size=4135)` and re-listed (7→8 entries), no
+error dialog; an 88 B CLI `cp` round-tripped md5-identical (`02a3a279…`).
+- **New neutral pkg `bridge/staging`** (depends only on `mtp`+stdlib, never
+  `nfs`): MTP has no partial write, so a file buffers to a temp file and is sent
+  whole on commit. **Synthetic high-range handles (`1<<31+`)** give NFSv4 a
+  stable filehandle at OPEN before MTP assigns an object ID at commit; the
+  registry resolves them before the device ObjectMap.
+- `mtpfsal`: `VirtualOpenChild(create)` seeds staging (re-open reuses, O_TRUNC
+  resets); `VirtualWrite` buffers at offset; **commit fires on the idle timer
+  ONLY (2 s after the last write), `VirtualClose` is a no-op.** This was the
+  load-bearing fix: the macOS NFSv4 client copies as `OPEN(create)→CLOSE(empty)
+  →re-OPEN→WRITE→CLOSE`, so committing on the first (empty) CLOSE shipped a
+  **0-byte `SendFile`**, dropped the staging entry, and turned the re-open into a
+  write against a committed object → ROFS → Finder **"locked volume"** (seen
+  live as `SendFile(size=0)`). Idle-only keeps the entry alive across all the
+  client's opens — willscott-proven (1 GB R7). Trade-off: a >2 s mid-copy write
+  stall commits a partial file (follow-up: track open-count).
+  `VirtualGetAttributes` staging-aware (size/handle/changeID from temp file, so a
+  fresh file reports a growing size not 0); `VirtualSetAttributes` lenient —
+  apply what `in` carries NOT the `requested` mask (the SETATTR(size=0) trunc
+  lesson), then fill `out` via GetAttributes so no mandatory attr is unset
+  (M-006). AppleDouble (`._*`, `.DS_Store`) staged-then-discarded, never sent.
+- **Gotcha:** CLI `cp` exits 1 on its trailing native-xattr copy (we don't do
+  SETXATTR/named-attrs) — but data lands first, and real Finder-on-NFS stores
+  xattrs in `._` sidecars (→ our discard path), so the Finder drag sidesteps it.
+- **Build note:** the GUI app builds via `make run-swiftc` (globs
+  `Sources/*.swift`), NOT `make run` — the Xcode `.pbxproj` was never updated to
+  include `DeviceSession.swift` (0 refs), so the Xcode/`make run` build fails
+  with "cannot find type 'DeviceSession'". Fix the pbxproj or keep using swiftc.
+
+**Next increment:**
+1. **Deferred mutations** through `(*mtp.Session).Do`: in-place overwrite/replace
+   of an existing file (delete-then-restage — needed so re-dragging a name that
+   exists doesn't ROFS), `VirtualRemove` (`OpDelete`), `VirtualMkdir`
+   (`OpCreateFolder`), `VirtualRename` (copy+delete — no native MTP rename).
+2. **Large-file write** (>JUKEBOX, multi-minute) round-trip + the >2 s-stall
+   partial-commit risk (open-count tracking instead of pure idle).
+3. **Prove read-write live under load, THEN delete** `bridge/nfs/cache.go`
+   (JUKEBOX + prefetch) and the patched go-nfs fork. Prove-then-delete.
+4. Send Daedalus the eject-drain answer (Comprador needs **wait** — see APP
+   CUTOVER above).
+5. **Throughput tuning** (read path works but ~5.6 MB/s vs prefetch-probe's
    21 MB/s): small NFS rsize → many per-chunk `OpGetPartial` calls. Try a
    larger advertised rsize / read-ahead coalescing. Also do a literal >60 s
    MTP read once a big-enough file is available (Galatea R1 already proved
    130 s at the protocol layer).
-4. Wire into `main.go` behind a flag (probe-bind for the port — `galatea.Serve`
-   has no listener injection; an interface-flex noted to Daedalus), keep the
-   `PORT=`/`HOST=`/`DEVICE=` stdout protocol + Swift mount side unchanged;
-   confirm v3→v4 NetFS/`mount_nfs` option deltas. Resolve the production vendor
-   story here (manual-vendor galatea, or fork go-nfs to a local replace so
-   `go mod vendor` is safe).
-5. **Prove read-write live under load**, THEN delete `bridge/nfs/cache.go`
-   (JUKEBOX + prefetch) and the patched go-nfs fork. Prove-then-delete.
+
+(main.go wiring + production vendor story are DONE — see APP CUTOVER above.)
 
 The reply opening Phase 4 is delivered to Daedalus's mailbox:
 `~/Labs/Galatea/Correspondance/04-phase-four-and-the-one-cursor/` (uncommitted
