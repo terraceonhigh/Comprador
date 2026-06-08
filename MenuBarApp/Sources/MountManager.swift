@@ -177,7 +177,10 @@ class MountManager {
         p.executableURL = URL(fileURLWithPath: "/sbin/mount")
         p.arguments = [
             "-t", "nfs",
-            "-o", "port=\(port),mountport=\(port),nfsvers=3,nolocks,tcp",
+            // vers=4.0: the bridge now serves Galatea's userspace NFSv4 server
+            // (was willscott/go-nfs NFSv3 with nfsvers=3,nolocks). NFSv4 has
+            // integrated locking, so nolocks is dropped.
+            "-o", "vers=4.0,port=\(port),mountport=\(port),tcp",
             "\(host):/",
             mountpoint.path,
         ]
