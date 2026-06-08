@@ -46,7 +46,8 @@ byte-exact through the app's own mount. How:
 - galatea pinned `v0.2.0-alpha`, **manually vendored** (standard modules.txt
   stanza). NEVER run `go mod vendor` (clobbers the vendor-only-patched go-nfs)
   or `-mod=mod` for production (pulls pristine go-nfs → `bridge/nfs` won't
-  compile). Vendor mode skips go.sum, so go.sum has no galatea entry by design.
+  compile). Vendor mode skips go.sum, so go.sum has no galatea entry by design
+  (any non-vendor command — `go mod tidy`, `go get` — will trip until one's added).
 - One Swift line: `mountNFS` `nfsvers=3,nolocks` → `vers=4.0`.
 - **Eject answer for Daedalus (Correspondance/04 drain-shape Q):** Comprador
   needs **wait**, not server-interrupt. `DeviceSession.teardown` unmounts
