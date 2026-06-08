@@ -127,17 +127,30 @@ error dialog; an 88 B CLI `cp` round-tripped md5-identical (`02a3a279…`).
   include `DeviceSession.swift` (0 refs), so the Xcode/`make run` build fails
   with "cannot find type 'DeviceSession'". Fix the pbxproj or keep using swiftc.
 
+### MUTATIONS DONE — full suite LIVE in Finder on Pixel 6 (2026-06-08, commits `92493b8f` + `c6ca99cc`).
+
+mkdir, delete, replace/overwrite, file rename, file move between folders, folder
+rename, and **recursive cross-dir folder move** all work. New MTP op
+`OpSetObjectName` (`LIBMTP_Set_Object_Filename`) = in-place rename of files AND
+folders (Pixel rc=0); copy+delete / `moveDirTree` fallback for devices that
+reject it. Overwrite stages new bytes by path without deleting the device object
+so the NFSv4 filehandle stays stable across the open (deleting mid-open → -43).
+**Panic fix (crashed the whole bridge):** the "vanished mid-traversal" GETATTR
+branch left mandatory named-attr flags unset → server panic; now a tombstone via
+fillCommon. Every attr-fill path must set FileHandle + named-attr flags (+
+ChangeID) — M-006.
+
 **Next increment:**
-1. **Deferred mutations** through `(*mtp.Session).Do`: in-place overwrite/replace
-   of an existing file (delete-then-restage — needed so re-dragging a name that
-   exists doesn't ROFS), `VirtualRemove` (`OpDelete`), `VirtualMkdir`
-   (`OpCreateFolder`), `VirtualRename` (copy+delete — no native MTP rename).
-2. **Large-file write** (>JUKEBOX, multi-minute) round-trip + the >2 s-stall
-   partial-commit risk (open-count tracking instead of pure idle).
-3. **Prove read-write live under load, THEN delete** `bridge/nfs/cache.go`
-   (JUKEBOX + prefetch) and the patched go-nfs fork. Prove-then-delete.
-4. Send Daedalus the eject-drain answer (Comprador needs **wait** — see APP
-   CUTOVER above).
+1. **Large-file write** (>JUKEBOX, multi-minute) round-trip + the >2 s-stall
+   partial-commit risk (idle-only commit; track open-count instead of pure idle).
+2. **Prove under load, THEN delete** `bridge/nfs/cache.go` (JUKEBOX + prefetch)
+   and the patched go-nfs fork. Read+write+mutations all proven — its reason is
+   gone. Prove-then-delete.
+3. Send Daedalus: the eject-drain answer (Comprador needs **wait** — see APP
+   CUTOVER above) + suggest a per-request `recover()` in Galatea so one FSAL
+   panic can't kill the whole server.
+4. Build hygiene: Xcode `.pbxproj` lacks `DeviceSession.swift` (0 refs) so
+   `make run` fails; GUI builds via `make run-swiftc`. Fix pbxproj or drop it.
 5. **Throughput tuning** (read path works but ~5.6 MB/s vs prefetch-probe's
    21 MB/s): small NFS rsize → many per-chunk `OpGetPartial` calls. Try a
    larger advertised rsize / read-ahead coalescing. Also do a literal >60 s
