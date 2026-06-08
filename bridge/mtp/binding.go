@@ -469,6 +469,24 @@ func (d *Device) DeleteObject(objectID uint32) error {
 	return nil
 }
 
+// SetObjectName renames an object (file or folder) in place by setting its
+// filename property — no copy, no new object ID. MTP has no move-between-parents
+// op, so this only changes the name within the same parent; a cross-folder move
+// is still copy+delete at the caller. LIBMTP_Set_Object_Filename takes a
+// non-const char*, so the name is duplicated into a C string libmtp may write to.
+func (d *Device) SetObjectName(objectID uint32, name string) error {
+	cname := C.CString(name)
+	defer C.free(unsafe.Pointer(cname))
+
+	log.Printf("MTP SetObjectName(object=0x%x, name=%q)", objectID, name)
+	rc := C.LIBMTP_Set_Object_Filename(d.dev, C.uint32_t(objectID), cname)
+	if rc != 0 {
+		d.dumpErrors()
+		return fmt.Errorf("LIBMTP_Set_Object_Filename failed for object %d → %q", objectID, name)
+	}
+	return nil
+}
+
 // CreateFolder creates a folder on the device and returns the new folder's object ID.
 func (d *Device) CreateFolder(name string, parentID, storageID uint32) (uint32, error) {
 	cname := C.CString(name)

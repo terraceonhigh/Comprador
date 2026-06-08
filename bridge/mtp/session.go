@@ -190,6 +190,7 @@ const (
 	OpListDir // lazy enumeration of a single directory
 	OpRefreshStorages // re-query LIBMTP_Get_Storage to refresh free/max bytes per storage
 	OpGetPartial // partial-range read for chunked prefetch — see cache.download
+	OpSetObjectName // rename an object (file or folder) in place — no copy
 )
 
 // Priority controls which lane a request enters in the session goroutine's
@@ -217,6 +218,7 @@ const (
 //   OpSendFile       : ParentID, StorageID, Name, Size, Reader
 //   OpDelete         : ObjectID
 //   OpCreateFolder   : Name, ParentID, StorageID
+//   OpSetObjectName  : ObjectID, Name
 //   OpListDir        : Path
 //   OpRefreshStorages: (no inputs)
 type MTPRequest struct {
@@ -528,6 +530,9 @@ func (s *Session) dispatch(req MTPRequest) MTPResponse {
 		parentID := s.resolveParentID(req.ParentID, req.StorageID)
 		id, err := s.device.CreateFolder(req.Name, parentID, req.StorageID)
 		return MTPResponse{ObjectID: id, Err: err}
+	case OpSetObjectName:
+		err := s.device.SetObjectName(req.ObjectID, req.Name)
+		return MTPResponse{Err: err}
 	case OpListDir:
 		entries := s.populateDir(req.Path)
 		return MTPResponse{Entries: entries}

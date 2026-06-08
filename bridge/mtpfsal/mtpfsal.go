@@ -33,6 +33,7 @@ import (
 	"encoding/binary"
 	"io"
 	"log"
+	"os"
 	"path"
 	"sort"
 	"strings"
@@ -111,6 +112,12 @@ func Root(session *mtp.Session) (virtual.Directory, virtual.HandleResolver) {
 // 0 (no MTP object has ID 0).
 
 const rootHandleID uint32 = 0
+
+// staleHandleID is reported for an object that vanished mid-traversal (a
+// concurrent rename/move/delete). No real MTP object has it and it's not the
+// root, so the handle resolver maps it to StatusErrStale — the correct outcome
+// for a client still referencing a gone object.
+const staleHandleID uint32 = 0xFFFFFFFF
 
 func encodeHandle(id uint32) []byte {
 	b := make([]byte, 4)
@@ -257,8 +264,19 @@ func (f *mtpFile) staged() *staging.File {
 // life); ChangeID is the registry's per-write counter so the client's attribute
 // cache invalidates on every WRITE.
 func (f *mtpFile) fillStaged(sf *staging.File, requested virtual.AttributesMask, a *virtual.Attributes) {
+	// Keep the filehandle stable across an overwrite. If a committed object still
+	// exists at this path — i.e. we staged new bytes *over* it without deleting
+	// (the overwrite path) — report ITS id, because the client opened against
+	// that handle and NFSv4 forbids the handle changing mid-open (a swap to the
+	// synthetic id surfaces as Finder error -43). For a brand-new file there's no
+	// device object, so the synthetic handle is its identity from birth.
+	handle := sf.Handle()
+	if meta, ok := f.session.Objects.GetByPath(f.mpath); ok {
+		handle = meta.ID
+	}
+
 	// Mandatory regardless of the requested mask (see fillCommon / M-006).
-	a.SetFileHandle(encodeHandle(sf.Handle()))
+	a.SetFileHandle(encodeHandle(handle))
 	a.SetHasNamedAttributes(false)
 	a.SetIsInNamedAttributeDirectory(false)
 
@@ -277,7 +295,7 @@ func (f *mtpFile) fillStaged(sf *staging.File, requested virtual.AttributesMask,
 		a.SetLinkCount(1)
 	}
 	if requested&virtual.AttributesMaskInodeNumber != 0 {
-		a.SetInodeNumber(uint64(sf.Handle()))
+		a.SetInodeNumber(uint64(handle))
 	}
 	if requested&virtual.AttributesMaskLastDataModificationTime != 0 {
 		a.SetLastDataModificationTime(time.Now())
@@ -295,6 +313,14 @@ func (f *mtpFile) fillStaged(sf *staging.File, requested virtual.AttributesMask,
 func isAppleDouble(mtpPath string) bool {
 	base := path.Base(mtpPath)
 	return strings.HasPrefix(base, "._") || base == ".DS_Store"
+}
+
+// bumpDirMtime advances a directory's ModTime so the NFS client invalidates its
+// cached READDIR and a child add/remove/rename surfaces in Finder without
+// waiting on the attribute-cache TTL. The willscott path did the same.
+func bumpDirMtime(dir *mtp.ObjectMeta, objects *mtp.ObjectMap) {
+	dir.ModTime = time.Now()
+	objects.Put(dir)
 }
 
 // resolveStaged finalises one staged path: an AppleDouble sidecar is dropped
@@ -349,10 +375,16 @@ func (f *mtpFile) VirtualGetAttributes(ctx context.Context, requested virtual.At
 	}
 	meta, ok := f.session.Objects.GetByPath(f.mpath)
 	if !ok {
-		// Vanished mid-traversal: type-only best effort.
+		// Vanished mid-traversal: a concurrent rename/move/delete removed this
+		// path between resolve/enumerate and this GETATTR. GetAttributes can't
+		// fail (it's void), but it MUST still set the mandatory attrs or the
+		// server panics encoding the reply (M-006 — this once crashed the whole
+		// bridge mid-session). Report a tombstone with a stale handle.
 		if requested&virtual.AttributesMaskFileType != 0 {
 			a.SetFileType(virtual.FileTypeRegularFile)
 		}
+		tomb := mtp.ObjectMeta{ID: staleHandleID, Path: f.mpath}
+		fillCommon(&tomb, staleHandleID, requested, a)
 		return
 	}
 	if requested&virtual.AttributesMaskFileType != 0 {
@@ -390,12 +422,29 @@ func (f *mtpFile) VirtualSetAttributes(ctx context.Context, in *virtual.Attribut
 		f.VirtualGetAttributes(ctx, requested, out)
 		return virtual.StatusOK
 	}
-	// Committed device object: a size change (in-place truncate) needs
-	// delete-then-restage and is a later increment, so reject it; metadata-only
-	// SETATTRs (mtime/mode) are accepted as a no-op so timestamp-preserving
-	// copies onto existing files don't error.
-	if _, ok := in.GetSizeBytes(); ok {
-		return virtual.StatusErrROFS
+	// Committed device object. A size change is the macOS client's other way to
+	// truncate-before-replace (SETATTR(size=0), no write-OPEN). Stage the rewrite
+	// just like the overwrite-open path — register a buffer keyed by this path
+	// and truncate it; the device object stays put for handle stability, and
+	// staging.Commit deletes-then-sends at flush. Metadata-only SETATTRs
+	// (mtime/mode) are accepted as a no-op so timestamp-preserving copies onto
+	// existing files don't error.
+	if size, ok := in.GetSizeBytes(); ok {
+		if f.reg == nil {
+			return virtual.StatusErrROFS
+		}
+		sf := f.reg.Get(f.mpath)
+		if sf == nil {
+			var err error
+			if sf, err = f.reg.Register(f.mpath); err != nil {
+				return virtual.StatusErrIO
+			}
+		}
+		if err := sf.Truncate(int64(size)); err != nil {
+			return virtual.StatusErrIO
+		}
+		f.VirtualGetAttributes(ctx, requested, out)
+		return virtual.StatusOK
 	}
 	f.VirtualGetAttributes(ctx, requested, out)
 	return virtual.StatusOK
@@ -618,29 +667,296 @@ func (d *mtpDir) VirtualOpenChild(ctx context.Context, name virtual.Component, s
 		return nil, 0, ci, virtual.StatusErrIsDir
 	}
 	if shareAccess&virtual.ShareMaskWrite != 0 || existingOptions.Truncate {
-		// In-place overwrite/truncate of a committed device object is a later
-		// increment (it needs delete-then-restage); reads are fine.
-		return nil, 0, ci, virtual.StatusErrROFS
+		// Overwrite/replace a committed object. Do NOT delete it now and do NOT
+		// swap in a synthetic handle: deleting mid-open changes the file's NFSv4
+		// filehandle (the client opened against the existing object's handle) and
+		// the client rejects the mismatch as not-found (Finder error -43).
+		// Instead stage the new bytes by path while the device object (and its
+		// stable handle) stay in place; staging.Commit deletes-then-sends at
+		// flush, and fillStaged reports the existing object's handle so it never
+		// changes during the open. (Writes start from an empty buffer, i.e. a
+		// truncating overwrite — which is what Finder's replace does; a
+		// non-truncating partial overwrite of an existing file is not preserved.)
+		if d.reg.Get(childPath) == nil {
+			if _, err := d.reg.Register(childPath); err != nil {
+				return nil, 0, ci, virtual.StatusErrIO
+			}
+		}
+		leaf := &mtpFile{node{session: d.session, reg: d.reg, mpath: childPath}}
+		leaf.VirtualGetAttributes(ctx, requested, openedFileAttributes)
+		return leaf, 0, ci, virtual.StatusOK
 	}
 	leaf := &mtpFile{node{session: d.session, reg: d.reg, mpath: childPath}}
 	leaf.VirtualGetAttributes(ctx, requested, openedFileAttributes)
 	return leaf, 0, ci, virtual.StatusOK
 }
 
+// VirtualMkdir creates one folder under this directory via OpCreateFolder.
+// Creating at the synthetic root ("/") is refused — that level is the MTP
+// storage list, not a writable folder. Mirrors fs.go mkdirAll (single level).
 func (d *mtpDir) VirtualMkdir(name virtual.Component, requested virtual.AttributesMask, attributes *virtual.Attributes) (virtual.Directory, virtual.ChangeInfo, virtual.Status) {
-	return nil, virtual.ChangeInfo{}, virtual.StatusErrROFS
+	ci := virtual.ChangeInfo{}
+	if d.mpath == "/" {
+		return nil, ci, virtual.StatusErrROFS
+	}
+	d.session.EnsureInMap(d.mpath)
+	d.session.EnsurePopulated(d.mpath)
+	childPath := path.Join(d.mpath, name.String())
+	if _, ok := d.session.Objects.GetByPath(childPath); ok {
+		return nil, ci, virtual.StatusErrExist
+	}
+	parentMeta, ok := d.session.Objects.GetByPath(d.mpath)
+	if !ok {
+		return nil, ci, virtual.StatusErrNoEnt
+	}
+	resp := d.session.Do(mtp.MTPRequest{
+		Op:        mtp.OpCreateFolder,
+		ParentID:  parentMeta.ID,
+		StorageID: parentMeta.StorageID,
+		Name:      name.String(),
+	})
+	if resp.Err != nil {
+		return nil, ci, virtual.StatusErrIO
+	}
+	d.session.Objects.Put(&mtp.ObjectMeta{
+		ID:        resp.ObjectID,
+		ParentID:  parentMeta.ID,
+		StorageID: parentMeta.StorageID,
+		Name:      name.String(),
+		Path:      childPath,
+		IsDir:     true,
+		ModTime:   time.Now(),
+	})
+	bumpDirMtime(parentMeta, d.session.Objects)
+	child := &mtpDir{node{session: d.session, reg: d.reg, mpath: childPath}}
+	child.VirtualGetAttributes(context.Background(), requested, attributes)
+	return child, ci, virtual.StatusOK
 }
 
 func (d *mtpDir) VirtualMknod(ctx context.Context, name virtual.Component, fileType virtual.FileType, requested virtual.AttributesMask, attributes *virtual.Attributes) (virtual.Leaf, virtual.ChangeInfo, virtual.Status) {
 	return nil, virtual.ChangeInfo{}, virtual.StatusErrInval
 }
 
+// VirtualRemove deletes a child of this directory. A staging-resident file
+// (never committed) is just discarded; an AppleDouble sidecar lives nowhere on
+// the device, so its removal succeeds vacuously; otherwise OpDelete removes the
+// device object. The removeDirectory/removeLeaf flags select rmdir vs unlink
+// semantics. Mirrors fs.go Remove.
 func (d *mtpDir) VirtualRemove(name virtual.Component, removeDirectory, removeLeaf bool) (virtual.ChangeInfo, virtual.Status) {
-	return virtual.ChangeInfo{}, virtual.StatusErrROFS
+	ci := virtual.ChangeInfo{}
+	childPath := path.Join(d.mpath, name.String())
+	if d.reg != nil && d.reg.Get(childPath) != nil {
+		d.reg.Discard(childPath)
+		return ci, virtual.StatusOK
+	}
+	if isAppleDouble(childPath) {
+		return ci, virtual.StatusOK
+	}
+	d.session.EnsureInMap(d.mpath)
+	d.session.EnsurePopulated(d.mpath)
+	meta, ok := d.session.Objects.GetByPath(childPath)
+	if !ok {
+		return ci, virtual.StatusErrNoEnt
+	}
+	if meta.IsDir && !removeDirectory {
+		return ci, virtual.StatusErrIsDir
+	}
+	if !meta.IsDir && !removeLeaf {
+		return ci, virtual.StatusErrNotDir
+	}
+	resp := d.session.Do(mtp.MTPRequest{Op: mtp.OpDelete, ObjectID: meta.ID})
+	if resp.Err != nil {
+		return ci, virtual.StatusErrIO
+	}
+	if meta.IsDir {
+		d.session.Objects.RemoveRecursive(childPath)
+	} else {
+		d.session.Objects.Remove(childPath)
+	}
+	if parent, ok := d.session.Objects.GetByPath(d.mpath); ok {
+		bumpDirMtime(parent, d.session.Objects)
+	}
+	return ci, virtual.StatusOK
 }
 
+// VirtualRename moves/renames a child. Two cases:
+//
+//   - Same directory (a pure name change — F2, and the "untitled folder"→typed
+//     name that Finder issues right after New Folder): one OpSetObjectName, an
+//     in-place metadata rename that works for files AND folders, no copy.
+//   - Different directory (a move): MTP has no move op, so a file is copied
+//     through a temp (OpGetFile → OpSendFile under the new name) and the source
+//     OpDelete'd. Moving a folder across directories is unsupported (it would
+//     need a recursive copy).
+//
+// A source still in staging is rekeyed (no device round-trip); AppleDouble
+// sources/dests succeed vacuously. d is the source parent; newDirectory the
+// dest. Mirrors fs.go Rename, plus the in-place fast path.
 func (d *mtpDir) VirtualRename(oldName virtual.Component, newDirectory virtual.Directory, newName virtual.Component) (virtual.ChangeInfo, virtual.ChangeInfo, virtual.Status) {
-	return virtual.ChangeInfo{}, virtual.ChangeInfo{}, virtual.StatusErrROFS
+	var srcCI, dstCI virtual.ChangeInfo
+	nd, ok := newDirectory.(*mtpDir)
+	if !ok {
+		return srcCI, dstCI, virtual.StatusErrXDev
+	}
+	oldPath := path.Join(d.mpath, oldName.String())
+	newPath := path.Join(nd.mpath, newName.String())
+	if oldPath == newPath {
+		return srcCI, dstCI, virtual.StatusOK
+	}
+	// Staging-resident source: rekey, no device I/O.
+	if d.reg != nil && d.reg.Rekey(oldPath, newPath) {
+		return srcCI, dstCI, virtual.StatusOK
+	}
+	// AppleDouble lives nowhere on the device.
+	if isAppleDouble(oldPath) || isAppleDouble(newPath) {
+		return srcCI, dstCI, virtual.StatusOK
+	}
+	d.session.EnsureInMap(oldPath)
+	srcMeta, ok := d.session.Objects.GetByPath(oldPath)
+	if !ok {
+		return srcCI, dstCI, virtual.StatusErrNoEnt
+	}
+	newBase := newName.String()
+
+	// Overwrite an existing destination (POSIX rename semantics) before
+	// creating/renaming into the name, so two objects don't share it.
+	if existing, ok := d.session.Objects.GetByPath(newPath); ok {
+		resp := d.session.Do(mtp.MTPRequest{Op: mtp.OpDelete, ObjectID: existing.ID})
+		if resp.Err != nil {
+			return srcCI, dstCI, virtual.StatusErrIO
+		}
+		if existing.IsDir {
+			d.session.Objects.RemoveRecursive(newPath)
+		} else {
+			d.session.Objects.Remove(newPath)
+		}
+	}
+
+	// --- same-directory: in-place rename (files and folders) ---
+	if d.mpath == nd.mpath {
+		resp := d.session.Do(mtp.MTPRequest{Op: mtp.OpSetObjectName, ObjectID: srcMeta.ID, Name: newBase})
+		if resp.Err == nil {
+			newMeta := &mtp.ObjectMeta{
+				ID:        srcMeta.ID,
+				ParentID:  srcMeta.ParentID,
+				StorageID: srcMeta.StorageID,
+				Name:      newBase,
+				Path:      newPath,
+				Size:      srcMeta.Size,
+				ModTime:   time.Now(),
+				IsDir:     srcMeta.IsDir,
+			}
+			if srcMeta.IsDir {
+				// The subtree's paths are keyed on the old name; drop it and let
+				// it re-populate lazily under the new name (object IDs are
+				// unchanged, so re-enumeration finds the same children).
+				d.session.Objects.RemoveRecursive(oldPath)
+			} else {
+				d.session.Objects.Remove(oldPath)
+			}
+			d.session.Objects.Put(newMeta)
+			if parent, ok := d.session.Objects.GetByPath(d.mpath); ok {
+				bumpDirMtime(parent, d.session.Objects)
+			}
+			return srcCI, dstCI, virtual.StatusOK
+		}
+		// OpSetObjectName failed — some Android MTP responders don't allow
+		// setting the ObjectFileName property. Fall back so we never regress:
+		// a file drops through to the copy+delete block below (which works
+		// same-parent); a folder is handled here.
+		if srcMeta.IsDir {
+			// Only an empty folder can be "renamed" by create-new + delete-old
+			// (this is the New Folder→typed-name case). A non-empty folder would
+			// need a recursive copy — unsupported.
+			d.session.EnsurePopulated(oldPath)
+			if len(d.session.Objects.ListChildren(oldPath)) > 0 {
+				return srcCI, dstCI, virtual.StatusErrInval
+			}
+			parentMeta, ok := d.session.Objects.GetByPath(d.mpath)
+			if !ok {
+				return srcCI, dstCI, virtual.StatusErrNoEnt
+			}
+			mk := d.session.Do(mtp.MTPRequest{Op: mtp.OpCreateFolder, ParentID: parentMeta.ID, StorageID: parentMeta.StorageID, Name: newBase})
+			if mk.Err != nil {
+				return srcCI, dstCI, virtual.StatusErrIO
+			}
+			if del := d.session.Do(mtp.MTPRequest{Op: mtp.OpDelete, ObjectID: srcMeta.ID}); del.Err != nil {
+				return srcCI, dstCI, virtual.StatusErrIO
+			}
+			d.session.Objects.RemoveRecursive(oldPath)
+			d.session.Objects.Put(&mtp.ObjectMeta{
+				ID:        mk.ObjectID,
+				ParentID:  parentMeta.ID,
+				StorageID: parentMeta.StorageID,
+				Name:      newBase,
+				Path:      newPath,
+				IsDir:     true,
+				ModTime:   time.Now(),
+			})
+			bumpDirMtime(parentMeta, d.session.Objects)
+			return srcCI, dstCI, virtual.StatusOK
+		}
+		// file: fall through to copy+delete (works for same parent too)
+	}
+
+	// --- cross-directory move (and same-dir file fallback) ---
+	if srcMeta.IsDir {
+		return srcCI, dstCI, virtual.StatusErrInval // directory move unsupported
+	}
+	nd.session.EnsureInMap(nd.mpath)
+	parentMeta, ok := nd.session.Objects.GetByPath(nd.mpath)
+	if !ok {
+		return srcCI, dstCI, virtual.StatusErrNoEnt
+	}
+	tmp, err := os.CreateTemp("", "comprador-rename-*")
+	if err != nil {
+		return srcCI, dstCI, virtual.StatusErrIO
+	}
+	defer func() {
+		tmp.Close()
+		os.Remove(tmp.Name())
+	}()
+	if resp := d.session.Do(mtp.MTPRequest{Op: mtp.OpGetFile, ObjectID: srcMeta.ID, Writer: tmp}); resp.Err != nil {
+		return srcCI, dstCI, virtual.StatusErrIO
+	}
+	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+		return srcCI, dstCI, virtual.StatusErrIO
+	}
+	sendResp := d.session.Do(mtp.MTPRequest{
+		Op:        mtp.OpSendFile,
+		ParentID:  parentMeta.ID,
+		StorageID: parentMeta.StorageID,
+		Name:      newBase,
+		Size:      srcMeta.Size,
+		Reader:    tmp,
+	})
+	if sendResp.Err != nil {
+		return srcCI, dstCI, virtual.StatusErrIO
+	}
+	newMeta := &mtp.ObjectMeta{
+		ID:        sendResp.ObjectID,
+		ParentID:  parentMeta.ID,
+		StorageID: parentMeta.StorageID,
+		Name:      newBase,
+		Path:      newPath,
+		Size:      srcMeta.Size,
+		ModTime:   time.Now(),
+		IsDir:     false,
+	}
+	if delResp := d.session.Do(mtp.MTPRequest{Op: mtp.OpDelete, ObjectID: srcMeta.ID}); delResp.Err != nil {
+		// Copy succeeded, source delete failed: the file now exists at both
+		// ends. Record the destination so subsequent ops see it; the source
+		// lingers until the next session refresh.
+		d.session.Objects.Put(newMeta)
+		return srcCI, dstCI, virtual.StatusErrIO
+	}
+	d.session.Objects.Remove(oldPath)
+	d.session.Objects.Put(newMeta)
+	if srcParent, ok := d.session.Objects.GetByPath(d.mpath); ok {
+		bumpDirMtime(srcParent, d.session.Objects)
+	}
+	bumpDirMtime(parentMeta, nd.session.Objects)
+	return srcCI, dstCI, virtual.StatusOK
 }
 
 func (d *mtpDir) VirtualLink(ctx context.Context, name virtual.Component, leaf virtual.Leaf, requested virtual.AttributesMask, attributes *virtual.Attributes) (virtual.ChangeInfo, virtual.Status) {
