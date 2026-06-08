@@ -28,13 +28,35 @@ the canonical code**, via one of: (a) the Architect pushes Galatea's canonical
 branch and we pin to it, or (b) a local `replace github.com/terraceonhigh/galatea
 => /Users/terrace/Labs/Galatea/.claude/worktrees/unruffled-dijkstra-7f1e6d` in
 `bridge/go.mod`. **Resolved (2026-06-07):** the harness uses a separate
-`bridge/galatea.mod` carrying the canonical require+replace, so production
-`bridge/go.mod` stays pristine. `mtpfsal` + `cmd/galatea-serve` stay behind
-`//go:build galatea` (so default `go build ./...` / `make bridge-test` skip
-them — they can't resolve galatea under the pristine vendored go.mod); the
-`galatea-dev` target builds them with `-tags galatea -modfile=galatea.mod`.
-The tag comes off only at the main.go cutover, when the production vendor
-story is solved. Reads are proven — see below.
+Daedalus pushed Galatea and cut **`v0.2.0-alpha`** (has `Serve` +
+`ServeListener` + the bounded-READ contract). So the cutover is done — see the
+APP CUTOVER milestone below. The earlier `galatea.mod`/build-tag scaffolding is
+retired.
+
+### APP CUTOVER DONE — full app LIVE end-to-end on Galatea, Pixel 6 (2026-06-08, commits `674a8827` + `06509c81`).
+
+The **entire menu-bar app** ran on Galatea: launch → IOKit detected the Pixel 6
+→ spawned the bridge → seized it → `galatea.ServeListener` over `bridge/mtpfsal`
+→ `mountNFS` at `vers=4.0` → volume mounted at `~/Library/Application Support/
+Comprador/Volumes/Pixel-6`; browsed the full tree and read+decoded a photo
+byte-exact through the app's own mount. How:
+- `main.go` `--nfs` path now serves `galatea.ServeListener(ctx, root, resolver,
+  listener)` on the already-bound listener (`signal.NotifyContext` for ctx;
+  willscott `bridge/nfs` kept in-tree but unimported, for revert).
+- galatea pinned `v0.2.0-alpha`, **manually vendored** (standard modules.txt
+  stanza). NEVER run `go mod vendor` (clobbers the vendor-only-patched go-nfs)
+  or `-mod=mod` for production (pulls pristine go-nfs → `bridge/nfs` won't
+  compile). Vendor mode skips go.sum, so go.sum has no galatea entry by design.
+- One Swift line: `mountNFS` `nfsvers=3,nolocks` → `vers=4.0`.
+- **Eject answer for Daedalus (Correspondance/04 drain-shape Q):** Comprador
+  needs **wait**, not server-interrupt. `DeviceSession.teardown` unmounts
+  (synchronous `DADiskUnmount`, force-fallback) THEN `bridge.stop()` — so the
+  client disconnects before the device releases, honoring his 06 ordering note.
+  *Send this to Daedalus.*
+- **Not done live:** clean-eject and Finder-sidebar visibility need the GUI
+  (headless SIGTERM bypasses Cocoa `terminate`→`teardown`, leaving a dangling
+  mount — an artifact of the kill, not the app logic). A non-headless run should
+  confirm the eject menu item + Finder Locations entry.
 
 ### READ PATH DONE — LIVE-PROVEN on a Pixel 6 (2026-06-07, commit `ac6b5193`).
 
