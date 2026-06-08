@@ -1,5 +1,3 @@
-//go:build galatea
-
 // Package mtpfsal implements Galatea's FSAL (github.com/terraceonhigh/galatea
 // /pkg/virtual: Directory / Leaf / Node) over a live MTP session, so an Android
 // phone's object store can be served as a userspace NFSv4 volume by

@@ -15,6 +15,20 @@ github.com/hashicorp/golang-lru/v2/simplelru
 # github.com/rasky/go-xdr v0.0.0-20170124162913-1a41d1a06c93
 ## explicit
 github.com/rasky/go-xdr/xdr2
+# github.com/terraceonhigh/galatea v0.2.0-alpha
+## explicit; go 1.26
+github.com/terraceonhigh/galatea
+github.com/terraceonhigh/galatea/internal/bb/clock
+github.com/terraceonhigh/galatea/internal/bb/filesystem
+github.com/terraceonhigh/galatea/internal/bb/filesystem/path
+github.com/terraceonhigh/galatea/internal/bb/random
+github.com/terraceonhigh/galatea/internal/errgroup
+github.com/terraceonhigh/galatea/internal/nfsv4
+github.com/terraceonhigh/galatea/internal/xdr/pkg/protocols/nfsv4
+github.com/terraceonhigh/galatea/internal/xdr/pkg/protocols/rpcv2
+github.com/terraceonhigh/galatea/internal/xdr/pkg/rpcserver
+github.com/terraceonhigh/galatea/internal/xdr/pkg/runtime
+github.com/terraceonhigh/galatea/pkg/virtual
 # github.com/willscott/go-nfs v0.0.4
 ## explicit; go 1.19
 github.com/willscott/go-nfs

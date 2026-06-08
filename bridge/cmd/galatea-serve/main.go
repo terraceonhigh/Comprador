@@ -1,5 +1,3 @@
-//go:build galatea
-
 // Command galatea-serve is a standalone harness that serves the connected MTP
 // device over Galatea's userspace NFSv4 server (github.com/terraceonhigh/galatea)
 // instead of the patched willscott/go-nfs in bridge/nfs. It exists to prove the

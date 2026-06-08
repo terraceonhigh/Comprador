@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -10,8 +11,10 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/terraceonhigh/galatea"
+
 	"comprador/bridge/mtp"
-	nfsbridge "comprador/bridge/nfs"
+	"comprador/bridge/mtpfsal"
 	"comprador/bridge/resume"
 	"comprador/bridge/webdav"
 )
@@ -55,14 +58,12 @@ func main() {
 	deviceName := session.DeviceName()
 	log.Printf("Connected to: %s", deviceName)
 
-	// Catch SIGINT/SIGTERM so we run our cleanup defers instead of dying instantly.
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		s := <-sigs
-		log.Printf("Received %s, shutting down", s)
-		listener.Close()
-	}()
+	// Catch SIGINT/SIGTERM so we run our cleanup defers instead of dying
+	// instantly. ctx is cancelled on signal; the Galatea path passes it to
+	// ServeListener (which closes the listener on cancel), and the WebDAV path
+	// closes the listener from ctx.Done below.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
 	if *useNFS {
 		// Register a per-device .local hostname that resolves to
@@ -85,13 +86,22 @@ func main() {
 		fmt.Fprintf(os.Stdout, "DEVICE=%s\n", deviceName)
 		os.Stdout.Sync()
 
-		log.Printf("NFSv3 server listening on 127.0.0.1:%d (mDNS host: %s)", port, host)
+		// Galatea: in-house userspace NFSv4 server over the MTP FSAL
+		// (bridge/mtpfsal), replacing the patched willscott/go-nfs NFSv3 path
+		// and its JUKEBOX/prefetch workaround. The listener is already bound
+		// (port printed above); ServeListener takes ownership and closes it on
+		// ctx cancellation — no probe-bind, no double-close. Clients mount with
+		// vers=4.0 (the Swift app's mountNFS uses that). The willscott server in
+		// bridge/nfs remains in the tree (unimported here) for revert until
+		// writes are proven and JUKEBOX is deleted.
+		root, resolver := mtpfsal.Root(session)
+		log.Printf("Galatea NFSv4 server listening on 127.0.0.1:%d (mDNS host: %s)", port, host)
 		log.Printf("Mount command:")
 		log.Printf("  mkdir -p /tmp/comprador")
-		log.Printf("  mount -o port=%d,mountport=%d,nfsvers=3,nolocks,tcp -t nfs %s:/ /tmp/comprador", port, port, host)
+		log.Printf("  mount -t nfs -o vers=4.0,port=%d,mountport=%d,tcp %s:/ /tmp/comprador", port, port, host)
 		log.Printf("Unmount: umount /tmp/comprador")
 
-		if err := nfsbridge.Serve(listener, session); err != nil {
+		if err := galatea.ServeListener(ctx, root, resolver, listener); err != nil {
 			log.Printf("NFS server stopped: %v", err)
 		}
 		return
@@ -145,6 +155,13 @@ func main() {
 
 	log.Printf("WebDAV server listening on http://%s:%d/", host, port)
 	log.Printf("Mount with: Finder → Go → Connect to Server → dav://%s:%d/", host, port)
+
+	// Stop http.Serve on SIGINT/SIGTERM by closing the listener.
+	go func() {
+		<-ctx.Done()
+		log.Println("Received signal, shutting down")
+		listener.Close()
+	}()
 
 	if err := http.Serve(listener, handler); err != nil {
 		log.Printf("HTTP server stopped: %v", err)

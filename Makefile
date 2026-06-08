@@ -194,15 +194,15 @@ dev-nfs: bridge
 # Phase-4 verification harness (mercer/galatea-integration): serve the live MTP
 # device over Galatea's userspace NFSv4 server instead of the patched
 # willscott/go-nfs. Read-only for now (mtpfsal mutations return ROFS). Built in
-# a SEPARATE module file (bridge/galatea.mod) that adds the canonical-Galatea
-# require+replace, so the production bridge/go.mod stays pristine and its vendored
-# build is untouched (and `go mod vendor`, which would clobber the patched go-nfs
-# fork, is never run). Prints the vers=4.0 mount_nfs command. See
-# bridge/cmd/galatea-serve, bridge/galatea.mod, and TODO.md.
+# the standalone bridge-only harness, now that galatea is a normal vendored dep
+# (v0.2.0-alpha, manually vendored — `go mod vendor` is never run because it
+# would clobber the patched go-nfs fork). The production `bridge --nfs` path now
+# serves Galatea too; this harness is kept for serving without the menu-bar app.
+# Prints the vers=4.0 mount_nfs command. See bridge/cmd/galatea-serve, TODO.md.
 GALATEA_OUT := build/galatea-serve
 galatea-dev:
 	@mkdir -p build
-	cd bridge && CGO_CFLAGS="-I$(CURDIR)/bridge/cvendor" CGO_LDFLAGS="-L/opt/homebrew/lib" $(GO) build -tags galatea -modfile=galatea.mod -mod=mod -o ../$(GALATEA_OUT) ./cmd/galatea-serve
+	cd bridge && CGO_CFLAGS="-I$(CURDIR)/bridge/cvendor" CGO_LDFLAGS="-L/opt/homebrew/lib" $(GO) build -o ../$(GALATEA_OUT) ./cmd/galatea-serve
 	DYLD_LIBRARY_PATH=/opt/homebrew/lib ./$(GALATEA_OUT) 2>&1
 
 # Mount the running galatea-dev server (pass PORT=N from its PORT= line).
