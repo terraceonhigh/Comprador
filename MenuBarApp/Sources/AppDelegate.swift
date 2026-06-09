@@ -14,6 +14,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// rewires the attach handler to genuinely accept multiple devices.
     private var sessions: [UInt32: DeviceSession] = [:]
 
+    /// Devices ejected by the user, keyed by USB Location ID → eject time. An
+    /// eject stops the bridge, which releases the USB interface; the kernel then
+    /// re-binds and re-enumerates the (still-plugged) device, firing a
+    /// detach→attach burst within ~1s. Without this, that burst auto-reconnects
+    /// the device the user just ejected. We suppress reconnect for a short window
+    /// after an eject — long enough to swallow the one-shot re-enumeration, short
+    /// enough that a genuine later replug still reconnects. (Eject means "stop
+    /// until I physically replug"; the burst isn't a replug.)
+    private var recentlyEjected: [UInt32: Date] = [:]
+    private let ejectReconnectSuppressWindow: TimeInterval = 6
+
     /// Convenience for step-3 callers that still assume single-device. The
     /// existing guards mean at most one session is active; returning the
     /// first dict value matches the old `session` semantics exactly.
@@ -309,6 +320,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         cprLog("Comprador: Device attached — \(device.displayName) (vendor: 0x%04X, product: 0x%04X, locID: 0x%08X)",
               device.vendorID, device.productID, device.locationID)
 
+        // Suppress the post-eject re-enumeration burst: an eject releases the USB
+        // interface, the kernel re-enumerates the still-plugged device, and that
+        // attach would otherwise immediately re-mount what the user just ejected.
+        // A genuine replug arrives after the window and reconnects normally.
+        if let ejectedAt = recentlyEjected[device.locationID] {
+            if Date().timeIntervalSince(ejectedAt) < ejectReconnectSuppressWindow {
+                cprLog("Comprador: Ignoring attach — device was just ejected (replug to reconnect)")
+                return
+            }
+            recentlyEjected.removeValue(forKey: device.locationID) // window passed — a real replug
+        }
+
         // If a session for the same physical device (matched by USB
         // IOKit Location ID) already exists, treat the attach as a
         // reattach: in flight → ignore, mounted → queue pending teardown
@@ -415,6 +438,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         active.pendingAttach = nil
         active.stopConnectTimer()
         let locID = active.device.locationID
+        // Mark ejected so the re-enumeration burst that bridge.stop() triggers
+        // doesn't auto-reconnect this device (see recentlyEjected).
+        recentlyEjected[locID] = Date()
         Task {
             await active.teardown()
             await MainActor.run {
