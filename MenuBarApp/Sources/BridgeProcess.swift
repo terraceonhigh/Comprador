@@ -72,6 +72,12 @@ class BridgeProcess {
         // call and succeeds. Swapping the order makes both seizes run
         // against an already-dead ptpcamerad. See MISTAKES.md entry
         // 19b for the full trace.
+        // Reap a same-device bridge orphaned by a prior crashed/killed app
+        // instance before we try to claim the interface — an orphan contends for
+        // it and can make our seize fail "interface locked" (G2). Safe here:
+        // this instance hasn't spawned its own bridge yet.
+        BridgeProcess.killOrphanedBridges(locationID: locationID)
+
         BridgeProcess.killCompetingProcesses()
 
         // IOKit preflight: force a software replug so the bridge sees a
@@ -255,6 +261,31 @@ class BridgeProcess {
             if task.terminationStatus == 0 {
                 cprLog("Comprador: Killed %@", name)
             }
+        }
+    }
+
+    /// Reap orphaned bridge subprocesses left by a prior app instance that was
+    /// killed without a clean teardown — macOS doesn't process-group-kill a
+    /// child when its parent dies, so the bridge outlives the app. An orphan
+    /// still holds/contends for the phone's USB interface, so a fresh seize can
+    /// fail "interface locked" against *it*, not only against ptpcamerad. Scoped
+    /// to the same --device-loc-id so a second device's bridge is untouched
+    /// (multi-device-safe). Called before the seize, when this instance hasn't
+    /// spawned its own bridge yet, so it can't kill our own.
+    static func killOrphanedBridges(locationID: UInt32) {
+        guard locationID != 0 else { return } // can't scope safely without it
+        let pattern = String(
+            format: "Comprador.app/Contents/Resources/bridge.*--device-loc-id=0x%08x",
+            locationID)
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+        task.arguments = ["-9", "-f", pattern]
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = FileHandle.nullDevice
+        try? task.run()
+        task.waitUntilExit()
+        if task.terminationStatus == 0 {
+            cprLog("Comprador: reaped orphaned bridge(s) for loc 0x%08x", locationID)
         }
     }
 
