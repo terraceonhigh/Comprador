@@ -652,13 +652,32 @@ func (s *Session) populateDir(dirPath string) []*ObjectMeta {
 	var result []*ObjectMeta
 	for _, e := range entries {
 		objPath := dirPath + "/" + sanitizeName(e.Name)
+		size := e.Size
+		// Android reports filesize=0 for a file recently written over MTP until
+		// its media scan finalizes the object (a transient window of seconds to
+		// minutes). If we just sent a file, our cached entry holds the true size;
+		// a re-enumeration during that window would otherwise clobber it with 0,
+		// and VirtualRead trusts Size — serving an empty file (a double-click
+		// opens nothing) until the bridge restarts. So when the device reports a
+		// file as 0 but we already recorded a non-zero size at this path, keep
+		// ours. Keyed on PATH, not object ID: the SendObjectInfo handle stored at
+		// commit may differ from the item_id a later enumeration reports, which
+		// would make an ID match silently fail. Trade-off: a genuine in-place
+		// truncation-to-0 of a same-path object keeps its stale size — rare on
+		// MTP, where a rewrite gets a new object.
+		if !e.IsFolder && size == 0 {
+			if prev, ok := s.Objects.GetByPath(objPath); ok && !prev.IsDir && prev.Size > 0 {
+				log.Printf("enumerate reported size 0 for %s, preserving cached %d bytes", objPath, prev.Size)
+				size = prev.Size
+			}
+		}
 		obj := &ObjectMeta{
 			ID:        e.ID,
 			ParentID:  e.ParentID,
 			StorageID: e.StorageID,
 			Name:      e.Name,
 			Path:      objPath,
-			Size:      e.Size,
+			Size:      size,
 			ModTime:   time.Unix(e.ModTime, 0),
 			IsDir:     e.IsFolder,
 		}
