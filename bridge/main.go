@@ -24,7 +24,7 @@ import (
 var BuildID = "dev"
 
 func main() {
-	useNFS := flag.Bool("nfs", false, "serve NFSv3 instead of WebDAV")
+	useNFS := flag.Bool("nfs", false, "serve over Galatea NFSv4 instead of WebDAV")
 	// --device-loc-id selects which physical MTP device this bridge
 	// instance claims, by macOS IOKit USB Location ID. Required when
 	// multiple MTP devices are plugged in; if 0/absent the first
@@ -87,13 +87,13 @@ func main() {
 		os.Stdout.Sync()
 
 		// Galatea: in-house userspace NFSv4 server over the MTP FSAL
-		// (bridge/mtpfsal), replacing the patched willscott/go-nfs NFSv3 path
-		// and its JUKEBOX/prefetch workaround. The listener is already bound
-		// (port printed above); ServeListener takes ownership and closes it on
-		// ctx cancellation — no probe-bind, no double-close. Clients mount with
-		// vers=4.0 (the Swift app's mountNFS uses that). The willscott server in
-		// bridge/nfs remains in the tree (unimported here) for revert until
-		// writes are proven and JUKEBOX is deleted.
+		// (bridge/mtpfsal). This replaced — and the old willscott/go-nfs NFSv3
+		// path plus its JUKEBOX/prefetch workaround have since been deleted from
+		// the tree — once read, write, and the full mutation suite were proven
+		// live. The listener is already bound (port printed above); ServeListener
+		// takes ownership and closes it on ctx cancellation — no probe-bind, no
+		// double-close. Clients mount with vers=4.0 (the Swift app's mountNFS
+		// uses that).
 		root, resolver := mtpfsal.Root(session)
 		log.Printf("Galatea NFSv4 server listening on 127.0.0.1:%d (mDNS host: %s)", port, host)
 		log.Printf("Mount command:")

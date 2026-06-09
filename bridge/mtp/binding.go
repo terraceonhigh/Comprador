@@ -433,8 +433,9 @@ func (d *Device) CheckCapabilityGetPartialObject() bool {
 // into a Go slice before freeing the C buffer. The Go slice is independent of
 // libmtp's allocator after this returns.
 //
-// Used by the empirical probe (bridge/cmd/prefetch-probe/) and, once the
-// prefetch redesign lands, by the chunked download path in bridge/nfs/cache.go.
+// Used by mtpfsal.VirtualRead for ranged reads off the device (one
+// rsize-bounded call per NFS READ) and by the empirical probe
+// (bridge/cmd/prefetch-probe/).
 func (d *Device) GetPartialObject(objectID uint32, offset uint64, maxBytes uint32) ([]byte, error) {
 	var data *C.uchar
 	var size C.uint

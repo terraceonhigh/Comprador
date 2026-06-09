@@ -1,6 +1,5 @@
 BRIDGE_OUT   := build/bridge
 HELPER_OUT   := build/comprador-helper
-NFS_STUB_OUT := build/nfsstub
 ICTEST1_OUT  := build/ictest1
 ICTEST2_OUT  := build/ictest2
 APP_NAME   := Comprador
@@ -25,7 +24,7 @@ BUILD_ID := $(shell git rev-parse --short HEAD 2>/dev/null)$(shell git diff --qu
 # with a tagged release.
 RELEASE_VERSION := 0.3.4-dev
 
-.PHONY: bridge bridge-test helper helper-test nfs-stub ictest1 ictest2 test-md5 prefetch-probe icon app app-debug app-signed app-notarized app-swiftc dev dev-nfs galatea-dev galatea-mount galatea-umount run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
+.PHONY: bridge build-all bridge-test helper helper-test ictest1 ictest2 test-md5 prefetch-probe icon app app-debug app-signed app-notarized app-swiftc dev dev-nfs galatea-dev galatea-mount galatea-umount run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
 
 ICON_SRC := images/icon.png
 ICON_OUT := MenuBarApp/Resources/Comprador.icns
@@ -57,6 +56,12 @@ $(ICON_OUT): $(ICON_SRC)
 
 bridge:
 	cd bridge && CGO_CFLAGS="-I$(CURDIR)/bridge/cvendor" CGO_LDFLAGS="-L/opt/homebrew/lib" $(GO) build -ldflags="-X main.BuildID=$(BUILD_ID)" -o ../$(BRIDGE_OUT) .
+
+# Tree-wide compile + vendor-consistency check (every package and cmd tool).
+# Catches "inconsistent vendoring" after vendor edits — broader than `bridge`,
+# which only builds the main artifact.
+build-all:
+	cd bridge && CGO_CFLAGS="-I$(CURDIR)/bridge/cvendor" CGO_LDFLAGS="-L/opt/homebrew/lib" $(GO) build ./...
 
 helper:
 	cd helper && $(GO) build -o ../$(HELPER_OUT) .
@@ -103,12 +108,6 @@ ictest2:
 		bridge/cmd/ictest2/main.swift -o $(ICTEST2_OUT)
 	@echo "Built: $(ICTEST2_OUT)"
 	@echo "Run:   ./$(ICTEST2_OUT)"
-
-# Phase 1 NFS pivot verification: memfs-backed NFS server with no MTP dependency.
-# Run this, then use the printed sudo mount command to verify macOS mounts
-# without the ~90s WebDAV quota wait.
-nfs-stub:
-	cd bridge && $(GO) build -o ../$(NFS_STUB_OUT) ./cmd/nfsstub
 
 # Empirical probe for the prefetch redesign (docs/PLAN-PREFETCH-REDESIGN.md
 # Step 1). Measures whether LIBMTP_GetPartialObject is viable for the

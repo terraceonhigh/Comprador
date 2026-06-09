@@ -1,20 +1,20 @@
 // Package mtpfsal implements Galatea's FSAL (github.com/terraceonhigh/galatea
 // /pkg/virtual: Directory / Leaf / Node) over a live MTP session, so an Android
 // phone's object store can be served as a userspace NFSv4 volume by
-// galatea.Serve — replacing the patched willscott/go-nfs substrate in
-// bridge/nfs and, with it, the JUKEBOX/prefetch machinery in bridge/nfs/cache.go
-// that existed only to dodge NFSv3's RPC-timeout window. Galatea's NFSv4 floor
-// tolerates multi-minute reads, so that workaround is retired (proven: Galatea
-// R1, a 130 s READ exit-0; R7, a 1 GB round-trip byte-identical).
+// galatea.ServeListener. It replaced the patched willscott/go-nfs substrate
+// (the old bridge/nfs package and its JUKEBOX/prefetch machinery, both since
+// deleted) that existed only to dodge NFSv3's RPC-timeout window. Galatea's
+// NFSv4 floor tolerates multi-minute reads, so that workaround is gone (proven:
+// Galatea R1, a 130 s READ exit-0; R7, a 1 GB round-trip byte-identical).
 //
-// # Phase 4 — first dry-fit
+// # Coverage
 //
-// This is the compiling skeleton (cf. Correspondance 04, "phase four and the
-// one-cursor"). The read/navigation path (attributes, lookup, handle
-// resolution) is wired against the in-memory ObjectMap; the MTP-touching data
-// and mutation ops are stubbed with a pointer to the bridge/nfs logic they
-// port. The interface assertions at the bottom are the contract receipt — if
-// pkg/virtual moves, this file stops compiling.
+// Read/navigation (attributes, lookup, readdir, handle resolution) runs off the
+// in-memory ObjectMap; the data and mutation ops (read, staged write+commit,
+// mkdir, remove, in-place + copy/delete rename, recursive folder move) go
+// through (*mtp.Session).Do. All proven live in Finder on a Pixel 6. The
+// interface assertions at the bottom are the contract receipt — if pkg/virtual
+// moves, this file stops compiling.
 //
 // # The one-cursor boundary (load-bearing)
 //
@@ -468,9 +468,9 @@ func (n *node) VirtualOpenNamedAttributes(ctx context.Context, createDirectory b
 
 // ---- directory navigation ------------------------------------------------
 
-// VirtualLookup resolves a child by name via the in-memory ObjectMap. Mirrors
-// bridge/nfs/fs.go Stat/Lstat. EnsurePopulated lazily fills the directory's
-// children on first touch (a single MTP enumeration, serialised in session.Do).
+// VirtualLookup resolves a child by name via the in-memory ObjectMap.
+// EnsurePopulated lazily fills the directory's children on first touch (a single
+// MTP enumeration, serialised in session.Do).
 func (d *mtpDir) VirtualLookup(ctx context.Context, name virtual.Component, requested virtual.AttributesMask, out *virtual.Attributes) (virtual.DirectoryChild, virtual.Status) {
 	if d.mpath != "/" {
 		d.session.EnsureInMap(d.mpath)

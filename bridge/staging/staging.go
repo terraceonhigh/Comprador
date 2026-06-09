@@ -19,7 +19,7 @@
 // OPEN→WRITE→CLOSE in ms; the idle commit fires seconds later, after which the
 // client has discarded the handle and a re-browse yields the real object ID).
 //
-// Lifted from the proven logic in bridge/nfs/write.go (the willscott path),
+// Lifted from the proven logic in the old willscott write path (since removed),
 // stripped of its billy.File wrappers and re-keyed on ObjectMap paths
 // ("/storage/dir/file") since that's the form the FSAL speaks.
 package staging
