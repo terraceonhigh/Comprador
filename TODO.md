@@ -174,15 +174,25 @@ kept galatea + x/sys). **Follow-up:** the now-inert Swift WebDAV plumbing
    multi-vendor MTP coverage gate before claiming broad Android support.
 
 **SHIP GATES for 1.0 (hard blockers — a non-technical user can't debug these):**
-- **G1 — FSAL panic resilience.** A panic in any `mtpfsal` method currently
-  crashes the whole bridge and hangs Finder (hit live: the mandatory-attr
-  panic). Need: defensive guards so mtpfsal never panics, AND the menu-bar app
-  detecting bridge death + auto-recovering (re-spawn + remount). Plus ask
-  Daedalus for a per-request `recover()` in Galatea.
-- **G2 — USB-seize recovery across the real lifecycle.** Repeated relaunch churn
-  locks the PTP interface (ptpcamerad reclaims), needing a physical replug. Must
-  survive sleep/wake, app quit/relaunch, and plug/unplug cycles without ever
-  stranding the user at "USB interface locked". Likely the #1 real-world risk.
+- **G1 — FSAL panic resilience.**
+  - **G1(a) DONE** (`114de71f`): single `setMandatoryAttrs` chokepoint; every
+    VirtualGetAttributes exit fills the mandatory NFSv4 attrs. Crash-source
+    reduction (the panic fires in Galatea's encoder, so no recover() here catches
+    it — catch-all is Daedalus's per-request recover(), asked in Correspondance 07).
+  - **G1(b) DONE + VERIFIED LIVE** (`5b3cb484`): app self-heals on bridge death.
+    `kill -9` on the live bridge → `exited unexpectedly` → `self-healing (1/3)` →
+    unmount → reconnect → **re-seize OK** → remount in ~8s, mount browseable
+    after. Bounded (3 recoveries/120s). The in-recovery re-seize succeeding is a
+    big G2 de-risk: the app's USBSeizer clears the lock on its own recovery path.
+- **G2 — USB-seize recovery across the real lifecycle.** PARTIAL.
+  - **Landed** (`e5227398`): `killOrphanedBridges(locationID:)` — app kill/relaunch
+    leaves orphaned bridge subprocesses that contend for the interface (a real
+    lock contributor beside ptpcamerad); reap same-device orphans before the
+    seize. UNVERIFIED live.
+  - **Remaining:** ptpcamerad reclaim across sleep/wake; confirm the orphan-reaper
+    reduces the relaunch lock; physical replug is still the floor. Note: the app's
+    *own* recovery re-seizes cleanly (proven in G1b), so the lock mainly bites the
+    bare harness + churn, not normal use.
 - **G3 — Clean eject + Finder sidebar, tested in the GUI.** Eject must unmount
   cleanly + stop the bridge; volume appears/disappears correctly. (Headless
   SIGTERM bypasses Cocoa teardown — must verify the real path.)
