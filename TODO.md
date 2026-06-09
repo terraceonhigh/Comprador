@@ -150,21 +150,64 @@ the manually-vendored galatea); two build checkpoints green via `make build-all`
 + `make bridge`. WebDAV (`bridge/webdav`+`resume`) left intact — it's main.go's
 default mode, not the willscott path.
 
-**Next increment:**
-1. Send Daedalus: the eject-drain answer (Comprador needs **wait** — see APP
-   CUTOVER above) + suggest a per-request `recover()` in Galatea so one FSAL
-   panic can't kill the whole server.
-2. Build hygiene: Xcode `.pbxproj` lacks `DeviceSession.swift` (0 refs) so
-   `make run` fails; GUI builds via `make run-swiftc`. Fix pbxproj or drop it.
-3. (LOW) >2 s-stall partial-commit hardening — didn't bite at 1 GB.
-4. (Maybe) WebDAV's fate — vestigial default mode; the app always passes --nfs.
-5. **Throughput tuning** (read path works but ~5.6 MB/s vs prefetch-probe's
-   21 MB/s): small NFS rsize → many per-chunk `OpGetPartial` calls. Try a
-   larger advertised rsize / read-ahead coalescing. Also do a literal >60 s
-   MTP read once a big-enough file is available (Galatea R1 already proved
-   130 s at the protocol layer).
+### WEBDAV REMOVED (2026-06-08, commit `0d952422`).
 
-(main.go wiring + production vendor story are DONE — see APP CUTOVER above.)
+WebDAV was the original Finder layer; the app has served Galatea NFSv4 only
+since the cutover, so it was dead weight. Deleted `bridge/webdav/` + the
+WebDAV-only `bridge/resume/` store; main.go serves Galatea unconditionally
+(`--nfs` kept as an accepted no-op for the app's arg compat). Orphaned deps
+`golang.org/x/net` + `google/uuid` removed from go.mod/go.sum/vendor (hand-edited,
+kept galatea + x/sys). **Follow-up:** the now-inert Swift WebDAV plumbing
+(`ResumeCompanion.swift`, `MountManager.mountWebDAV`, proto-branching in
+`BridgeProcess`/`DeviceSession`) is harmless but should be swept.
+
+---
+
+## v0.4.0 / 1.0 SHIP PLAN — decisions (2026-06-08, Architect)
+
+**Decisions made:**
+1. **WebDAV removed** (above) — Galatea NFSv4 is the only serving mode.
+2. **1.0 is GATED behind the recovery work** — the two robustness gates below
+   are hard blockers for a 1.0 user-facing release. A 0.4.0 dev/preview tag can
+   precede them, but not 1.0.
+3. **Two physical Android devices are available for testing** — use both for the
+   multi-vendor MTP coverage gate before claiming broad Android support.
+
+**SHIP GATES for 1.0 (hard blockers — a non-technical user can't debug these):**
+- **G1 — FSAL panic resilience.** A panic in any `mtpfsal` method currently
+  crashes the whole bridge and hangs Finder (hit live: the mandatory-attr
+  panic). Need: defensive guards so mtpfsal never panics, AND the menu-bar app
+  detecting bridge death + auto-recovering (re-spawn + remount). Plus ask
+  Daedalus for a per-request `recover()` in Galatea.
+- **G2 — USB-seize recovery across the real lifecycle.** Repeated relaunch churn
+  locks the PTP interface (ptpcamerad reclaims), needing a physical replug. Must
+  survive sleep/wake, app quit/relaunch, and plug/unplug cycles without ever
+  stranding the user at "USB interface locked". Likely the #1 real-world risk.
+- **G3 — Clean eject + Finder sidebar, tested in the GUI.** Eject must unmount
+  cleanly + stop the bridge; volume appears/disappears correctly. (Headless
+  SIGTERM bypasses Cocoa teardown — must verify the real path.)
+- **G4 — Multi-vendor MTP coverage.** Tested only on Pixel 6; the size-0 quirk
+  and the SetObjectName-fallback prove vendor-specific behavior. Exercise both
+  available devices (and fail gracefully on quirks).
+
+**Cleanup before tagging (not gates):**
+- Remove the privileged helper if unused (Galatea mounts unprivileged — its whole
+  point); still bundled, slated for removal. Shrinks attack surface.
+- NOTICES.md: add Galatea (GPL-3.0) attribution + source offer; the manual vendor
+  didn't bring its LICENSE. (Comprador is GPL-3.0 → compatible, not a blocker.)
+- Re-verify `docs/SECURITY.md` invariants for Galatea: loopback-only bind ✓
+  (main.go binds `127.0.0.1:0`, hands Galatea the listener), no outbound.
+- Sweep the Swift WebDAV plumbing (above).
+- Xcode `.pbxproj` lacks `DeviceSession.swift` → `make run` fails; release uses
+  `make dist-swiftc` (works). Fix pbxproj or drop the Xcode path.
+- Re-notarize (deps changed) via the `macos-notarize` skill; bump
+  `0.3.4-dev` → `0.4.0`.
+- (LOW) >2 s-stall partial-commit hardening — didn't bite at 1 GB.
+- (LOW) Throughput tuning — read ~5.6 MB/s (small NFS rsize → many
+  `OpGetPartial`); try larger advertised rsize / read-ahead coalescing.
+
+**Notify Daedalus:** eject-drain answer (Comprador needs **wait** — see APP
+CUTOVER) + the per-request `recover()` suggestion (G1).
 
 The reply opening Phase 4 is delivered to Daedalus's mailbox:
 `~/Labs/Galatea/Correspondance/04-phase-four-and-the-one-cursor/` (uncommitted
