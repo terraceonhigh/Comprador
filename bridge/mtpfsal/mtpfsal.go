@@ -371,14 +371,25 @@ func (d *mtpDir) VirtualGetAttributes(ctx context.Context, requested virtual.Att
 }
 
 func (f *mtpFile) VirtualGetAttributes(ctx context.Context, requested virtual.AttributesMask, a *virtual.Attributes) {
-	// Staging takes precedence: a file mid-upload has no device object yet, so
-	// its size/handle/changeID come from the temp file, not the ObjectMap. This
-	// must run before the GetByPath-miss early return, or a freshly created file
-	// would report type-only and Finder's post-create stat would see size 0
-	// forever.
+	// Staging takes precedence ONLY when it's the authoritative size source: a
+	// brand-new file (no device object yet) or an upload that has actually
+	// written bytes. An EMPTY staging temp sitting over an existing device file
+	// means the file was merely opened — and the macOS client opens a file to
+	// *read* it (double-click to play) with a write-ish share access that lands
+	// in our overwrite/SETATTR staging path. Reporting the empty temp's 0 there
+	// shadows the real file: Finder stats 0 and won't open it (the bug this
+	// guards). So fall through to the device-backed size unless the temp has
+	// content. (No data is lost either way — staging.Commit refuses an empty
+	// commit over a non-empty object.)
 	if sf := f.staged(); sf != nil {
-		f.fillStaged(sf, requested, a)
-		return
+		sz, _ := sf.Size()
+		_, hasDevice := f.session.Objects.GetByPath(f.mpath)
+		if sz > 0 || !hasDevice {
+			f.fillStaged(sf, requested, a)
+			return
+		}
+		// else: empty staging over an existing device object — report the real
+		// device attributes below, don't shadow them with 0.
 	}
 	meta, ok := f.session.Objects.GetByPath(f.mpath)
 	if !ok {
