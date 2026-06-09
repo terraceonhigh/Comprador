@@ -193,12 +193,22 @@ kept galatea + x/sys). **Follow-up:** the now-inert Swift WebDAV plumbing
   - **Remaining:** ptpcamerad reclaim specifically across sleep/wake (physical
     replug still the floor there). Normal app use + the G1b recovery re-seize
     cleanly, so the everyday path is covered.
-- **G3 — Clean eject + Finder sidebar, tested in the GUI.** Eject must unmount
-  cleanly + stop the bridge; volume appears/disappears correctly. (Headless
-  SIGTERM bypasses Cocoa teardown — must verify the real path.)
-- **G4 — Multi-vendor MTP coverage.** Tested only on Pixel 6; the size-0 quirk
-  and the SetObjectName-fallback prove vendor-specific behavior. Exercise both
-  available devices (and fail gracefully on quirks).
+- ✅ **G3 — Clean eject DONE + GUI-VERIFIED** (`59d58606` + the connect-cancel fix).
+  Eject unmounts + stops the bridge and the volume stays gone. Two fixes:
+  (a) connect() now re-checks the cancel flag after its long awaits so an eject
+  mid-connect doesn't re-mount; (b) **eject-suppression** — `bridge.stop()`
+  releases the USB, the kernel re-enumerates the still-plugged device and fires a
+  detach→attach burst that was auto-reconnecting it; we now suppress reconnect
+  for 6s after an eject (keyed by Location ID), so the burst is swallowed but a
+  genuine later replug reconnects. Trace confirmed: `Ignoring attach — device was
+  just ejected`. Verified live, and ejecting one of two devices left the other
+  mounted.
+- **G4 — Multi-vendor MTP coverage. STRONG SIGNAL (not exhaustive).** Pixel 6 +
+  Sony Xperia **XQ-BT52** (VID 0x0FCE) ran simultaneously: both seized, mounted,
+  and served; the Pixel even self-healed (G1b) through the two-device seize churn.
+  So a second vendor works end-to-end. Still want: a broader sweep + deliberate
+  quirk-probing across more vendors, but the core multi-device + second-vendor
+  path is proven.
 
 **Code-review findings (2026-06-08, flagged — not 0.4.0 blockers):** a review of
 the session's diff confirmed the logic (most candidates refuted: the "unset
