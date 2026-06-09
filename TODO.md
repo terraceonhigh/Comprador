@@ -223,7 +223,7 @@ invalidate stored heap pointers). Real, lower-severity items for follow-up:
   SIGKILL (works — the bridge catches SIGINT — but mislabeled). Tuning, not bugs.
 
 **Cleanup before tagging (not gates):**
-- ✅ **Privileged helper REMOVED** (`4a1f23f3`) — Architect-approved + GUI-verified
+- ✅ **Privileged helper REMOVED** (`5bedbf24`) — Architect-approved + GUI-verified
   (no admin prompt, mounts clean, helper-free). It was vestigial (loopback NFS
   mounts unprivileged); volumes now name from mDNS `.local`. Biggest privilege
   surface gone.
