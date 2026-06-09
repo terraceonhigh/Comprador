@@ -173,6 +173,19 @@ final class DeviceSession {
                     locationID: device.locationID
                 )
 
+                // Eject sets isConnecting=false to cancel. The bridge spawn is a
+                // long await (up to ~20s of IOKit seize + libmtp open); if the
+                // user ejected during it, bail before mounting — otherwise we'd
+                // re-mount a device they intentionally ejected (the connect/
+                // teardown race). teardown() concurrently stops the bridge too;
+                // both are idempotent.
+                guard isConnecting else {
+                    cprLog("Comprador: connect cancelled during bridge spawn — aborting before mount")
+                    bp.stop()
+                    self.bridge = nil
+                    return
+                }
+
                 let displayName = bp.deviceName ?? device.displayName
 
                 await MainActor.run { setConnectStatus("Mounting…") }
@@ -187,6 +200,17 @@ final class DeviceSession {
                     port: port,
                     volumeName: volName
                 )
+
+                // Ejected during the mount itself? Unmount what we just mounted
+                // and bail before announcing it to the delegate (which would put
+                // it in Finder's sidebar).
+                guard isConnecting else {
+                    cprLog("Comprador: connect cancelled during mount — unmounting, not announcing")
+                    await mountManager.unmount()
+                    bp.stop()
+                    self.bridge = nil
+                    return
+                }
 
                 // Supervise the live bridge: if it dies now (panic, libmtp
                 // fault, anything that isn't our own stop()), self-heal instead
