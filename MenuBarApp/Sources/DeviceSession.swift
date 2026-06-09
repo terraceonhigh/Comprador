@@ -17,7 +17,7 @@ import Cocoa
 ///
 /// Per-device state that *was* on AppDelegate, now here:
 ///   - `bridge`, `mountManager`
-///   - `isConnecting`, `pendingAttach`, `registeredHostname`
+///   - `isConnecting`, `pendingAttach`
 ///   - `connectStatus`, `connectStartedAt`, `connectTimer`,
 ///     `connectingStatusItem`
 ///
@@ -33,7 +33,6 @@ final class DeviceSession {
     // Per-device subprocess. Starts nil; populated during connect(); cleared by
     // teardown().
     private(set) var bridge: BridgeProcess?
-    private(set) var registeredHostname: String?
 
     // Connect-phase flags. `isConnecting` is the lock that suppresses
     // duplicate attach events for the same physical session. `pendingAttach`
@@ -176,15 +175,6 @@ final class DeviceSession {
 
                 let displayName = bp.deviceName ?? device.displayName
 
-                // If the helper is approved, override the bridge's
-                // mDNS-derived `.local` hostname with a clean single-label
-                // name pulled from /etc/hosts.
-                var mountHost = bp.host
-                if HelperClient.isEnabled,
-                   let cleanLabel = registerCleanHostname(named: displayName) {
-                    mountHost = cleanLabel
-                }
-
                 await MainActor.run { setConnectStatus("Mounting…") }
 
                 // NFSv4 (Galatea) is the only serving mode since v0.4.0.
@@ -197,7 +187,6 @@ final class DeviceSession {
                     port: port,
                     volumeName: volName
                 )
-                _ = mountHost // (was the WebDAV clean-label host; NFS uses bp.host)
 
                 // Supervise the live bridge: if it dies now (panic, libmtp
                 // fault, anything that isn't our own stop()), self-heal instead
@@ -257,16 +246,6 @@ final class DeviceSession {
         }
         bridge?.stop()
         bridge = nil
-
-        if let host = registeredHostname {
-            do {
-                try HelperClient.removeHost(host)
-            } catch {
-                cprLog("Comprador: helper removeHost(%@) failed: %@",
-                      host, error.localizedDescription)
-            }
-            registeredHostname = nil
-        }
         tearingDown = false
     }
 
@@ -313,27 +292,6 @@ final class DeviceSession {
             delegate?.deviceSessionDidChangeMenuStructure(self)
         }
         await connect()
-    }
-
-    // MARK: - Hostname helper
-
-    /// Sanitises a friendly device name into a DNS label and asks the
-    /// privileged helper to point it at 127.0.0.1 in /etc/hosts. Returns
-    /// the hostname on success, or nil on any failure (caller falls back
-    /// to whatever the bridge advertised — typically mDNS).
-    private func registerCleanHostname(named friendlyName: String) -> String? {
-        let label = AppDelegate.sanitizeHostname(friendlyName)
-        guard !label.isEmpty else { return nil }
-        do {
-            try HelperClient.addHost(label)
-            registeredHostname = label
-            cprLog("Comprador: registered hostname %@ via helper", label)
-            return label
-        } catch {
-            cprLog("Comprador: helper addHost(%@) failed: %@",
-                  label, error.localizedDescription)
-            return nil
-        }
     }
 }
 

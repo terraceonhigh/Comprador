@@ -32,9 +32,9 @@ class BridgeProcess {
     /// Returns the port number on success.
     /// Throws if the bridge fails to start or doesn't respond within the timeout.
     ///
-    /// If `useNFS` is true the bridge is started with `--nfs` and serves
-    /// NFSv3 instead of WebDAV.  Caller should mount via
-    /// `HelperClient.mountNFS(port:volumeName:)`.
+    /// `useNFS` is accepted for arg compatibility but is now a no-op — the
+    /// bridge always serves Galatea NFSv4. The caller mounts unprivileged via
+    /// `MountManager.mountNFS(host:port:volumeName:)` (no helper needed).
     ///
     /// If `seizeForVendor` and `seizeForProduct` are non-zero, an IOKit
     /// preflight runs first: seizes exclusive access to the device,

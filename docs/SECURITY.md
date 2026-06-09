@@ -24,8 +24,8 @@ documented so they can be grepped against future PRs.
 | NFS server on loopback | Bound `127.0.0.1` | **Invariant: never `0.0.0.0`.** A regression that bound to a routable interface would expose the phone's filesystem to the LAN. |
 | mDNS hostname registration (`<DeviceName>.local`) | User-level dns-sd | Two consequences. (a) name collision with an existing LAN service can mask or misdirect that service; (b) on multi-user machines, the active user's phone name is advertised to the whole network. Untested under collision. |
 | `killall ptpcamerad` | User-level | Process-name-based; limited blast radius. Recoverable: launchd respawns in ~60 ms. **Not** privileged in MAS terms; sandbox prohibits this. |
-| Privileged helper (`comprador-helper`, `SMAppService.daemon`) | Root | Single largest privilege-escalation surface in the bundle. Unix-socket RPC. Now bundled only for the cosmetic `/etc/hosts` volume-name label; its original WebDAV consumer was removed in v0.4.0, so it is invoked nowhere on the NFS mount/seize path. **Removal is a v0.4.0 item, gated on a with-the-Architect GUI/threat-model review** (SMAppService registration + the menu toggle can't be regression-tested headless). Tracked in [TODO.md](../TODO.md). |
-| Subprocess execution (Swift → bridge, helper, `mount -t nfs`) | User-level (helper: root) | Argument lists are static; no shell expansion, no user-supplied strings make it to argv without validation. The hostname-rewrite helper has the strictest validation (`^[A-Za-z][A-Za-z0-9-]{0,62}$`, reserved-label rejection) per the v0.1.0 hardening. |
+| ~~Privileged helper (`comprador-helper`, `SMAppService.daemon`)~~ | — | **REMOVED in v0.4.0.** Was the single largest privilege-escalation surface in the bundle (a root LaunchDaemon + Unix-socket RPC). It existed to launder root for `mount_nfs`; once loopback NFS mounts proved to work unprivileged it was vestigial, kept only for a cosmetic `/etc/hosts` volume label. Gone entirely — no root daemon, no admin prompt, smaller attack surface. The `SMAppService` *login item* (`SMAppService.mainApp`, non-privileged) is unrelated and stays. |
+| Subprocess execution (Swift → bridge, `mount -t nfs`, `pkill`) | User-level | Argument lists are static array-form; no shell expansion, no user-supplied strings reach argv unvalidated. The volume label derived from the device name is sanitised app-side before it reaches `mount`. All subprocesses run as the user — no root component since the helper was removed in v0.4.0. |
 | Reading from phone over MTP | User-level | A malicious phone can respond to GETs with crafted streams. Bridge currently buffers some metadata in memory; a parser bug in libmtp's PTP layer would execute in the bridge process. Bridge runs as the user, so impact is "compromise of the bridge subprocess." |
 | Writing to phone over MTP | User-level | Bridge accepts NFS WRITEs from the kernel and stages them, committing to the phone via `bridge/staging` + the `mtpfsal` FSAL (the Galatea NFSv4 backend; the old willscott `MTPFileSystem` was removed in v0.4.0). A path-construction bug in the FSAL's write/rename path could address the phone at unintended paths — but the phone is the *destination*, not the host, so impact is contained to phone-side files. |
 | Phone-side sensitive data | User-level | Files surfaced via Finder include whatever's on the phone — credentials, Authenticator backups, screenshots of secrets. Same shape as any USB drive mount. Not a Comprador-introduced risk; worth being honest about. |
@@ -56,11 +56,10 @@ review.
 1. **NFS server binds to `127.0.0.1` only.** Never `0.0.0.0`.
    Never a routable interface. The phone's filesystem is exposed
    only to processes on the host running Comprador.
-2. **Helper RPC is restricted to operations with strict
-   server-side validation.** The hostname-rewrite path validates
-   labels against `^[A-Za-z][A-Za-z0-9-]{0,62}$` and rejects
-   reserved labels. Any new helper RPC must justify itself
-   against the privilege model.
+2. **No privileged helper.** The root `comprador-helper` daemon was
+   removed in v0.4.0 (loopback NFS mounts unprivileged, so it was
+   vestigial). The bundle ships no root component. Re-introducing
+   one requires a deliberate threat-model review.
 3. **No shell interpolation of user-supplied strings into argv.**
    Subprocess spawns use array-form argument lists.
 4. **No phone-home.** No outbound network connections from any

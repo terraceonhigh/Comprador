@@ -151,18 +151,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         loginItem.state = LoginItem.isEnabled ? .on : .off
         menu.addItem(loginItem)
 
-        let helperLabel: String
-        switch HelperClient.statusDescription {
-        case "enabled":          helperLabel = "Helper installed"
-        case "requiresApproval": helperLabel = "Helper needs approval…"
-        default:                 helperLabel = "Install helper…"
-        }
-        let helperItem = NSMenuItem(title: helperLabel,
-                                    action: #selector(installHelper),
-                                    keyEquivalent: "")
-        helperItem.state = HelperClient.isEnabled ? .on : .off
-        menu.addItem(helperItem)
-
         menu.addItem(NSMenuItem(title: "Quit Comprador",
                                 action: #selector(quitApp),
                                 keyEquivalent: "q"))
@@ -186,10 +174,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(buildItem)
 
         statusItem.menu = menu
-    }
-
-    @objc private func installHelper() {
-        installHelperFlow()
     }
 
     /// Copies the bridge/app build identifier to the system clipboard,
@@ -220,37 +204,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             LoginItem.enable()
         }
         rebuildMenu()
-    }
-
-    /// Register the helper, open Login Items, then poll for approval so we
-    /// can confirm success without waiting for the next device attach.
-    private func installHelperFlow() {
-        HelperClient.register()
-        if let url = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") {
-            NSWorkspace.shared.open(url)
-        }
-        rebuildMenu()
-
-        // Poll for ~60s. If the user flips the toggle, congratulate;
-        // otherwise leave a hint via the menu state and move on.
-        Task { [weak self] in
-            for _ in 0..<60 {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                if HelperClient.isEnabled {
-                    await MainActor.run { [weak self] in
-                        self?.rebuildMenu()
-                        NSApp.activate(ignoringOtherApps: true)
-                        let done = NSAlert()
-                        done.messageText = "Helper installed"
-                        done.informativeText = "Future devices will mount with clean names like \"/Volumes/Pixel-6\" instead of \"/Volumes/Pixel-6.local\"."
-                        done.alertStyle = .informational
-                        done.addButton(withTitle: "OK")
-                        done.runModal()
-                    }
-                    return
-                }
-            }
-        }
     }
 
     /// Show the SwiftUI welcome window once on first launch. Replaces the

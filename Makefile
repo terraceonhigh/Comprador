@@ -1,5 +1,4 @@
 BRIDGE_OUT   := build/bridge
-HELPER_OUT   := build/comprador-helper
 ICTEST1_OUT  := build/ictest1
 ICTEST2_OUT  := build/ictest2
 APP_NAME   := Comprador
@@ -24,7 +23,7 @@ BUILD_ID := $(shell git rev-parse --short HEAD 2>/dev/null)$(shell git diff --qu
 # with a tagged release.
 RELEASE_VERSION := 0.4.0
 
-.PHONY: bridge build-all bridge-test helper helper-test ictest1 ictest2 test-md5 prefetch-probe icon app app-debug app-signed app-notarized app-swiftc dev dev-nfs galatea-dev galatea-mount galatea-umount run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
+.PHONY: bridge build-all bridge-test ictest1 ictest2 test-md5 prefetch-probe icon app app-debug app-signed app-notarized app-swiftc dev dev-nfs galatea-dev galatea-mount galatea-umount run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
 
 ICON_SRC := images/icon.png
 ICON_OUT := MenuBarApp/Resources/Comprador.icns
@@ -62,12 +61,6 @@ bridge:
 # which only builds the main artifact.
 build-all:
 	cd bridge && CGO_CFLAGS="-I$(CURDIR)/bridge/cvendor" CGO_LDFLAGS="-L/opt/homebrew/lib" $(GO) build ./...
-
-helper:
-	cd helper && $(GO) build -o ../$(HELPER_OUT) .
-
-helper-test:
-	cd helper && $(GO) test -v ./...
 
 # Bridge mtp-package tests. cgo flags must be set explicitly because go test
 # doesn't inherit them from the Makefile's `bridge` build rule.
@@ -146,19 +139,6 @@ define BUNDLE_BRIDGE
 	codesign --force --sign - "$(1)/Contents/Frameworks/libusb-1.0.0.dylib"; \
 	codesign --force --sign - "$(1)/Contents/Resources/bridge"; \
 	echo "Bundled bridge + libmtp + libusb into $(1)"
-endef
-
-# Bundle the privileged helper binary + LaunchDaemon plist. SMAppService.daemon
-# expects the plist at Contents/Library/LaunchDaemons/<plist> and the binary
-# referenced by the plist's BundleProgram (relative to the app bundle root).
-define BUNDLE_HELPER
-	mkdir -p "$(1)/Contents/Library/LaunchDaemons"; \
-	rm -f "$(1)/Contents/MacOS/comprador-helper" \
-	      "$(1)/Contents/Library/LaunchDaemons/com.comprador.helper.plist"; \
-	cp $(HELPER_OUT) "$(1)/Contents/MacOS/comprador-helper"; \
-	cp helper/com.comprador.helper.plist "$(1)/Contents/Library/LaunchDaemons/"; \
-	codesign --force --sign - "$(1)/Contents/MacOS/comprador-helper"; \
-	echo "Bundled helper into $(1)"
 endef
 
 app: bridge icon
@@ -260,7 +240,7 @@ BUILD_INFO_SWIFT := build/BuildInfo.swift
 SWIFT_DEBUG ?=
 SWIFT_DEBUG_FLAG := $(if $(SWIFT_DEBUG),-D DEBUG,)
 
-app-swiftc: bridge helper icon
+app-swiftc: bridge icon
 	@mkdir -p build/swift build
 	@printf 'enum BuildInfo { static let id = "%s" }\n' "$(BUILD_ID)" > $(BUILD_INFO_SWIFT)
 	swiftc -target $(SWIFT_TARGET) -O $(SWIFT_DEBUG_FLAG) \
@@ -287,7 +267,6 @@ app-swiftc: bridge helper icon
 	cp MenuBarApp/Resources/Comprador.icns $(SWIFT_APP)/Contents/Resources/
 	@printf 'APPL????' > $(SWIFT_APP)/Contents/PkgInfo
 	$(call BUNDLE_BRIDGE,$(SWIFT_APP))
-	$(call BUNDLE_HELPER,$(SWIFT_APP))
 	codesign --force --deep --sign - \
 		--entitlements MenuBarApp/Comprador.debug.entitlements \
 		--options runtime \
@@ -319,20 +298,16 @@ dist-swiftc: app-swiftc
 	@echo "Testers: right-click → Open on first launch (ad-hoc signed)"
 
 # Re-sign dist/Comprador.app with the local Developer ID Application
-# certificate. The bundle that comes out is suitable for replacing an
-# installed /Applications/Comprador.app while keeping the SMAppService
-# helper registration intact (SMAppService accepts cdhash changes when
-# the signature chain stays valid).
+# certificate, suitable for replacing an installed /Applications/Comprador.app.
 #
 # Skips notarization. macOS allows opening a properly-signed but
-# un-notarized app by right-click → Open on first launch. SMAppService
-# itself only requires Developer ID + hardened runtime, not notarization.
+# un-notarized app by right-click → Open on first launch.
 #
 # Uses Comprador.debug.entitlements (no com.apple.developer.system-extension.install)
 # because that entitlement requires a provisioning profile, which we
 # can't generate locally without an active development scheme. The
 # DriverKit install path is unavailable in app-signed builds; everything
-# else (USB matching, helper, NFS bridge) works.
+# else (USB matching, the NFS bridge) works.
 app-signed: dist-swiftc
 	@IDENTITY=$$(security find-identity -v -p codesigning \
 	            | awk '/Developer ID Application/{print $$2; exit}'); \
@@ -345,8 +320,7 @@ app-signed: dist-swiftc
 	for path in \
 	  "$$BUNDLE/Contents/Frameworks/libmtp.9.dylib" \
 	  "$$BUNDLE/Contents/Frameworks/libusb-1.0.0.dylib" \
-	  "$$BUNDLE/Contents/Resources/bridge" \
-	  "$$BUNDLE/Contents/MacOS/comprador-helper"; \
+	  "$$BUNDLE/Contents/Resources/bridge"; \
 	do \
 	  if [ -e "$$path" ]; then \
 	    echo "Signing $$path"; \
