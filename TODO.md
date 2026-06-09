@@ -223,12 +223,13 @@ invalidate stored heap pointers). Real, lower-severity items for follow-up:
   SIGKILL (works — the bridge catches SIGINT — but mislabeled). Tuning, not bugs.
 
 **Cleanup before tagging (not gates):**
-- Remove the privileged helper if unused (Galatea mounts unprivileged — its whole
-  point); still bundled, slated for removal. Shrinks attack surface.
-- NOTICES.md: add Galatea (GPL-3.0) attribution + source offer; the manual vendor
-  didn't bring its LICENSE. (Comprador is GPL-3.0 → compatible, not a blocker.)
-- Re-verify `docs/SECURITY.md` invariants for Galatea: loopback-only bind ✓
-  (main.go binds `127.0.0.1:0`, hands Galatea the listener), no outbound.
+- ✅ **Privileged helper REMOVED** (`4a1f23f3`) — Architect-approved + GUI-verified
+  (no admin prompt, mounts clean, helper-free). It was vestigial (loopback NFS
+  mounts unprivileged); volumes now name from mDNS `.local`. Biggest privilege
+  surface gone.
+- ✅ NOTICES.md Galatea (GPL-3.0) attribution added; SECURITY.md refreshed +
+  loopback-only bind re-verified (`main.go` binds `127.0.0.1:0`, hands Galatea
+  the listener), no outbound.
 - Sweep the Swift WebDAV plumbing (above).
 - Xcode `.pbxproj` lacks `DeviceSession.swift` → `make run` fails; release uses
   `make dist-swiftc` (works). Fix pbxproj or drop the Xcode path.
