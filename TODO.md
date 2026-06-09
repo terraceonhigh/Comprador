@@ -140,17 +140,24 @@ branch left mandatory named-attr flags unset → server panic; now a tombstone v
 fillCommon. Every attr-fill path must set FileHandle + named-attr flags (+
 ChangeID) — M-006.
 
+### WILLSCOTT PATH RETIRED — `bridge/nfs/` + go-nfs deleted (2026-06-08, commit `3def6d9a`, −12k lines).
+
+Large-file write proven first (1.07 GB Shrek.mp4, single SendFile, idle-commit
+held). Then deleted `bridge/nfs/` (go-nfs FSAL + JUKEBOX cache), `cmd/nfsstub`,
+and orphaned vendored deps (go-nfs, go-nfs-client, rasky/go-xdr, go-billy,
+golang-lru). Vendor edited BY HAND (never `go mod tidy`/`vendor` — would perturb
+the manually-vendored galatea); two build checkpoints green via `make build-all`
++ `make bridge`. WebDAV (`bridge/webdav`+`resume`) left intact — it's main.go's
+default mode, not the willscott path.
+
 **Next increment:**
-1. **Large-file write** (>JUKEBOX, multi-minute) round-trip + the >2 s-stall
-   partial-commit risk (idle-only commit; track open-count instead of pure idle).
-2. **Prove under load, THEN delete** `bridge/nfs/cache.go` (JUKEBOX + prefetch)
-   and the patched go-nfs fork. Read+write+mutations all proven — its reason is
-   gone. Prove-then-delete.
-3. Send Daedalus: the eject-drain answer (Comprador needs **wait** — see APP
+1. Send Daedalus: the eject-drain answer (Comprador needs **wait** — see APP
    CUTOVER above) + suggest a per-request `recover()` in Galatea so one FSAL
    panic can't kill the whole server.
-4. Build hygiene: Xcode `.pbxproj` lacks `DeviceSession.swift` (0 refs) so
+2. Build hygiene: Xcode `.pbxproj` lacks `DeviceSession.swift` (0 refs) so
    `make run` fails; GUI builds via `make run-swiftc`. Fix pbxproj or drop it.
+3. (LOW) >2 s-stall partial-commit hardening — didn't bite at 1 GB.
+4. (Maybe) WebDAV's fate — vestigial default mode; the app always passes --nfs.
 5. **Throughput tuning** (read path works but ~5.6 MB/s vs prefetch-probe's
    21 MB/s): small NFS rsize → many per-chunk `OpGetPartial` calls. Try a
    larger advertised rsize / read-ahead coalescing. Also do a literal >60 s
