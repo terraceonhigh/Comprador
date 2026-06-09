@@ -222,14 +222,24 @@ func (n node) fillStatfs(requested virtual.AttributesMask, a *virtual.Attributes
 	}
 }
 
-// fillCommon sets the attributes the NFSv4 server treats as mandatory (file
-// handle, named-attribute flags — see Galatea MISTAKES.md M-006) plus the
-// requested stat-like fields, from an ObjectMeta. Reads the in-memory map only.
-func fillCommon(meta *mtp.ObjectMeta, id uint32, requested virtual.AttributesMask, a *virtual.Attributes) {
-	// Mandatory regardless of the requested mask.
-	a.SetFileHandle(encodeHandle(id))
+// setMandatoryAttrs sets the NFSv4 attributes Galatea's reply encoder treats as
+// mandatory and PANICS on if requested-but-unset (the M-006 lesson): the file
+// handle and the two named-attribute flags. Every VirtualGetAttributes path MUST
+// route through this (via fillCommon or fillStaged) before returning — a missing
+// mandatory attr crashes the whole bridge in Galatea's encoder, on Galatea's
+// goroutine, after we've returned, so no recover() in this package can catch it.
+// (ChangeID is also mandatory-when-requested but its source differs — mtime vs
+// the staging change counter — so the callers set it.)
+func setMandatoryAttrs(a *virtual.Attributes, handle uint32) {
+	a.SetFileHandle(encodeHandle(handle))
 	a.SetHasNamedAttributes(false)
 	a.SetIsInNamedAttributeDirectory(false)
+}
+
+// fillCommon sets the mandatory attributes plus the requested stat-like fields,
+// from an ObjectMeta. Reads the in-memory map only.
+func fillCommon(meta *mtp.ObjectMeta, id uint32, requested virtual.AttributesMask, a *virtual.Attributes) {
+	setMandatoryAttrs(a, id)
 
 	if requested&virtual.AttributesMaskInodeNumber != 0 {
 		a.SetInodeNumber(uint64(id))
@@ -275,10 +285,7 @@ func (f *mtpFile) fillStaged(sf *staging.File, requested virtual.AttributesMask,
 		handle = meta.ID
 	}
 
-	// Mandatory regardless of the requested mask (see fillCommon / M-006).
-	a.SetFileHandle(encodeHandle(handle))
-	a.SetHasNamedAttributes(false)
-	a.SetIsInNamedAttributeDirectory(false)
+	setMandatoryAttrs(a, handle)
 
 	if requested&virtual.AttributesMaskFileType != 0 {
 		a.SetFileType(virtual.FileTypeRegularFile)
