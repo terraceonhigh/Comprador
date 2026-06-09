@@ -26,63 +26,6 @@ class MountManager {
         }
     }
 
-    /// Mounts a WebDAV URL and returns the mount path.
-    /// `host` is the URL host the bridge advertises (typically a per-device
-    /// `<name>.local` registered via mDNS); NetFS auto-names the volume from it.
-    func mount(host: String, port: Int, displayName: String) async throws -> URL {
-        let serverURL = URL(string: "http://\(host):\(port)/")! as CFURL
-        let mountDir = URL(fileURLWithPath: "/Volumes") as CFURL
-
-        cprLog("Comprador: Mounting WebDAV from %@:%d", host, port)
-
-        return try await withCheckedThrowingContinuation { continuation in
-            var mountPoints: Unmanaged<CFArray>?
-
-            let openOptions: NSMutableDictionary = [
-                kNAUIOptionKey: kNAUIOptionNoUI,
-            ]
-
-            // Empty mountOptions on purpose. We tried passing
-            // `kNetFSMountFlagsKey: MNT_SYNCHRONOUS` to suppress webdavfs's
-            // writeseq path (the source of -36 truncation on large Finder
-            // drags); statfs(2) on the resulting mount confirmed the flag
-            // is silently filtered out by webdavfs's mnt_flag handling.
-            // Don't try this again — webdavfs has no exposed knob to
-            // disable writeseq. See TODO.md "Make Finder error -36
-            // disappear for very large files" → option 2 for the path
-            // forward.
-            let mountOptions = NSMutableDictionary()
-
-            let rc = NetFSMountURLSync(
-                serverURL,
-                mountDir,
-                "" as CFString,
-                "" as CFString,
-                openOptions,
-                mountOptions,
-                &mountPoints
-            )
-
-            if rc != 0 {
-                cprLog("Comprador: Mount failed with error %d", rc)
-                continuation.resume(throwing: MountError.mountFailed(rc))
-                return
-            }
-
-            let resolvedPath: URL
-            if let points = mountPoints?.takeRetainedValue() as? [String],
-               let first = points.first {
-                resolvedPath = URL(fileURLWithPath: first)
-            } else {
-                resolvedPath = URL(fileURLWithPath: "/Volumes/\(host)")
-            }
-
-            self.mountPath = resolvedPath
-            cprLog("Comprador: Mounted at %@", resolvedPath.path)
-            continuation.resume(returning: resolvedPath)
-        }
-    }
-
     /// Unmounts the currently mounted volume.
     func unmount() async {
         guard let path = mountPath else { return }

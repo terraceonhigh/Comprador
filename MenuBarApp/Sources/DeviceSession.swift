@@ -16,7 +16,7 @@ import Cocoa
 ///     stops the bridge, removes any registered hostname.
 ///
 /// Per-device state that *was* on AppDelegate, now here:
-///   - `bridge`, `mountManager`, `resumeCompanion`
+///   - `bridge`, `mountManager`
 ///   - `isConnecting`, `pendingAttach`, `registeredHostname`
 ///   - `connectStatus`, `connectStartedAt`, `connectTimer`,
 ///     `connectingStatusItem`
@@ -30,10 +30,9 @@ final class DeviceSession {
     let device: USBDevice
     let mountManager = MountManager()
 
-    // Per-device subprocess + companion. Both start nil; populated during
-    // connect(); cleared by teardown().
+    // Per-device subprocess. Starts nil; populated during connect(); cleared by
+    // teardown().
     private(set) var bridge: BridgeProcess?
-    private(set) var resumeCompanion: ResumeCompanion?
     private(set) var registeredHostname: String?
 
     // Connect-phase flags. `isConnecting` is the lock that suppresses
@@ -188,28 +187,17 @@ final class DeviceSession {
 
                 await MainActor.run { setConnectStatus("Mounting…") }
 
-                let mountedURL: URL
-                if bp.proto == "nfs" {
-                    let volName = AppDelegate.sanitizeHostname(displayName)
-                    guard !volName.isEmpty else {
-                        throw MountError.mountFailed(-1)
-                    }
-                    mountedURL = try await mountManager.mountNFS(
-                        host: bp.host,
-                        port: port,
-                        volumeName: volName
-                    )
-                } else {
-                    mountedURL = try await mountManager.mount(
-                        host: mountHost,
-                        port: port,
-                        displayName: displayName
-                    )
-                    let bridgeURL = URL(string: "http://\(bp.host):\(port)/")!
-                    let companion = ResumeCompanion(bridgeURL: bridgeURL)
-                    companion.start()
-                    self.resumeCompanion = companion
+                // NFSv4 (Galatea) is the only serving mode since v0.4.0.
+                let volName = AppDelegate.sanitizeHostname(displayName)
+                guard !volName.isEmpty else {
+                    throw MountError.mountFailed(-1)
                 }
+                let mountedURL = try await mountManager.mountNFS(
+                    host: bp.host,
+                    port: port,
+                    volumeName: volName
+                )
+                _ = mountHost // (was the WebDAV clean-label host; NFS uses bp.host)
 
                 // Supervise the live bridge: if it dies now (panic, libmtp
                 // fault, anything that isn't our own stop()), self-heal instead
@@ -264,8 +252,6 @@ final class DeviceSession {
         // stop. bridge.stop() also flags it, but set this first to close the
         // race where the bridge died from USB loss just as teardown begins.
         tearingDown = true
-        resumeCompanion?.stop()
-        resumeCompanion = nil
         if mountManager.isMounted {
             await mountManager.unmount()
         }
