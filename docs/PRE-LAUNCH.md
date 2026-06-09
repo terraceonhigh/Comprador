@@ -1,5 +1,13 @@
 # Pre-launch readiness — Reddit / Hacker News
 
+> **⚠ Stale baseline (2026-06-08).** The substance below predates the
+> **Galatea substrate swap** (v0.4.0): Comprador now serves NFSv4, not WebDAV
+> or willscott-NFSv3, and read / write / full file management all work live.
+> The current honest status and known limitations are the v0.4.0 entry in
+> [CHANGELOG.md](../CHANGELOG.md); the pitch and known-issues sections here need
+> a refresh against that before any announcement — a with-the-Architect task,
+> since it's a product/messaging call. Treat the specifics below as v0.3.2-era.
+
 **Status — 2026-05-10:** Comprador is at v0.3.2, working, not
 yet publicly announced. This doc tracks the path from "shipping
 quietly to early users" to "ready for a Reddit / HN post." Both
