@@ -43,6 +43,16 @@ final class DeviceSession {
     var isConnecting = false
     var pendingAttach: USBDevice?
 
+    // Self-healing (G1b): if the bridge dies unexpectedly after a successful
+    // mount, recover by unmounting the stale volume and reconnecting. Bounded so
+    // a bridge that crashes on every start doesn't spin forever — `maxRecoveries`
+    // attempts within `recoveryWindow`, after which we give up and surface.
+    private var recoveryAttempts = 0
+    private var lastRecoveryAt: Date?
+    private let maxRecoveries = 3
+    private let recoveryWindow: TimeInterval = 120
+    private var tearingDown = false
+
     // Status-text fields driving the connecting line in the menu.
     // `connectingStatusItem` is a weak handle to the NSMenuItem AppDelegate
     // owns — we mutate it in place so the elapsed counter advances while
@@ -201,6 +211,13 @@ final class DeviceSession {
                     self.resumeCompanion = companion
                 }
 
+                // Supervise the live bridge: if it dies now (panic, libmtp
+                // fault, anything that isn't our own stop()), self-heal instead
+                // of leaving Finder pointed at a dead mount (G1b).
+                bp.onUnexpectedExit = { [weak self] in
+                    Task { await self?.handleUnexpectedBridgeExit() }
+                }
+
                 await MainActor.run {
                     cprLog("Comprador: Device mounted as volume")
                     stopConnectTimer()
@@ -243,6 +260,10 @@ final class DeviceSession {
     // MARK: - Teardown
 
     func teardown() async {
+        // Suppress self-healing: a teardown (eject/detach) is an intentional
+        // stop. bridge.stop() also flags it, but set this first to close the
+        // race where the bridge died from USB loss just as teardown begins.
+        tearingDown = true
         resumeCompanion?.stop()
         resumeCompanion = nil
         if mountManager.isMounted {
@@ -260,6 +281,52 @@ final class DeviceSession {
             }
             registeredHostname = nil
         }
+        tearingDown = false
+    }
+
+    // MARK: - Self-healing (G1b)
+
+    /// Invoked (on an arbitrary queue, via BridgeProcess.onUnexpectedExit) when
+    /// the bridge dies after a successful mount. Unmounts the now-dead volume
+    /// and reconnects, bounded so a bridge that crashes on every start can't
+    /// spin forever. A non-technical user can't debug a frozen mount, so the
+    /// app makes a stuck bridge blip-and-recover instead of hang.
+    func handleUnexpectedBridgeExit() async {
+        // Don't fight an in-flight connect or teardown.
+        if isConnecting || tearingDown { return }
+
+        let now = Date()
+        if let last = lastRecoveryAt, now.timeIntervalSince(last) > recoveryWindow {
+            recoveryAttempts = 0 // crashes are far apart — treat as fresh
+        }
+        recoveryAttempts += 1
+        lastRecoveryAt = now
+
+        if recoveryAttempts > maxRecoveries {
+            cprLog("Comprador: bridge died %d× within %.0fs — giving up auto-recovery",
+                   recoveryAttempts, recoveryWindow)
+            await teardown()
+            await MainActor.run {
+                delegate?.deviceSession(self, didFailWith: MountError.mountFailed(-1))
+            }
+            return
+        }
+
+        cprLog("Comprador: bridge died — self-healing (attempt %d/%d)",
+               recoveryAttempts, maxRecoveries)
+
+        // Drop the stale mount + dead bridge handle, then reconnect. connect()
+        // spawns a fresh BridgeProcess and remounts; its guard reads isConnecting.
+        if mountManager.isMounted {
+            await mountManager.unmount()
+        }
+        bridge = nil
+        await MainActor.run {
+            isConnecting = true
+            setConnectStatus("Reconnecting…")
+            delegate?.deviceSessionDidChangeMenuStructure(self)
+        }
+        await connect()
     }
 
     // MARK: - Hostname helper

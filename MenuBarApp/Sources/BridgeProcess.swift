@@ -7,8 +7,22 @@ class BridgeProcess {
     private(set) var port: Int?
     private(set) var host: String = "127.0.0.1"
     private(set) var deviceName: String?
-    /// "nfs" when bridge was started with --nfs, "webdav" otherwise.
-    private(set) var proto: String = "webdav"
+    /// Serving protocol reported by the bridge. NFSv4 is the only mode since
+    /// v0.4.0 (WebDAV retired); kept as a field because the bridge still emits
+    /// PROTO=.
+    private(set) var proto: String = "nfs"
+
+    /// Set true by stop() so the terminationHandler can tell an intentional
+    /// shutdown (teardown/eject) from an unexpected death (crash, panic, libmtp
+    /// fault). Only the latter triggers onUnexpectedExit.
+    private var intentionalStop = false
+
+    /// Called (on an arbitrary thread) when the bridge exits WITHOUT us having
+    /// called stop() — i.e. it died. The session wires this to its self-healing
+    /// path (unmount the now-dead volume, re-spawn, remount). nil until a mount
+    /// succeeds, so a death during the initial spawn flows through start()'s
+    /// throw instead.
+    var onUnexpectedExit: (() -> Void)?
 
     /// Called (on an arbitrary thread) with a short human-readable status
     /// string whenever a key milestone is observed in bridge stderr output.
@@ -140,6 +154,17 @@ class BridgeProcess {
             }
         }
 
+        // Detect unexpected death. Fires on an arbitrary queue when the process
+        // exits; if we didn't ask for it (intentionalStop), notify the session
+        // so it can self-heal. Set before run() so a fast exit can't slip past.
+        p.terminationHandler = { [weak self] proc in
+            guard let self = self else { return }
+            if self.intentionalStop { return }
+            cprLog("Comprador: bridge exited unexpectedly (status %d) — notifying session",
+                   proc.terminationStatus)
+            self.onUnexpectedExit?()
+        }
+
         try p.run()
         self.process = p
         cprLog("Comprador: Bridge process started (PID %d)", p.processIdentifier)
@@ -168,8 +193,10 @@ class BridgeProcess {
         return result.port
     }
 
-    /// Stops the bridge process.
+    /// Stops the bridge process. Marks the exit intentional so the
+    /// terminationHandler does not mistake it for a crash and trigger recovery.
     func stop() {
+        intentionalStop = true
         guard let p = process, p.isRunning else {
             process = nil
             port = nil
@@ -191,7 +218,7 @@ class BridgeProcess {
         process = nil
         port = nil
         deviceName = nil
-        proto = "webdav"
+        proto = "nfs"
     }
 
     var isRunning: Bool {
