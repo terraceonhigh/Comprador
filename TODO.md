@@ -200,6 +200,28 @@ kept galatea + x/sys). **Follow-up:** the now-inert Swift WebDAV plumbing
   and the SetObjectName-fallback prove vendor-specific behavior. Exercise both
   available devices (and fail gracefully on quirks).
 
+**Code-review findings (2026-06-08, flagged — not 0.4.0 blockers):** a review of
+the session's diff confirmed the logic (most candidates refuted: the "unset
+SizeBytes/Space → panic" pair is false — those getters return `(v, bool)`, only
+the mandatory four panic; the Go "map use-after-free" is false — rehash doesn't
+invalidate stored heap pointers). Real, lower-severity items for follow-up:
+- **Eject-during-connect re-mount race** (Swift, pre-existing, feeds **G3**):
+  `teardown()` doesn't cancel an in-flight `connect()` — eject during the 5 s
+  settle or bridge spawn lets `connect()` resume and mount a device the user
+  ejected. Fix when doing G3: have `connect()` re-check `tearingDown`/`isConnecting`
+  after its awaits before mounting.
+- **Lifecycle-flag synchronization** (Swift): `intentionalStop`/`isConnecting`/
+  `tearingDown`/`recoveryAttempts` are read off-MainActor from the
+  terminationHandler; data races can cause a spurious recovery or a double
+  connect. Wants a small actor/queue discipline — pairs with the G1b/G2 hardening.
+- **ObjectMap read-modify-write** (Go, pre-existing pattern): `bumpDirMtime` /
+  `staging.Commit` mutate a map-owned `*ObjectMeta` then re-`Put`; a concurrent
+  `Remove` can resurrect a ghost entry. Low-severity (mtime staleness) in
+  single-user use; a contained fix is an atomic `ObjectMap.Touch(path)`.
+- `recoveryAttempts` window is conservative (gives up after 3 crashes <120 s
+  apart even if each recovered) and `stop()`'s "force kill" sends SIGINT not
+  SIGKILL (works — the bridge catches SIGINT — but mislabeled). Tuning, not bugs.
+
 **Cleanup before tagging (not gates):**
 - Remove the privileged helper if unused (Galatea mounts unprivileged — its whole
   point); still bundled, slated for removal. Shrinks attack surface.
