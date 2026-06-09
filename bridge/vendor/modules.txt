@@ -1,6 +1,3 @@
-# github.com/google/uuid v1.6.0
-## explicit
-github.com/google/uuid
 # github.com/terraceonhigh/galatea v0.2.0-alpha
 ## explicit; go 1.26
 github.com/terraceonhigh/galatea
@@ -15,10 +12,6 @@ github.com/terraceonhigh/galatea/internal/xdr/pkg/protocols/rpcv2
 github.com/terraceonhigh/galatea/internal/xdr/pkg/rpcserver
 github.com/terraceonhigh/galatea/internal/xdr/pkg/runtime
 github.com/terraceonhigh/galatea/pkg/virtual
-# golang.org/x/net v0.33.0
-## explicit; go 1.18
-golang.org/x/net/webdav
-golang.org/x/net/webdav/internal/xml
 # golang.org/x/sys v0.28.0
 ## explicit; go 1.18
 golang.org/x/sys/unix

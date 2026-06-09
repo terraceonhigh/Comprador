@@ -1,10 +1,10 @@
 // Command galatea-serve is a minimal standalone harness that serves the
 // connected MTP device over Galatea's userspace NFSv4 server
 // (github.com/terraceonhigh/galatea) via the mtpfsal FSAL — the same stack the
-// production bridge runs under `--nfs`, but without the menu-bar app, the WebDAV
-// path, or the resume store. Useful for exercising read/write/mutations against
-// real hardware from the command line (see `make galatea-dev` / `galatea-mount`
-// / `galatea-umount`): mount via mount_nfs, browse, copy, rename, move.
+// production bridge runs, but without the menu-bar app. Useful for exercising
+// read/write/mutations against real hardware from the command line (see
+// `make galatea-dev` / `galatea-mount` / `galatea-umount`): mount via mount_nfs,
+// then browse, copy, rename, move.
 package main
 
 import (
