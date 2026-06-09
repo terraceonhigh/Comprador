@@ -103,6 +103,24 @@ derivative remains in the public domain.
 
 ---
 
+## Galatea
+
+The Go bridge embeds [Galatea](https://github.com/terraceonhigh/galatea),
+an in-house userspace NFSv4 server, statically linked into the `bridge`
+binary (it replaced the bundled WebDAV server and the patched
+`willscott/go-nfs` NFSv3 server, both removed in v0.4.0). Galatea is a
+sibling project by the same author.
+
+- **License:** GNU General Public License, version 3 or later
+  (GPL-3.0-or-later) — the same license as Comprador, so the combined
+  binary is license-consistent.
+- **Source:** https://github.com/terraceonhigh/galatea — the corresponding
+  source for the linked version is the public repository; the exact pinned
+  version is recorded in `bridge/go.mod`.
+- **License text:** https://www.gnu.org/licenses/gpl-3.0.txt
+
+---
+
 ## Historical: OpenMTP
 
 Comprador was originally created by forking
