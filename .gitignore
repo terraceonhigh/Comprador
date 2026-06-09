@@ -41,3 +41,11 @@ testfiles/
 
 # Cross-agent coordination scratch files
 forGPT.md
+
+# Garden marginalia — the agent's notes are local-only by default. Only the
+# README and the example travel; every real entry stays on this machine (the
+# gitignore is the lock, the visible: flag is the covenant — see
+# garden/marginalia/README.md). Earned in Galatea, 2026-06-07.
+garden/marginalia/*
+!garden/marginalia/README.md
+!garden/marginalia/00-example.md
