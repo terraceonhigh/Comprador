@@ -1,18 +1,10 @@
-// Command galatea-serve is a standalone harness that serves the connected MTP
-// device over Galatea's userspace NFSv4 server (github.com/terraceonhigh/galatea)
-// instead of the patched willscott/go-nfs in bridge/nfs. It exists to prove the
-// Phase-4 read path end to end on real hardware — mount via mount_nfs, browse,
-// and pull a large/slow file with NO JUKEBOX, confirming NFSv4 tolerates the
-// multi-minute read NFSv3's RPC-timeout window could not.
-//
-// It is deliberately NOT wired into the production bridge binary yet: that binary
-// vendors a patched go-nfs fork, and integrating Galatea there needs the vendor
-// story solved without clobbering those patches (a follow-up). This harness
-// builds in module mode against the local Galatea replace:
-//
-//	go build -mod=mod -o /tmp/galatea-serve ./cmd/galatea-serve
-//
-// Read-only for now (mtpfsal mutations return ROFS).
+// Command galatea-serve is a minimal standalone harness that serves the
+// connected MTP device over Galatea's userspace NFSv4 server
+// (github.com/terraceonhigh/galatea) via the mtpfsal FSAL — the same stack the
+// production bridge runs under `--nfs`, but without the menu-bar app, the WebDAV
+// path, or the resume store. Useful for exercising read/write/mutations against
+// real hardware from the command line (see `make galatea-dev` / `galatea-mount`
+// / `galatea-umount`): mount via mount_nfs, browse, copy, rename, move.
 package main
 
 import (
