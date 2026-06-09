@@ -27,6 +27,7 @@ package staging
 import (
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path"
 	"sync"
@@ -223,6 +224,23 @@ func (r *Registry) Commit(mtpPath string, session *mtp.Session, objects *mtp.Obj
 	size, err := f.Size()
 	if err != nil {
 		return fmt.Errorf("staging stat: %w", err)
+	}
+
+	// Safety: never replace a non-empty device file with an empty upload. An
+	// open-without-write or a stray SETATTR(size=0) can leave a 0-byte staging
+	// temp; committing it would delete real bytes (a 1 GB file → gone). Discard
+	// instead and leave the device object untouched. A genuine truncate-to-empty
+	// is rare and trivially redone; an unbounded data loss is not — the error
+	// asymmetry favours skipping. (The visible "file shows 0 bytes" symptom is a
+	// separate staging-shadow bug in fillStaged, addressed elsewhere.)
+	if size == 0 {
+		if existing, ok := objects.GetByPath(mtpPath); ok && existing.Size > 0 {
+			log.Printf("staging: refusing empty commit over non-empty %s (%d bytes on device) — discarding",
+				mtpPath, existing.Size)
+			f.tmp.Close()
+			os.Remove(f.tmp.Name())
+			return nil
+		}
 	}
 
 	parentPath := parentOf(mtpPath)
