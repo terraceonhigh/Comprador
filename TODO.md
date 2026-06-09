@@ -184,15 +184,15 @@ kept galatea + x/sys). **Follow-up:** the now-inert Swift WebDAV plumbing
     unmount → reconnect → **re-seize OK** → remount in ~8s, mount browseable
     after. Bounded (3 recoveries/120s). The in-recovery re-seize succeeding is a
     big G2 de-risk: the app's USBSeizer clears the lock on its own recovery path.
-- **G2 — USB-seize recovery across the real lifecycle.** PARTIAL.
-  - **Landed** (`e5227398`): `killOrphanedBridges(locationID:)` — app kill/relaunch
-    leaves orphaned bridge subprocesses that contend for the interface (a real
-    lock contributor beside ptpcamerad); reap same-device orphans before the
-    seize. UNVERIFIED live.
-  - **Remaining:** ptpcamerad reclaim across sleep/wake; confirm the orphan-reaper
-    reduces the relaunch lock; physical replug is still the floor. Note: the app's
-    *own* recovery re-seizes cleanly (proven in G1b), so the lock mainly bites the
-    bare harness + churn, not normal use.
+- **G2 — USB-seize recovery across the real lifecycle.** Largely closed.
+  - **Orphan-reaper VERIFIED** (`e5227398`): `killOrphanedBridges(locationID:)`
+    reaps same-device orphaned bridges before the seize. Proven live — the next
+    relaunch reaped the orphan and **seized + mounted with NO physical replug,
+    the first clean relaunch all session.** Much of the churn lock was orphan
+    contention, not ptpcamerad.
+  - **Remaining:** ptpcamerad reclaim specifically across sleep/wake (physical
+    replug still the floor there). Normal app use + the G1b recovery re-seize
+    cleanly, so the everyday path is covered.
 - **G3 — Clean eject + Finder sidebar, tested in the GUI.** Eject must unmount
   cleanly + stop the bridge; volume appears/disappears correctly. (Headless
   SIGTERM bypasses Cocoa teardown — must verify the real path.)
