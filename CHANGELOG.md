@@ -1,5 +1,57 @@
 # Changelog
 
+## v0.4.0 — 2026-06-08
+
+The substrate swap. Comprador now serves the phone over **Galatea**, an
+in-house userspace NFSv4 server, replacing both earlier Finder layers — the
+original WebDAV server and the patched `willscott/go-nfs` NFSv3 server (and,
+with NFSv3, the entire JUKEBOX/prefetch workaround for its RPC-timeout window).
+NFSv4's floor tolerates multi-minute libmtp reads, so that machinery is gone.
+
+**Now working, end to end, live on a Pixel 6:**
+
+- **Read** — browse + stream, no JUKEBOX (a 95 MB file clean; a 1 GB file read).
+- **Write** — drag a file to the phone in Finder, byte-identical (a 1.07 GB
+  Shrek.mp4 committed in a single transfer).
+- **Full file management** — New Folder, delete, replace/overwrite, rename files
+  and folders (instant, in-place via `LIBMTP_Set_Object_Filename`), move files
+  between folders, and recursive folder move.
+
+**Resilience:**
+
+- The app **self-heals** when the bridge dies: it detects the exit, unmounts the
+  stale volume, re-spawns and remounts (bounded retry), so a crash blips instead
+  of hanging Finder.
+- **Orphaned-bridge reaper** clears subprocesses left by a prior run that were
+  contending for the USB interface — verified to let a relaunch seize without a
+  physical replug.
+
+**Correctness fixes:**
+
+- Files no longer revert to 0 bytes when opened (a staging entry was shadowing
+  the real size); the data-loss path it implied (an empty commit overwriting a
+  real file) is guarded.
+- The NFSv4 mandatory-attribute panic that could crash the bridge is closed via
+  a single attribute chokepoint.
+- Finder reports accurate free space (statfs), so drag-and-drop pre-flight works.
+- Changes made on the phone while a folder is open in Finder — a photo just taken,
+  a file deleted in the phone's Files app — now surface within a few seconds
+  instead of requiring a physical replug.
+
+**Removed:** the WebDAV server (`bridge/webdav`), the willscott NFSv3 path
+(`bridge/nfs`) and its prefetch cache, their vendored dependencies, and **the
+privileged root helper** (`comprador-helper` + its `SMAppService` daemon). The
+helper existed to launder root for `mount_nfs`; once we found loopback NFS mounts
+work unprivileged it was vestigial, kept only for a cosmetic `/etc/hosts` volume
+label. Removing it eliminates the bundle's largest privilege-escalation surface
+and the admin-password prompt; the cost is that volumes are named from mDNS
+(`<device>.local`) rather than a clean `/etc/hosts` label.
+
+**Known limitations:** verified on two vendors (Pixel 6 and Sony Xperia), not yet
+an exhaustive multi-vendor sweep; and a USB-interface lock can still require a
+physical replug specifically across system sleep/wake. See
+[docs/PRE-LAUNCH.md](docs/PRE-LAUNCH.md).
+
 ## v0.3.2 — 2026-05-09
 
 The working tag for v0.3.1's entitlements hotfix.

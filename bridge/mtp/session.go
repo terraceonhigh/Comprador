@@ -189,16 +189,47 @@ const (
 	OpCreateFolder
 	OpListDir // lazy enumeration of a single directory
 	OpRefreshStorages // re-query LIBMTP_Get_Storage to refresh free/max bytes per storage
+	OpGetPartial // partial-range read for chunked prefetch — see cache.download
+	OpSetObjectName // rename an object (file or folder) in place — no copy
+)
+
+// Priority controls which lane a request enters in the session goroutine's
+// run loop. The zero value (PriorityHigh) preserves pre-priority-queue
+// behaviour for callers that don't set it explicitly.
+//
+// PriorityLow is reserved for background chunked prefetch work introduced by
+// docs/PLAN-PREFETCH-REDESIGN.md Step 3 — small libmtp transfers that the
+// session goroutine should yield between, so a high-priority NFS RPC
+// arriving mid-prefetch waits at most one chunk's worth of latency
+// (~600 ms at 16 MB chunks per the empirical probe) rather than the full
+// multi-minute download.
+type Priority int
+
+const (
+	PriorityHigh Priority = iota // default: real NFS RPCs, UI-driven operations
+	PriorityLow                  // background prefetch chunks
 )
 
 // MTPRequest is sent to the session goroutine.
+//
+// Field roles by op:
+//   OpGetFile        : ObjectID, Writer
+//   OpGetPartial     : ObjectID, Offset, Size (chunk maxBytes), Writer
+//   OpSendFile       : ParentID, StorageID, Name, Size, Reader
+//   OpDelete         : ObjectID
+//   OpCreateFolder   : Name, ParentID, StorageID
+//   OpSetObjectName  : ObjectID, Name
+//   OpListDir        : Path
+//   OpRefreshStorages: (no inputs)
 type MTPRequest struct {
 	Op        MTPOp
+	Priority  Priority
 	ObjectID  uint32
 	ParentID  uint32
 	StorageID uint32
 	Name      string
-	Size      uint64
+	Size      uint64 // OpSendFile: total payload; OpGetPartial: chunk maxBytes
+	Offset    uint64 // OpGetPartial: byte offset within the source object
 	Path      string // for OpListDir: the directory path
 	Writer    io.Writer
 	Reader    io.Reader
@@ -206,13 +237,29 @@ type MTPRequest struct {
 }
 
 // MTPResponse is returned from the session goroutine.
+//
+// BytesRead is populated by OpGetPartial and reports how many bytes
+// libmtp actually returned (may be 0 at EOF, or shorter than the
+// requested Size near end-of-file). The cache's chunked-prefetch loop
+// uses BytesRead == 0 as its EOF signal, complementing the
+// offset >= size cap.
 type MTPResponse struct {
-	Entries  []*ObjectMeta
-	ObjectID uint32
-	Err      error
+	Entries   []*ObjectMeta
+	ObjectID  uint32
+	BytesRead uint32
+	Err       error
 }
 
 // Session owns the MTP device and serialises all operations.
+//
+// Requests enter via Do(), which routes to highPri or lowPri based on
+// req.Priority. The run loop drains highPri preferentially; lowPri is
+// only consumed when highPri is empty (see run() for the canonical
+// priority-select pattern). closing is a signal-only channel used by
+// Close() to terminate the run loop without closing the data channels —
+// closing a data channel that an in-flight Do() is mid-send into would
+// panic; the signal pattern keeps the use-after-Close contract enforced
+// by convention rather than by panic.
 type Session struct {
 	device   *Device
 	Objects  *ObjectMap
@@ -223,7 +270,9 @@ type Session struct {
 	// goroutines read it via TotalBytes / FreeBytes / StorageForPath.
 	storages   []Storage
 	storagesMu sync.RWMutex
-	requests   chan MTPRequest
+	highPri    chan MTPRequest
+	lowPri     chan MTPRequest
+	closing    chan struct{}
 	done       chan struct{}
 }
 
@@ -313,10 +362,12 @@ func NewSessionForLocation(locationID uint32) (*Session, error) {
 	}
 
 	s := &Session{
-		device:   dev,
-		Objects:  NewObjectMap(),
-		requests: make(chan MTPRequest, 16),
-		done:     make(chan struct{}),
+		device:  dev,
+		Objects: NewObjectMap(),
+		highPri: make(chan MTPRequest, 16),
+		lowPri:  make(chan MTPRequest, 16),
+		closing: make(chan struct{}),
+		done:    make(chan struct{}),
 	}
 
 	if err := s.initStorages(); err != nil {
@@ -334,16 +385,44 @@ func (s *Session) DeviceName() string {
 }
 
 // Close shuts down the session goroutine and releases the device.
+//
+// Two contract notes that changed in the Step 2 priority-queue refactor
+// (commit f5db97cd):
+//
+//   1. Calling Do() AFTER Close() is a contract violation and will leak
+//      the caller's goroutine on a blocked send. (Pre-refactor: would
+//      have panicked on send-to-closed-channel; post-refactor: the data
+//      channels are intentionally never closed, see the Session doc
+//      comment, so the leak is the silent failure mode.)
+//
+//   2. Calling Do() that is IN FLIGHT (already on highPri/lowPri but
+//      not yet dispatched) when Close() fires will likewise leak the
+//      caller's goroutine. The closing signal causes the run loop to
+//      return immediately rather than drain pending requests.
+//      (Pre-refactor: `for req := range s.requests` would drain
+//      buffered requests before exit.) In practice this only matters
+//      at process exit, where the leaked goroutines die with the
+//      process; the single caller (bridge/main.go:53 deferred) fires
+//      at that exact moment, so the change is operationally a no-op.
+//
+// If a future caller of Close() needs the drain-on-close property,
+// add a drain phase here that pumps highPri then lowPri to empty
+// before signaling closing.
 func (s *Session) Close() {
-	close(s.requests)
+	close(s.closing)
 	<-s.done
 	s.device.Close()
 }
 
 // Do sends a request to the session goroutine and waits for the response.
+// req.Priority routes to the high (default) or low lane.
 func (s *Session) Do(req MTPRequest) MTPResponse {
 	req.Response = make(chan MTPResponse, 1)
-	s.requests <- req
+	if req.Priority == PriorityLow {
+		s.lowPri <- req
+	} else {
+		s.highPri <- req
+	}
 	return <-req.Response
 }
 
@@ -394,11 +473,33 @@ func (s *Session) EnsureInMap(dirPath string) bool {
 	return ok
 }
 
+// run is the canonical Go priority-select pattern. The outer select
+// non-blockingly checks the high-priority lane: if a high-pri request is
+// waiting it runs immediately. Only when high-pri is empty does the
+// inner blocking select pick from either lane — and when both are ready
+// at that instant, Go's random pick may take low-pri, in which case the
+// next iteration still runs the high-pri request after at most one
+// dispatch's worth of latency. With 16 MB prefetch chunks (~600 ms
+// worst case) that latency budget is well inside macOS NFSv3's
+// timeo=10 (1 sec) first-timeout window. See docs/PLAN-PREFETCH-REDESIGN.md
+// "Amortization math" for the derivation.
 func (s *Session) run() {
 	defer close(s.done)
-	for req := range s.requests {
-		resp := s.dispatch(req)
-		req.Response <- resp
+	for {
+		select {
+		case req := <-s.highPri:
+			req.Response <- s.dispatch(req)
+			continue
+		default:
+		}
+		select {
+		case req := <-s.highPri:
+			req.Response <- s.dispatch(req)
+		case req := <-s.lowPri:
+			req.Response <- s.dispatch(req)
+		case <-s.closing:
+			return
+		}
 	}
 }
 
@@ -407,6 +508,17 @@ func (s *Session) dispatch(req MTPRequest) MTPResponse {
 	case OpGetFile:
 		err := s.device.GetFileToWriter(req.ObjectID, req.Writer)
 		return MTPResponse{Err: err}
+	case OpGetPartial:
+		data, err := s.device.GetPartialObject(req.ObjectID, req.Offset, uint32(req.Size))
+		if err != nil {
+			return MTPResponse{Err: err}
+		}
+		if len(data) > 0 {
+			if _, werr := req.Writer.Write(data); werr != nil {
+				return MTPResponse{Err: werr}
+			}
+		}
+		return MTPResponse{BytesRead: uint32(len(data))}
 	case OpSendFile:
 		parentID := s.resolveParentID(req.ParentID, req.StorageID)
 		id, err := s.device.SendFileFromReader(parentID, req.StorageID, req.Name, req.Size, req.Reader)
@@ -418,6 +530,9 @@ func (s *Session) dispatch(req MTPRequest) MTPResponse {
 		parentID := s.resolveParentID(req.ParentID, req.StorageID)
 		id, err := s.device.CreateFolder(req.Name, parentID, req.StorageID)
 		return MTPResponse{ObjectID: id, Err: err}
+	case OpSetObjectName:
+		err := s.device.SetObjectName(req.ObjectID, req.Name)
+		return MTPResponse{Err: err}
 	case OpListDir:
 		entries := s.populateDir(req.Path)
 		return MTPResponse{Entries: entries}
@@ -520,16 +635,26 @@ func (s *Session) populateDir(dirPath string) []*ObjectMeta {
 		newPaths[dirPath+"/"+sanitizeName(e.Name)] = true
 	}
 
+	// wasPopulated captures whether this directory had a prior enumeration the
+	// NFS client may already have cached. changed tracks whether this re-fetch
+	// altered the child set (an add or a remove) — if so we advance the
+	// directory's ModTime at the end so its next GETATTR reports a newer
+	// ChangeID and the client invalidates its cached READDIR. Only meaningful
+	// when wasPopulated: first-time population has no client cache to bust.
+	wasPopulated := s.Objects.IsPopulated(dirPath)
+	changed := false
+
 	// Reconcile: anything in the old cache for this directory that the
 	// device no longer reports is a phone-side delete; remove it (and any
 	// cached descendants) recursively. We only do this when there *was* a
 	// prior enumeration — first-time population has no old state to clean.
-	if s.Objects.IsPopulated(dirPath) {
+	if wasPopulated {
 		for _, oldChild := range s.Objects.ListChildren(dirPath) {
 			if !newPaths[oldChild.Path] {
 				log.Printf("Reconcile %s: removing %s (no longer on device)",
 					dirPath, oldChild.Path)
 				s.Objects.RemoveRecursive(oldChild.Path)
+				changed = true
 			}
 		}
 	}
@@ -537,18 +662,57 @@ func (s *Session) populateDir(dirPath string) []*ObjectMeta {
 	var result []*ObjectMeta
 	for _, e := range entries {
 		objPath := dirPath + "/" + sanitizeName(e.Name)
+		// A path the device now reports that we had no cached entry for is a
+		// phone-side add (e.g. a photo just taken). Flag it so we bump the
+		// directory's ModTime below. Only counts as a surfaceable change when
+		// the directory was already populated (the client may have it cached).
+		if wasPopulated {
+			if _, existed := s.Objects.GetByPath(objPath); !existed {
+				changed = true
+			}
+		}
+		size := e.Size
+		// Android reports filesize=0 for a file recently written over MTP until
+		// its media scan finalizes the object (a transient window of seconds to
+		// minutes). If we just sent a file, our cached entry holds the true size;
+		// a re-enumeration during that window would otherwise clobber it with 0,
+		// and VirtualRead trusts Size — serving an empty file (a double-click
+		// opens nothing) until the bridge restarts. So when the device reports a
+		// file as 0 but we already recorded a non-zero size at this path, keep
+		// ours. Keyed on PATH, not object ID: the SendObjectInfo handle stored at
+		// commit may differ from the item_id a later enumeration reports, which
+		// would make an ID match silently fail. Trade-off: a genuine in-place
+		// truncation-to-0 of a same-path object keeps its stale size — rare on
+		// MTP, where a rewrite gets a new object.
+		if !e.IsFolder && size == 0 {
+			if prev, ok := s.Objects.GetByPath(objPath); ok && !prev.IsDir && prev.Size > 0 {
+				log.Printf("enumerate reported size 0 for %s, preserving cached %d bytes", objPath, prev.Size)
+				size = prev.Size
+			}
+		}
 		obj := &ObjectMeta{
 			ID:        e.ID,
 			ParentID:  e.ParentID,
 			StorageID: e.StorageID,
 			Name:      e.Name,
 			Path:      objPath,
-			Size:      e.Size,
+			Size:      size,
 			ModTime:   time.Unix(e.ModTime, 0),
 			IsDir:     e.IsFolder,
 		}
 		s.Objects.Put(obj)
 		result = append(result, obj)
+	}
+
+	if changed {
+		// A child appeared or vanished out-of-band (photo taken, file deleted on
+		// the phone). Advance this directory's own ModTime so its next GETATTR
+		// reports a newer ChangeID and the NFS client drops its cached listing —
+		// otherwise the change stays invisible until a replug. Copy-then-Put so a
+		// concurrent reader never observes a torn ModTime (mirrors bumpDirMtime).
+		bumped := *meta
+		bumped.ModTime = time.Now()
+		s.Objects.Put(&bumped)
 	}
 
 	s.Objects.MarkPopulated(dirPath)

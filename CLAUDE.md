@@ -623,9 +623,10 @@ The load-bearing invariants in particular:
 2. **No outbound network connections from any Comprador binary.**
    The bridge's loopback NFS server is the only listener we
    maintain. No phone-home, no telemetry, no auto-update.
-3. **Helper RPC surfaces are minimal and strict-validated.** The
-   helper is being removed in v0.4.0; until then, do not add new
-   helper methods without a threat-model review.
+3. **No privileged helper.** The root `comprador-helper` daemon was
+   removed in v0.4.0 (loopback NFS mounts unprivileged, so it was
+   vestigial). Re-introducing any root component requires a
+   deliberate threat-model review.
 4. **Subprocess argv is array-form.** Never shell-interpolate
    user-supplied strings.
 

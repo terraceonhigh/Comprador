@@ -1,5 +1,333 @@
 # Comprador — TODO
 
+## ⚠ NEXT SESSION — start here
+
+### PIVOT (2026-06-07): v0.3.4 prefetch is PARKED — we're moving to Galatea.
+
+The Architect chose to **pivot to Galatea now** (Phase 4 of the original
+charge). Galatea's userspace NFSv4 substrate landed and is real: a 130 s
+READ completes exit-0 (R1), a 1 GB write→remount→read is byte-identical (R7),
+live headless read-write mount with no root, conformance suite green. That
+substrate has no RPC-timeout window — which means **the entire prefetch
+redesign exists to dodge a constraint that no longer exists.** So no further
+polish goes into it; the v0.3.4 plan below is parked, not deleted (the
+receipts stay as history and as the acceptance spec the new substrate must
+keep passing).
+
+**Branch:** `mercer/galatea-integration`. **Target:** v0.4.0 on Galatea.
+
+**Done this session (commit `99e6020f`):** the Phase-4 dry-fit —
+`bridge/mtpfsal/` implements Galatea's `pkg/virtual` FSAL (Directory/Leaf/Node)
+over `*mtp.Session`, compiling green against the **public** Galatea module
+(`v0.1.0-alpha`). **Sourcing — verified 2026-06-07:** the public release
+exposes `pkg/virtual` (the FSAL interface — the dry-fit builds against it), but
+does **NOT** contain the root `galatea.Serve` entry point. `Serve` was added
+post-release (Galatea DEC-022) and lives only on the unpushed canonical branch
+`claude/unruffled-dijkstra-7f1e6d`. So the **server-cutover step (2) below needs
+the canonical code**, via one of: (a) the Architect pushes Galatea's canonical
+branch and we pin to it, or (b) a local `replace github.com/terraceonhigh/galatea
+=> /Users/terrace/Labs/Galatea/.claude/worktrees/unruffled-dijkstra-7f1e6d` in
+`bridge/go.mod`. **Resolved (2026-06-07):** the harness uses a separate
+Daedalus pushed Galatea and cut **`v0.2.0-alpha`** (has `Serve` +
+`ServeListener` + the bounded-READ contract). So the cutover is done — see the
+APP CUTOVER milestone below. The earlier `galatea.mod`/build-tag scaffolding is
+retired.
+
+### APP CUTOVER DONE — full app LIVE end-to-end on Galatea, Pixel 6 (2026-06-08, commits `674a8827` + `06509c81`).
+
+The **entire menu-bar app** ran on Galatea: launch → IOKit detected the Pixel 6
+→ spawned the bridge → seized it → `galatea.ServeListener` over `bridge/mtpfsal`
+→ `mountNFS` at `vers=4.0` → volume mounted at `~/Library/Application Support/
+Comprador/Volumes/Pixel-6`; browsed the full tree and read+decoded a photo
+byte-exact through the app's own mount. How:
+- `main.go` `--nfs` path now serves `galatea.ServeListener(ctx, root, resolver,
+  listener)` on the already-bound listener (`signal.NotifyContext` for ctx;
+  willscott `bridge/nfs` kept in-tree but unimported, for revert).
+- galatea pinned `v0.2.0-alpha`, **manually vendored** (standard modules.txt
+  stanza). NEVER run `go mod vendor` (clobbers the vendor-only-patched go-nfs)
+  or `-mod=mod` for production (pulls pristine go-nfs → `bridge/nfs` won't
+  compile). Vendor mode skips go.sum, so go.sum has no galatea entry by design
+  (any non-vendor command — `go mod tidy`, `go get` — will trip until one's added).
+- One Swift line: `mountNFS` `nfsvers=3,nolocks` → `vers=4.0`.
+- **statfs fixed + verified (commit `05333003`):** `mtpfsal.fillStatfs` reports
+  real device capacity (Pixel 6: 118.4 GB total / 29.9 GB free via `statvfs`,
+  was 0). Finder's "Zero bytes available" / drag-drop space-block (error 100060
+  precursor) resolved. Galatea-side was already correct; this was a Comprador
+  gap. **BUT** drag-and-drop *to the phone* still fails further along — writes
+  are ROFS until the write port lands; statfs only unblocks the space pre-flight.
+  Reads from the phone work fully.
+- **Eject answer for Daedalus (Correspondance/04 drain-shape Q):** Comprador
+  needs **wait**, not server-interrupt. `DeviceSession.teardown` unmounts
+  (synchronous `DADiskUnmount`, force-fallback) THEN `bridge.stop()` — so the
+  client disconnects before the device releases, honoring his 06 ordering note.
+  *Send this to Daedalus.*
+- **Not done live:** clean-eject and Finder-sidebar visibility need the GUI
+  (headless SIGTERM bypasses Cocoa `terminate`→`teardown`, leaving a dangling
+  mount — an artifact of the kill, not the app logic). A non-headless run should
+  confirm the eject menu item + Finder Locations entry.
+
+### READ PATH DONE — LIVE-PROVEN on a Pixel 6 (2026-06-07, commit `ac6b5193`).
+
+`galatea.Serve` backed by `bridge/mtpfsal` mounts on macOS (headless, no root,
+vers=4.0), browses the full Android tree, and reads files correctly with **no
+JUKEBOX**. Receipts: a 3.1 MB JPEG byte-exact + md5-stable across reads; a
+**95 MB mp4 (1.9× the old 50 MB JUKEBOX threshold) streamed clean in 17 s,
+exit 0** — the willscott path would have refused it with NFS3ERR_JUKEBOX.
+Ground truth (not just md5-self-consistency): both JPEGs `file`-decode with
+full EXIF + SOF dimensions (3072×4080) + trailing FFD9 — correct bytes across
+all offsets, so OpGetPartial seeks right. **One-cursor seam answered (Galatea
+Correspondance/04 Q1):** a small read of a *different* file returned correct
+bytes in ~1.26 s **while the 95 MB read was in flight** — no starvation, no
+deadlock. Because each VirtualRead is one rsize-bounded OpGetPartial, the
+session goroutine interleaves chunks rather than holding for a whole file (the
+old synchronous willscott download is exactly what it doesn't do). Tell Daedalus.
+Run it: `make galatea-dev` → note `PORT=` → `make galatea-mount PORT=N` →
+browse/read `/tmp/galmnt` → `make galatea-umount`. Build plumbing: harness is
+`bridge/cmd/galatea-serve` built via the separate `bridge/galatea.mod`
+(production `bridge/go.mod` stays pristine; `go mod vendor` is never run because
+it would clobber the vendor-only-patched go-nfs).
+
+Two live bugs fixed (both in the commit): NFSv4 OPEN lands in
+`VirtualOpenChild` (not OpenSelf), so a blanket-ROFS stub returned EROFS on
+every read; and `ChangeID` is a mandatory GETATTR attribute (server panics if
+requested-but-unset — the M-006 lesson).
+
+### WRITE PATH DONE — Finder drag-and-drop to the phone CONFIRMED on Pixel 6 (2026-06-08, commit `cdd67af3`).
+
+The money path (drag a file *to* the phone) works end to end over Galatea
+NFSv4 + MTP, **in the real menu-bar app via Finder** — not just a CLI proxy.
+Receipts: a 4135 B file dragged into `Documents/` committed via one
+`SendFile(name="period_piece.md", size=4135)` and re-listed (7→8 entries), no
+error dialog; an 88 B CLI `cp` round-tripped md5-identical (`02a3a279…`).
+- **New neutral pkg `bridge/staging`** (depends only on `mtp`+stdlib, never
+  `nfs`): MTP has no partial write, so a file buffers to a temp file and is sent
+  whole on commit. **Synthetic high-range handles (`1<<31+`)** give NFSv4 a
+  stable filehandle at OPEN before MTP assigns an object ID at commit; the
+  registry resolves them before the device ObjectMap.
+- `mtpfsal`: `VirtualOpenChild(create)` seeds staging (re-open reuses, O_TRUNC
+  resets); `VirtualWrite` buffers at offset; **commit fires on the idle timer
+  ONLY (2 s after the last write), `VirtualClose` is a no-op.** This was the
+  load-bearing fix: the macOS NFSv4 client copies as `OPEN(create)→CLOSE(empty)
+  →re-OPEN→WRITE→CLOSE`, so committing on the first (empty) CLOSE shipped a
+  **0-byte `SendFile`**, dropped the staging entry, and turned the re-open into a
+  write against a committed object → ROFS → Finder **"locked volume"** (seen
+  live as `SendFile(size=0)`). Idle-only keeps the entry alive across all the
+  client's opens — willscott-proven (1 GB R7). Trade-off: a >2 s mid-copy write
+  stall commits a partial file (follow-up: track open-count).
+  `VirtualGetAttributes` staging-aware (size/handle/changeID from temp file, so a
+  fresh file reports a growing size not 0); `VirtualSetAttributes` lenient —
+  apply what `in` carries NOT the `requested` mask (the SETATTR(size=0) trunc
+  lesson), then fill `out` via GetAttributes so no mandatory attr is unset
+  (M-006). AppleDouble (`._*`, `.DS_Store`) staged-then-discarded, never sent.
+- **Gotcha:** CLI `cp` exits 1 on its trailing native-xattr copy (we don't do
+  SETXATTR/named-attrs) — but data lands first, and real Finder-on-NFS stores
+  xattrs in `._` sidecars (→ our discard path), so the Finder drag sidesteps it.
+- **Build note:** the GUI app builds via `make run-swiftc` (globs
+  `Sources/*.swift`), NOT `make run` — the Xcode `.pbxproj` was never updated to
+  include `DeviceSession.swift` (0 refs), so the Xcode/`make run` build fails
+  with "cannot find type 'DeviceSession'". Fix the pbxproj or keep using swiftc.
+
+### MUTATIONS DONE — full suite LIVE in Finder on Pixel 6 (2026-06-08, commits `92493b8f` + `c6ca99cc`).
+
+mkdir, delete, replace/overwrite, file rename, file move between folders, folder
+rename, and **recursive cross-dir folder move** all work. New MTP op
+`OpSetObjectName` (`LIBMTP_Set_Object_Filename`) = in-place rename of files AND
+folders (Pixel rc=0); copy+delete / `moveDirTree` fallback for devices that
+reject it. Overwrite stages new bytes by path without deleting the device object
+so the NFSv4 filehandle stays stable across the open (deleting mid-open → -43).
+**Panic fix (crashed the whole bridge):** the "vanished mid-traversal" GETATTR
+branch left mandatory named-attr flags unset → server panic; now a tombstone via
+fillCommon. Every attr-fill path must set FileHandle + named-attr flags (+
+ChangeID) — M-006.
+
+### WILLSCOTT PATH RETIRED — `bridge/nfs/` + go-nfs deleted (2026-06-08, commit `3def6d9a`, −12k lines).
+
+Large-file write proven first (1.07 GB Shrek.mp4, single SendFile, idle-commit
+held). Then deleted `bridge/nfs/` (go-nfs FSAL + JUKEBOX cache), `cmd/nfsstub`,
+and orphaned vendored deps (go-nfs, go-nfs-client, rasky/go-xdr, go-billy,
+golang-lru). Vendor edited BY HAND (never `go mod tidy`/`vendor` — would perturb
+the manually-vendored galatea); two build checkpoints green via `make build-all`
++ `make bridge`. WebDAV (`bridge/webdav`+`resume`) left intact — it's main.go's
+default mode, not the willscott path.
+
+### WEBDAV REMOVED (2026-06-08, commit `0d952422`).
+
+WebDAV was the original Finder layer; the app has served Galatea NFSv4 only
+since the cutover, so it was dead weight. Deleted `bridge/webdav/` + the
+WebDAV-only `bridge/resume/` store; main.go serves Galatea unconditionally
+(`--nfs` kept as an accepted no-op for the app's arg compat). Orphaned deps
+`golang.org/x/net` + `google/uuid` removed from go.mod/go.sum/vendor (hand-edited,
+kept galatea + x/sys). **Follow-up:** the now-inert Swift WebDAV plumbing
+(`ResumeCompanion.swift`, `MountManager.mountWebDAV`, proto-branching in
+`BridgeProcess`/`DeviceSession`) is harmless but should be swept.
+
+---
+
+## v0.4.0 / 1.0 SHIP PLAN — decisions (2026-06-08, Architect)
+
+**Decisions made:**
+1. **WebDAV removed** (above) — Galatea NFSv4 is the only serving mode.
+2. **1.0 is GATED behind the recovery work** — the two robustness gates below
+   are hard blockers for a 1.0 user-facing release. A 0.4.0 dev/preview tag can
+   precede them, but not 1.0.
+3. **Two physical Android devices are available for testing** — use both for the
+   multi-vendor MTP coverage gate before claiming broad Android support.
+
+**SHIP GATES for 1.0 (hard blockers — a non-technical user can't debug these):**
+- **G1 — FSAL panic resilience.**
+  - **G1(a) DONE** (`114de71f`): single `setMandatoryAttrs` chokepoint; every
+    VirtualGetAttributes exit fills the mandatory NFSv4 attrs. Crash-source
+    reduction (the panic fires in Galatea's encoder, so no recover() here catches
+    it — catch-all is Daedalus's per-request recover(), asked in Correspondance 07).
+  - **G1(b) DONE + VERIFIED LIVE** (`5b3cb484`): app self-heals on bridge death.
+    `kill -9` on the live bridge → `exited unexpectedly` → `self-healing (1/3)` →
+    unmount → reconnect → **re-seize OK** → remount in ~8s, mount browseable
+    after. Bounded (3 recoveries/120s). The in-recovery re-seize succeeding is a
+    big G2 de-risk: the app's USBSeizer clears the lock on its own recovery path.
+- **G2 — USB-seize recovery across the real lifecycle.** Largely closed.
+  - **Orphan-reaper VERIFIED** (`e5227398`): `killOrphanedBridges(locationID:)`
+    reaps same-device orphaned bridges before the seize. Proven live — the next
+    relaunch reaped the orphan and **seized + mounted with NO physical replug,
+    the first clean relaunch all session.** Much of the churn lock was orphan
+    contention, not ptpcamerad.
+  - **Remaining:** ptpcamerad reclaim specifically across sleep/wake (physical
+    replug still the floor there). Normal app use + the G1b recovery re-seize
+    cleanly, so the everyday path is covered.
+- ✅ **G3 — Clean eject DONE + GUI-VERIFIED** (`59d58606` + the connect-cancel fix).
+  Eject unmounts + stops the bridge and the volume stays gone. Two fixes:
+  (a) connect() now re-checks the cancel flag after its long awaits so an eject
+  mid-connect doesn't re-mount; (b) **eject-suppression** — `bridge.stop()`
+  releases the USB, the kernel re-enumerates the still-plugged device and fires a
+  detach→attach burst that was auto-reconnecting it; we now suppress reconnect
+  for 6s after an eject (keyed by Location ID), so the burst is swallowed but a
+  genuine later replug reconnects. Trace confirmed: `Ignoring attach — device was
+  just ejected`. Verified live, and ejecting one of two devices left the other
+  mounted.
+- **G4 — Multi-vendor MTP coverage. STRONG SIGNAL (not exhaustive).** Pixel 6 +
+  Sony Xperia **XQ-BT52** (VID 0x0FCE) ran simultaneously: both seized, mounted,
+  and served; the Pixel even self-healed (G1b) through the two-device seize churn.
+  So a second vendor works end-to-end. Still want: a broader sweep + deliberate
+  quirk-probing across more vendors, but the core multi-device + second-vendor
+  path is proven.
+
+**Code-review findings (2026-06-08, flagged — not 0.4.0 blockers):** a review of
+the session's diff confirmed the logic (most candidates refuted: the "unset
+SizeBytes/Space → panic" pair is false — those getters return `(v, bool)`, only
+the mandatory four panic; the Go "map use-after-free" is false — rehash doesn't
+invalidate stored heap pointers). Real, lower-severity items for follow-up:
+- **Eject-during-connect re-mount race** (Swift, pre-existing, feeds **G3**):
+  `teardown()` doesn't cancel an in-flight `connect()` — eject during the 5 s
+  settle or bridge spawn lets `connect()` resume and mount a device the user
+  ejected. Fix when doing G3: have `connect()` re-check `tearingDown`/`isConnecting`
+  after its awaits before mounting.
+- **Lifecycle-flag synchronization** (Swift): `intentionalStop`/`isConnecting`/
+  `tearingDown`/`recoveryAttempts` are read off-MainActor from the
+  terminationHandler; data races can cause a spurious recovery or a double
+  connect. Wants a small actor/queue discipline — pairs with the G1b/G2 hardening.
+- **ObjectMap read-modify-write** (Go, pre-existing pattern): `bumpDirMtime` /
+  `staging.Commit` mutate a map-owned `*ObjectMeta` then re-`Put`; a concurrent
+  `Remove` can resurrect a ghost entry. Low-severity (mtime staleness) in
+  single-user use; a contained fix is an atomic `ObjectMap.Touch(path)`.
+- `recoveryAttempts` window is conservative (gives up after 3 crashes <120 s
+  apart even if each recovered) and `stop()`'s "force kill" sends SIGINT not
+  SIGKILL (works — the bridge catches SIGINT — but mislabeled). Tuning, not bugs.
+
+**Cleanup before tagging (not gates):**
+- ✅ **Privileged helper REMOVED** (`5bedbf24`) — Architect-approved + GUI-verified
+  (no admin prompt, mounts clean, helper-free). It was vestigial (loopback NFS
+  mounts unprivileged); volumes now name from mDNS `.local`. Biggest privilege
+  surface gone.
+- ✅ NOTICES.md Galatea (GPL-3.0) attribution added; SECURITY.md refreshed +
+  loopback-only bind re-verified (`main.go` binds `127.0.0.1:0`, hands Galatea
+  the listener), no outbound.
+- Sweep the Swift WebDAV plumbing (above).
+- Xcode `.pbxproj` lacks `DeviceSession.swift` → `make run` fails; release uses
+  `make dist-swiftc` (works). Fix pbxproj or drop the Xcode path.
+- Re-notarize (deps changed) via the `macos-notarize` skill; bump
+  `0.3.4-dev` → `0.4.0`.
+- (LOW) >2 s-stall partial-commit hardening — didn't bite at 1 GB.
+- (LOW) Throughput tuning — read ~5.6 MB/s (small NFS rsize → many
+  `OpGetPartial`); try larger advertised rsize / read-ahead coalescing.
+
+**Notify Daedalus:** eject-drain answer (Comprador needs **wait** — see APP
+CUTOVER) + the per-request `recover()` suggestion (G1).
+
+The reply opening Phase 4 is delivered to Daedalus's mailbox:
+`~/Labs/Galatea/Correspondance/04-phase-four-and-the-one-cursor/` (uncommitted
+in Galatea's repo — commit/push there is the Architect's hand). It poses three
+seam questions (open-owner sequencing vs. a global funnel; the uint32-handle
+gift; where MTP's reality will want the interface to flex).
+
+---
+
+### PARKED — v0.3.4 prefetch release (pre-pivot state, kept as history)
+
+State as of **2026-05-18 night** (Step 3 landed, yield test passed,
+cascade fix verified by construction + empirically via the
+discriminating yield test).
+
+**Live spec for the parked stretch:** [`docs/PLAN-V0.3.4-RELEASE.md`](docs/PLAN-V0.3.4-RELEASE.md).
+It carries the go/no-go gates for the v0.3.4 release, the
+remaining test rounds, and the build/tag work.
+
+**Where the cascade fix stands:** the v0.3.3 cascade *as observed*
+is fixed. Step 3 (chunked prefetch at PriorityLow, commit `74702901`)
+breaks the session-goroutine-locked-for-minutes link of the cascade
+chain by construction. The yield test on 2026-05-18 ~20:41 measured
+183 ms for a 137 KB high-pri read while a 9 GB low-pri prefetch was
+running — well inside the kernel-side mount-down threshold. The
+*class* of cascade is one ship away from being impossible: Step 5
+(soft/interruptible mount, ~1 hour of work) catches any future
+fault regardless of cause.
+
+**Canonical receipts:**
+
+- [`docs/PLAN-V0.3.4-RELEASE.md`](docs/PLAN-V0.3.4-RELEASE.md) — live
+  release spec, go/no-go gates, remaining test rounds (T1–T7).
+- [`docs/MISTAKES.md`](docs/MISTAKES.md) entry 4 — full receipt of
+  the cascade investigation arc, including the step2 control,
+  prod control, step3 yield-test, and the "is v0.3.3 fixed"
+  framing with caveats.
+- [`docs/PLAN-PREFETCH-REDESIGN.md`](docs/PLAN-PREFETCH-REDESIGN.md) —
+  the original working spec for Scope C. Steps 1, 2, 3 done; Steps
+  4 (decide in/defer), 5 (soft mount), 6 (logging strip) remain.
+- [`correspondence/15-the-day-the-harness-bit-twice/letter.md`](correspondence/15-the-day-the-harness-bit-twice/letter.md) —
+  the post-cascade reflection that framed the methodological
+  lessons. Still load-bearing for harness discipline; the
+  by-construction fix did not invalidate any of letter 15's
+  framings, only added a positive empirical receipt.
+
+**Next concrete moves, in order:**
+
+1. **Step 5 — soft/interruptible mount.** [MountManager.swift](MenuBarApp/Sources/MountManager.swift).
+   ~1 hour. Universal safety boundary; ships with v0.3.4 regardless.
+2. **Step 6 — strip per-RPC logging.** ~2 hours. Removes the
+   stderr-firehose CPU load that contributed to the morning's
+   cascade footprint.
+3. **Decide on Step 4 (OpSendFile chunking).** In v0.3.4 or
+   deferred to v0.3.5 with disclosure. See the release plan.
+4. **T1 cold-Spotlight cascade-shape test** (one reboot + one
+   drag). Produces the in-vivo cascade-suppression evidence the
+   yield test is a proxy for.
+5. **CHANGELOG + tag + DMG + GitHub release.**
+
+**Branches currently in play:**
+
+- `master` — at `v0.3.3` merge (`8f818bc1`), unchanged since the
+  retraction.
+- `claude/changelog-v0.3.3` (PR #24) — stale CHANGELOG for retracted
+  v0.3.3. **Close.**
+- `claude/build-identity` (PR #25, 10 commits) — build-identity
+  stamping + harness + cprLog conversion. **Should rebase into
+  the v0.3.4 release path** (or merge first, depending on review
+  preference — see release plan B1).
+- `claude/prefetch-redesign` (this branch, ahead of build-identity)
+  — Steps 2 + 3, harness fixes, all of today's durable work.
+  **This is the branch v0.3.4 ships from** after Steps 4/5/6 land
+  and tests pass.
+
+---
+
 ## Current state — end-of-stretch 2026-05-17
 
 **Two pre-launch blockers cleared in this stretch:** the NFS READ
@@ -328,6 +656,28 @@ for context.
 
 Items the launch playbook ([LAUNCH-PLAYBOOK-DRAFT.md](docs/LAUNCH-PLAYBOOK-DRAFT.md))
 assumes have shipped before Day 0. Block the v0.4.0 tag.
+
+- [ ] **Finder copy-progress regression — progress window tracks
+      Mac→NFS-cache, not Mac→phone.** Observed 2026-05-18 evening
+      during the step3 yield-test setup, against build `74702901`.
+      Finder reports a Mac→phone copy as "done" when the bytes have
+      landed in the bridge's local staging dir, but the libmtp send
+      to the phone is still in flight. User sees "100%" while the
+      file is not yet on the device.
+
+      Architect characterised this as a *regression* — earlier
+      Comprador versions reportedly tracked the MTP-send completion
+      accurately. Bisect candidate: the resumable-upload commit-
+      decoupling work in `bridge/webdav/resume_endpoint.go` and the
+      NFS COMMIT path in `bridge/nfs/write.go`. The hypothesis is
+      that COMMIT now returns when staging is complete rather than
+      when libmtp confirms — investigate before v0.4.0 because the
+      UX dishonesty (user thinks the file is on the phone, ejects,
+      and it isn't) is a launch-grade trust problem.
+
+      Not Step-3-introduced (Step 3 only touched READ-side cache
+      code; the WRITE/COMMIT path is unchanged). Reported here so
+      the next investigation has a durable record.
 
 - [ ] **User-facing disclosure of the `ptpcamerad` kill.** Comprador's
       bridge kills `ptpcamerad` (and `AMPDeviceDiscoveryAgent`) to win

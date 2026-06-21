@@ -1426,6 +1426,425 @@ QuickLook icon-view alert also reduced: yesterday's tests
 showed multiple stacked alerts; with prefetch, only one alert
 fired and the file became previewable on cache populate.
 
+**2026-05-18 morning — v0.3.3 shipped, immediately retracted.**
+The same `a405ed48` async prefetch code, with no source changes
+between the 2026-05-17 verification above and this morning,
+produced a **whole-system cascade-freeze** on first reproduction
+after v0.3.3 was tagged + released:
+
+- Architect installed CI-built v0.3.3 DMG from GitHub Releases
+- Sent a small HTML file into `Internal Shared Storage/Download/`
+  (which contained Attenborough.mkv 9 GB + a 139 MB documentary)
+- Finder copy progress hung
+- Finder stopped responding to clicks
+- Dock failed to launch processes
+- Keyboard input died in regular apps
+- Recovery required SSH-from-phone-via-tmux + `sudo killall -9
+  bridge` + `sudo umount -f`
+
+Forensics in `/Library/Logs/DiagnosticReports/`:
+
+- `bridge_2026-05-18-160548_gala.diag` — bridge writing 2.15 GB
+  file-backed memory in 196 sec (libmtp downloading to prefetch
+  cache temp file)
+- `bridge_2026-05-18-161814_gala.diag` — same shape, different run
+- `bridge_2026-05-18-165146_gala.diag` — same shape, the
+  reproduction directly observed
+- `Comprador_2026-05-18-165532_gala.cpu_resource.diag` — Swift
+  app at 92% CPU in its stderr `readabilityHandler` closure
+  (the `NSConcreteFileHandle._monitor` callback inside
+  `BridgeProcess.start(useNFS:...)`), hot-looping to drain the
+  bridge's per-read logging firehose
+
+Forensically reconstructed chain: small WRITE landed fast →
+parent dir mtime bumped → Finder icon-view fired READs against
+directory members → Attenborough.mkv hit JUKEBOX threshold →
+`cache.beginPrefetch` dispatched a goroutine calling
+`session.Do(OpGetFile)` → libmtp session goroutine locked for
+the full ~5 min download → all other NFS RPCs queued indefinitely
+→ kernel marked mount "not responding" (`Status flags: 0x2` per
+`nfsstat -m`) → `hard,nointr` mount option cascaded the
+unresponsiveness to every system process that touched the mount
+path.
+
+**2026-05-18 evening — same code, different machine state, no
+freeze.** Architect rebuilt commit `92d4e6d5` (code-equivalent to
+the retracted v0.3.3 — the chain from `92d4e6d5` to the
+merge `8f818bc1` is one docs-only commit) and tested the same
+reproduction shape (drag small HTML into `Download/` containing
+Attenborough + 139 MB doc). **Worked end-to-end.** No system
+freeze. No "Server connections interrupted" alert. No bridge
+death.
+
+The diff between the two runs is environmental, not source:
+
+| | Morning run (cascade) | Evening run (clean) |
+|---|---|---|
+| Source code | `a405ed48` (via `8f818bc1`) | `92d4e6d5` (same source) |
+| Binary | CI-notarized DMG from GitHub Release | Locally-built `make app-swiftc` |
+| Phone | Xperia XQ-BT52 | Xperia XQ-BT52 |
+| Destination dir contents | Attenborough + 139 MB doc | Attenborough + 139 MB doc |
+| Drag target | Small HTML | Small HTML |
+| Outcome | System cascade-freeze | Clean end-to-end |
+
+Between the runs:
+- Multiple `killall Comprador`, `killall -9 bridge`, `killall
+  Finder` cycles
+- `make clean` runs that wiped build artifacts
+- `/Applications/Comprador.app` deleted and reinstalled (different
+  bundle each install)
+- `~/Library/Application Support/Comprador`, `~/Library/Caches/
+  com.comprador.app`, `~/Library/Preferences/
+  com.comprador.app.plist` all deleted
+- Orphan `dns-sd` for `Comprador-XQ-BT52` killed
+- Xperia physically unplugged + replugged at some point
+- Worktrees touched
+- Probably mds_stores / fseventsd state shifted
+
+**Verified via log grep 2026-05-18 evening:**
+
+Architect re-ran `log stream --predicate 'process == "bridge" OR
+process == "Comprador"' > /tmp/bridge-92d4e6d5.log` covering the
+drag-and-drop window. Grep for `cache.beginPrefetch|JUKEBOX|onread`:
+**zero hits.** The bridge's per-read logging (which produced
+hundreds of stderr lines per second during the morning's cascade,
+visible in the Comprador 16:55 .diag's heaviest stack) was silent
+during the evening's drag. The Swift parent's `readabilityHandler`
+NSLogs every chunk of bridge stderr into unified logging via
+"Comprador bridge: %@" — so absence in the unified log means the
+bridge didn't write those lines, which means the prefetch path
+never engaged.
+
+**Conclusion: the cascade is gated on Finder/Spotlight READ-probe
+activity, not on our code path running unconditionally.** The morning
+cascade required three things to align:
+
+1. Bridge running with `cache.beginPrefetch` dispatchable (any
+   code path that issues a >50 MB MTP READ against a known-large
+   phone-resident file)
+2. **Finder/Spotlight/QuickLook actively issuing parallel READs**
+   against directory members in the prefetch-eligible size range —
+   typically when the volume is new to Spotlight's per-volume
+   index, icon-view is rendering thumbnails, or a fresh
+   `mds_stores` is crawling
+3. `hard,nointr` mount semantics turning the resulting libmtp lockup
+   into a system-wide cascade
+
+The morning's reproduction had all three. The evening's reproduction
+had (1) and (3) but not (2). So the cascade didn't happen — not
+because the code is non-deterministic, but because the **trigger
+condition** (Finder probing during the drag window) didn't fire.
+
+**What this tells us:**
+
+1. **The cascade mechanism is real** — the .diag forensics are
+   unambiguous. The 2.15 GB file-backed-write trail through
+   `runtime.asmcgocall → write` is exactly what `cache.download`
+   does. The mechanism reliably cascades the system *when* it
+   fires.
+2. **The cascade trigger is deterministic on Finder behavior**,
+   which is itself a function of macOS's per-volume indexing
+   state. Conditions that increase trigger probability:
+   - First-time-seeing-this-volume Spotlight crawl (fresh
+     `XQ-BT52.local` or fresh phone)
+   - Fresh QuickLook thumbnail generation backlog (no cached
+     thumbs for the directory contents)
+   - QuickLook backlog from a previous session unable to
+     complete (large-file READs queued from a prior crash)
+   **View mode is not the gating variable** — architect confirmed
+   2026-05-18 evening that both morning's cascade run and
+   evening's clean run were in **icon view**. So the differentiator
+   between them is purely macOS's per-volume indexing/thumbnail
+   cache state, which was cold in the morning (fresh DMG install,
+   fresh mount) and warm by the evening (many mount/unmount
+   cycles + cache wipes that didn't touch `mds_stores`).
+   The *worst-case user scenario* is exactly the launch demo:
+   first-time user, plugs phone in, the mount is brand-new to
+   Spotlight, Finder is in icon view (the default), user drops
+   a file. **First-impression cascade.**
+3. **A bug that fires under specific-but-common conditions
+   is still unshippable.** A bug that "always fires on first
+   user encounter, then mysteriously stops repro'ing on
+   subsequent attempts" is *worse* than a deterministic one —
+   it makes the architect look incompetent ("works on my
+   machine") while sandbagging every new user.
+4. **The fix direction is unchanged.** Chunked-yield prefetch
+   (PLAN-PREFETCH-REDESIGN.md Option D) breaks the mechanism;
+   soft-mount safety boundary (Step 5) catches any future
+   unrelated fault.
+
+**What we don't know:** which exact Finder-behavior delta gates
+the trigger. Could be (a) Spotlight's per-volume first-encounter
+backlog, (b) Finder view mode at drag time, (c) QuickLook
+backlog, (d) something else. Resolving (a)/(b)/(c) is interesting
+but not load-bearing for the fix — the redesign neutralizes the
+mechanism regardless of which trigger condition obtains.
+
+**2026-05-18 evening (later) — step2 variant tested, prefetch fired,
+no cascade.** First test through the post-letter-15 harness. Build
+`54c01f78` carries (i) the priority-queue refactor in
+`bridge/mtp/session.go` (no PriorityLow callers — behaviourally a
+no-op for current execution paths) and (ii) the strict
+`scripts/test/clean.sh` Volumes/ check.
+
+Pre-flight: `recover.sh` clean state, `Volumes/` absent, no
+Comprador processes. Procedure: `setup.sh step2` →
+`mdutil -E "<mount-path>"` → architect copied
+`How_a_Computer_Works.webm` (135 MB) into `Download/` (which already
+contained Attenborough.mkv 9 GB + the original webm). `finish.sh step2`.
+
+Log: `/tmp/test-step2-194515.log` (311 lines).
+
+| Signature | Count | What it means |
+|---|---|---|
+| `cache.beginPrefetch START` | 4 | Prefetch path engaged for Attenborough, webm (id=19), `.nfs.20051025.1b50` silly-rename, webm (id=36) |
+| `cache.download START` | 3 | One per distinct MTP object descent |
+| `cache.download END (OK)` | 4 | All completed (3 unique + the original webm under id=19 hidden by silly-rename) |
+| `READ JUKEBOX` | 10 | NFS client retried 7× for `.nfs.20051025.1b50` in 3 s |
+| `not responding` | **0** | No kernel mount-down signal |
+| `Server connection` | **0** | No Finder "interrupted" alert |
+| `cache.open` per-RPC storm | **0** | Stderr quiet during the wait |
+| `Adding notification request CE85` | 0 | No USB-claim race |
+
+Session-goroutine serialization confirmed: Attenborough.mkv took
+4m16s on the libmtp wire; the webm (id=19) entered the channel
+buffer at the same millisecond and completed 4 s later (so the
+session goroutine pulled it the instant Attenborough returned and
+the smaller libmtp transfer finished in ~5 s). This is what the
+single-channel implementation would have done before Step 2 —
+exactly as predicted, since no caller sets `PriorityLow` yet.
+
+**Verdict bucket** (per the pre-committed criteria, *not* re-framed
+after the run): row 3 — **`cache.beginPrefetch START` present, no
+cascade fired.** Datapoint of interest.
+
+**Honest accounting of what this run does and does not show:**
+
+- **Does show:** the harness fix held (no `clean.sh` cascade,
+  `finish.sh` ran to completion), Step 2's priority queue is wired
+  correctly and inert (no deadlock, no goroutine leak, no behaviour
+  delta vs single-channel for the same call site set), and the
+  cascade trigger conditions met but did not fire — the session
+  goroutine was tied up for 4+ minutes returning JUKEBOX on every
+  parallel READ, and macOS did not mark the mount "not responding."
+- **Does not show:** that Step 2 "fixed" or "changed" the cascade
+  in any way. Step 2 has zero `PriorityLow` callers — claiming
+  otherwise would be precisely the imprecise framing this section
+  burned a day discovering it must not do. The cascade trigger is
+  what failed to fire, not the mechanism.
+
+**Candidate Finder-state deltas vs the morning's cascade run:**
+
+- The 2026-05-18 morning was post-fresh-DMG-install, post-mount-with-
+  cold-Spotlight on the volume.
+- This evening was post-`recover.sh`-cleanup, post-many-mount-cycles
+  across the day, with `mdutil -E` flush invoked *after* the mount
+  came up (not "never been seen by Spotlight" cold, but
+  "index flushed and pending re-crawl" cold — a different regime).
+
+This narrows but does not pin down the gate. The pending control
+is a same-procedure run against `prod` (HEAD `32ee45cd` ad-hoc,
+no Step 2 commits) under the same post-letter-15 system state.
+If `prod` *also* runs clean, the gate is environmental. If `prod`
+cascades, then either (a) something between `32ee45cd` and
+`54c01f78` other than the priority queue suppresses it, or (b)
+the priority-queue refactor has an effect even with no
+`PriorityLow` callers — both worth investigating before declaring
+Step 2 a true no-op.
+
+**2026-05-18 evening (later still) — prod control run also clean,
+environmental-gate hypothesis confirmed.** Same procedure
+(`setup.sh prod` → `mdutil -E` → copy a webm into `Download/`).
+Log: `/tmp/test-prod-200338.log` (264 lines).
+
+**Side-finding via build-identity stamp**: `prod` did *not* match
+the README's claimed `32ee45cd`. The bundle's bridge log emits
+`Comprador build: 6941a487-dirty` on startup. So the variant
+labeled "HEAD ad-hoc, cprLog-converted" was actually built when
+HEAD was `6941a487` (the chain-Pane-B harness commit) with the
+cprLog conversion in the working tree but not yet committed. The
+README was point-in-time correct when written and then drifted.
+
+This is *the* use case for build-identity stamping — without
+the in-bundle BuildID, the comparison would have been
+silently miscalibrated. The README is corrected separately;
+**trust the in-binary stamp, not the variants table.**
+
+The tighter comparison this actually represents:
+
+| Variant | Build identity | Includes priority queue? |
+|---|---|---|
+| `prod` | `6941a487-dirty` | No (one commit before f5db97cd) |
+| `step2` | `54c01f78` | Yes (no `PriorityLow` callers) |
+
+Side-by-side log signatures:
+
+| Signature | step2 | prod |
+|---|---|---|
+| `cache.beginPrefetch START` | 4 | 3 |
+| `cache.download START` | 3 | 3 |
+| `cache.download END (OK)` | 4 | 3 |
+| `JUKEBOX` returns | 10 | 3 |
+| `not responding` | **0** | **0** |
+| `Server connection` | **0** | **0** |
+| `cache.open` storm | **0** | **0** |
+| `Adding notification request CE85` | 0 | 0 |
+
+Both serialized through the session goroutine. Different FIFO
+ordering across runs — step2 dispatched Attenborough first (4m16s)
+then webm (4s); prod dispatched webm first (6.2s) then Attenborough
+(5m45.1s, channel-wait included). Ordering is driven by which NFS
+READ arrived at the bridge first, not by any code-path
+difference. **Both completed cleanly.** The user-visible drag
+landed in both cases after the prefetch window.
+
+**Conclusion: the cascade trigger is environmental, not gated on
+code between `6941a487` and `54c01f78`.** Step 2 is now also
+confirmed to have no detectable behaviour delta vs. the
+harness-only twin — as predicted, since the priority lane has no
+`PriorityLow` callers yet.
+
+**Sharpened gate framing:** the cascade requires a high JUKEBOX-
+return rate (many parallel READs hitting the size threshold during
+the prefetch window). The morning's .diag forensics showed many
+concurrent prefetches; this evening's runs saw only 1–2 active
+at a time. The Spotlight/QuickLook probe rate is the proximate
+driver — itself a function of Spotlight's per-volume-index cold/
+warm state. We have not pinned the exact macOS-side variable
+because we cannot trivially reproduce "Spotlight has never seen
+this volume" without a reboot, a new mount-point path, or a
+DMG-install cycle.
+
+**What this tells us about Step 3:** the chunked-yield prefetch
+still removes the mechanism even if the morning-regime trigger is
+hard to reliably reproduce. A bug that fires on first user
+encounter (cold Spotlight) and then stops repro'ing
+(warm Spotlight) is precisely the user-impact shape worth fixing
+unconditionally. The conclusion from the morning's MISTAKES update
+("A bug that fires under specific-but-common conditions is still
+unshippable") is reinforced, not weakened, by today's clean runs.
+
+**Methodological notes for the next cascade-investigation round:**
+
+- Build-identity stamping caught a silent README/binary drift
+  that would otherwise have miscalibrated this control. Keep
+  it on every variant; never trust a label without verifying the
+  stamp.
+- A genuine "cold Spotlight" reproduction probably needs either
+  a reboot or a fresh mount-point path (Comprador currently puts
+  mounts at `~/Library/Application Support/Comprador/Volumes/
+  <DeviceName>`; using a per-test-run subdirectory would
+  guarantee Spotlight has never indexed it). Worth considering
+  if we want to make the morning's regime reproducible at will.
+- The recover.sh path-with-spaces bug exposed today (umount
+  silently failing on the actual mount path because awk-$3
+  tokenized "Application Support") would have masked far worse
+  failures had clean.sh's new gate not refused to walk into the
+  stale mount. The harness-as-self-test property letter 15
+  argued for has paid for itself within hours of landing.
+
+**2026-05-18 night — Step 3 shipped, yield test passes, cascade
+mechanism broken by construction.** [Commit
+`74702901`](../bridge/nfs/cache.go), `claude/prefetch-redesign` HEAD.
+`cache.download` now loops over the object in 16 MB chunks via
+`OpGetPartial` at `PriorityLow` (Step 2's queue, commit `f5db97cd`).
+Between chunks, the priority pump in `bridge/mtp/session.go` drains
+high-priority requests before pulling the next low-priority chunk.
+
+The discriminating test (not the cascade test — that one remains
+environmentally gated tonight): **does a high-priority operation
+arriving mid-prefetch land within the priority-pump's one-chunk
+yield budget, instead of waiting the full multi-minute libmtp
+transfer?** The yield test against build `74702901`, run
+2026-05-18 ~20:41:
+
+```
+20:41:06.792  cache.beginPrefetch START  Attenborough.mkv (9 GB, id=14)
+20:41:06.792  cache.download START       Attenborough  ← Step 3 chunked loop begins (PriorityLow)
+20:41:12.586  Lazy enumerate /Download   ★ OpListDir (default PriorityHigh) landed during prefetch
+20:41:13.642  OpenFile read-path         Red_Castle.html (137 KB)
+20:41:13.642  cache.download START       Red_Castle.html  ← cache.download → PriorityLow (same lane)
+20:41:13.825  cache.download END (OK)    dt=183ms  ← low-pri lane non-starving
+```
+
+Two complementary receipts, each evidencing a different invariant:
+
+1. **The `Lazy enumerate` at 20:41:12.586** is the high-priority
+   preemption signal. `OpListDir` is dispatched at the default
+   `PriorityHigh` (the priority field's zero value), so its landing
+   ~6 seconds into a multi-minute prefetch — between two of
+   Attenborough's chunks — is direct evidence that the priority
+   pump drains the high lane before pulling the next low-pri
+   chunk. We don't have a duration measurement for the
+   enumerate itself (no START log on `OpListDir`), but the fact
+   that it landed at all during the prefetch window is the
+   load-bearing observation.
+2. **Red_Castle.html's 183 ms end-to-end completion** is the
+   low-pri-non-starvation signal. Because `cache.download` always
+   enqueues at `PriorityLow` — including on the synchronous
+   `open()` path — Red_Castle.html's 137 KB read went into the
+   same low lane as Attenborough's chunks. The 183 ms duration
+   shows that low-pri requests queue behind one other low-pri
+   chunk at most before being dispatched themselves. Well
+   inside the 600 ms one-chunk ceiling the plan sized for.
+
+Together, these are the falsifiable demonstration that the
+priority pump works as designed: high-pri requests preempt
+between low-pri chunks (#1), and low-pri requests serialize
+without catastrophic starvation (#2). Log:
+`/tmp/test-step3-203247.log`.
+
+**Note on `open()` going through PriorityLow.** `cache.download`
+runs unchanged for both background prefetch (via
+`beginPrefetch`) and synchronous open (via `open`). Both paths
+enqueue at `PriorityLow`. This is deliberate: a synchronous open
+of a large file presents the same cascade-risk pathology as the
+background prefetch did (multi-minute libmtp transfer locking
+the session goroutine), so it gets the same chunked-yield
+treatment. Small synchronous reads pay one chunk's worth of
+yield latency in the worst case — acceptable.
+
+**Cascade-fix analysis — is v0.3.3 fixed?**
+
+The v0.3.3 cascade required four links:
+
+1. Session goroutine locked for minutes on a single libmtp transfer.
+2. Other NFS RPCs queueing indefinitely behind it.
+3. macOS NFSv3 client marking the mount `not responding` (~30 s).
+4. `hard,nointr` semantics cascading the unresponsiveness to every
+   process touching the mount path.
+
+Step 3 breaks link 1 by construction: chunks are bounded at 16 MB
+and the priority pump drains high-pri requests between them, so
+the session goroutine is never unavailable to high-pri work for
+more than ~600 ms. The yield test is the direct measurement of
+link 1 being broken — 183 ms is well under the 1 s `timeo=10`
+first-timeout window, which is well under the ~30 s mount-down
+threshold. Without link 1, links 2–4 cannot fire.
+
+**Two honest caveats, both worth naming for posterity:**
+
+1. We did not reproduce-then-suppress the cascade. The trigger
+   conditions (cold Spotlight + Finder probe storm) did not fire
+   tonight on prod, step2, or step3 — the environmental gate
+   we narrowed earlier is still narrowed-but-not-pinned. The
+   yield test is the empirical proxy: it measures the mechanism
+   being broken, not the cascade being prevented in vivo. The
+   two are equivalent given the chain analysis but they are not
+   identical evidence.
+2. The universal safety boundary (Step 5, soft/interruptible
+   mount) is not yet shipped. Step 3 makes *this* class of bug
+   impossible. A different bug — a different libmtp pathology,
+   a deadlock we have not seen, a kernel-side substrate issue —
+   could still produce the same chain if it locks the bridge
+   for long enough. Step 5 catches any future fault regardless
+   of cause; until it ships, "the v0.3.3 cascade cannot happen"
+   is precise but "the system cannot cascade" is not.
+
+**Status:** the v0.3.3 cascade as observed is fixed. The class of
+cascade requires Step 5 to also be impossible. Both are in the
+v0.3.4 release plan ([docs/PLAN-V0.3.4-RELEASE.md](PLAN-V0.3.4-RELEASE.md)).
+
 ## SMAppService / Helper
 
 > **Section status — helper itself slated for v0.4.0 retirement.**

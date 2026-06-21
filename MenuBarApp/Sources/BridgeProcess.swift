@@ -7,8 +7,22 @@ class BridgeProcess {
     private(set) var port: Int?
     private(set) var host: String = "127.0.0.1"
     private(set) var deviceName: String?
-    /// "nfs" when bridge was started with --nfs, "webdav" otherwise.
-    private(set) var proto: String = "webdav"
+    /// Serving protocol reported by the bridge. NFSv4 is the only mode since
+    /// v0.4.0 (WebDAV retired); kept as a field because the bridge still emits
+    /// PROTO=.
+    private(set) var proto: String = "nfs"
+
+    /// Set true by stop() so the terminationHandler can tell an intentional
+    /// shutdown (teardown/eject) from an unexpected death (crash, panic, libmtp
+    /// fault). Only the latter triggers onUnexpectedExit.
+    private var intentionalStop = false
+
+    /// Called (on an arbitrary thread) when the bridge exits WITHOUT us having
+    /// called stop() — i.e. it died. The session wires this to its self-healing
+    /// path (unmount the now-dead volume, re-spawn, remount). nil until a mount
+    /// succeeds, so a death during the initial spawn flows through start()'s
+    /// throw instead.
+    var onUnexpectedExit: (() -> Void)?
 
     /// Called (on an arbitrary thread) with a short human-readable status
     /// string whenever a key milestone is observed in bridge stderr output.
@@ -18,9 +32,9 @@ class BridgeProcess {
     /// Returns the port number on success.
     /// Throws if the bridge fails to start or doesn't respond within the timeout.
     ///
-    /// If `useNFS` is true the bridge is started with `--nfs` and serves
-    /// NFSv3 instead of WebDAV.  Caller should mount via
-    /// `HelperClient.mountNFS(port:volumeName:)`.
+    /// `useNFS` is accepted for arg compatibility but is now a no-op — the
+    /// bridge always serves Galatea NFSv4. The caller mounts unprivileged via
+    /// `MountManager.mountNFS(host:port:volumeName:)` (no helper needed).
     ///
     /// If `seizeForVendor` and `seizeForProduct` are non-zero, an IOKit
     /// preflight runs first: seizes exclusive access to the device,
@@ -58,6 +72,12 @@ class BridgeProcess {
         // call and succeeds. Swapping the order makes both seizes run
         // against an already-dead ptpcamerad. See MISTAKES.md entry
         // 19b for the full trace.
+        // Reap a same-device bridge orphaned by a prior crashed/killed app
+        // instance before we try to claim the interface — an orphan contends for
+        // it and can make our seize fail "interface locked" (G2). Safe here:
+        // this instance hasn't spawned its own bridge yet.
+        BridgeProcess.killOrphanedBridges(locationID: locationID)
+
         BridgeProcess.killCompetingProcesses()
 
         // IOKit preflight: force a software replug so the bridge sees a
@@ -71,7 +91,7 @@ class BridgeProcess {
             )
             switch result {
             case .success:
-                NSLog("Comprador: IOKit preflight OK (seized + re-enumerated 0x%04X:0x%04X)",
+                cprLog("Comprador: IOKit preflight OK (seized + re-enumerated 0x%04X:0x%04X)",
                       seizeForVendor, seizeForProduct)
                 // Wait for USB to settle after re-enumeration. ~1s is
                 // enough for IOKit to surface the new device handle;
@@ -79,20 +99,20 @@ class BridgeProcess {
                 // claim attempt.
                 try? await Task.sleep(nanoseconds: 1_200_000_000)
             case .deviceNotFound:
-                NSLog("Comprador: IOKit preflight skipped (device 0x%04X:0x%04X not found)",
+                cprLog("Comprador: IOKit preflight skipped (device 0x%04X:0x%04X not found)",
                       seizeForVendor, seizeForProduct)
             case .pluginCreateFailed(let rc):
-                NSLog("Comprador: IOKit preflight skipped (IOCreatePlugInInterfaceForService → 0x%X)",
+                cprLog("Comprador: IOKit preflight skipped (IOCreatePlugInInterfaceForService → 0x%X)",
                       UInt32(bitPattern: Int32(rc)))
             case .interfaceQueryFailed(let rc):
-                NSLog("Comprador: IOKit preflight skipped (QueryInterface → %d)", rc)
+                cprLog("Comprador: IOKit preflight skipped (QueryInterface → %d)", rc)
             case .openSeizeFailed(let rc):
-                NSLog("Comprador: IOKit preflight skipped (USBDeviceOpenSeize → 0x%X)",
+                cprLog("Comprador: IOKit preflight skipped (USBDeviceOpenSeize → 0x%X)",
                       UInt32(bitPattern: Int32(rc)))
             }
         }
 
-        NSLog("Comprador: Starting bridge at %@", bridgePath)
+        cprLog("Comprador: Starting bridge at %@", bridgePath)
 
         let p = Process()
         p.executableURL = URL(fileURLWithPath: bridgePath)
@@ -125,7 +145,7 @@ class BridgeProcess {
         stderrPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-            NSLog("Comprador bridge: %@", text.trimmingCharacters(in: .whitespacesAndNewlines))
+            cprLog("Comprador bridge: %@", text.trimmingCharacters(in: .whitespacesAndNewlines))
             guard let cb = self?.onStatusLine else { return }
             for line in text.components(separatedBy: .newlines) {
                 if line.contains("Open attempt") {
@@ -140,9 +160,20 @@ class BridgeProcess {
             }
         }
 
+        // Detect unexpected death. Fires on an arbitrary queue when the process
+        // exits; if we didn't ask for it (intentionalStop), notify the session
+        // so it can self-heal. Set before run() so a fast exit can't slip past.
+        p.terminationHandler = { [weak self] proc in
+            guard let self = self else { return }
+            if self.intentionalStop { return }
+            cprLog("Comprador: bridge exited unexpectedly (status %d) — notifying session",
+                   proc.terminationStatus)
+            self.onUnexpectedExit?()
+        }
+
         try p.run()
         self.process = p
-        NSLog("Comprador: Bridge process started (PID %d)", p.processIdentifier)
+        cprLog("Comprador: Bridge process started (PID %d)", p.processIdentifier)
 
         // Read PORT=, HOST=, and DEVICE= from stdout with timeout
         let result = try await withThrowingTaskGroup(of: BridgeStartupInfo.self) { group in
@@ -163,13 +194,15 @@ class BridgeProcess {
         self.host = result.host ?? "127.0.0.1"
         self.deviceName = result.device
         self.proto = result.proto ?? "webdav"
-        NSLog("Comprador: Bridge ready — proto=%@, addr=%@:%d, device: %@",
+        cprLog("Comprador: Bridge ready — proto=%@, addr=%@:%d, device: %@",
               self.proto, self.host, result.port, result.device ?? "unknown")
         return result.port
     }
 
-    /// Stops the bridge process.
+    /// Stops the bridge process. Marks the exit intentional so the
+    /// terminationHandler does not mistake it for a crash and trigger recovery.
     func stop() {
+        intentionalStop = true
         guard let p = process, p.isRunning else {
             process = nil
             port = nil
@@ -177,13 +210,13 @@ class BridgeProcess {
             return
         }
 
-        NSLog("Comprador: Stopping bridge (PID %d)", p.processIdentifier)
+        cprLog("Comprador: Stopping bridge (PID %d)", p.processIdentifier)
         p.terminate()
 
         // Give it a moment to exit cleanly, then force kill
         DispatchQueue.global().asyncAfter(deadline: .now() + 2) { [weak p] in
             if let p = p, p.isRunning {
-                NSLog("Comprador: Force killing bridge")
+                cprLog("Comprador: Force killing bridge")
                 p.interrupt()
             }
         }
@@ -191,7 +224,7 @@ class BridgeProcess {
         process = nil
         port = nil
         deviceName = nil
-        proto = "webdav"
+        proto = "nfs"
     }
 
     var isRunning: Bool {
@@ -226,8 +259,33 @@ class BridgeProcess {
             try? task.run()
             task.waitUntilExit()
             if task.terminationStatus == 0 {
-                NSLog("Comprador: Killed %@", name)
+                cprLog("Comprador: Killed %@", name)
             }
+        }
+    }
+
+    /// Reap orphaned bridge subprocesses left by a prior app instance that was
+    /// killed without a clean teardown — macOS doesn't process-group-kill a
+    /// child when its parent dies, so the bridge outlives the app. An orphan
+    /// still holds/contends for the phone's USB interface, so a fresh seize can
+    /// fail "interface locked" against *it*, not only against ptpcamerad. Scoped
+    /// to the same --device-loc-id so a second device's bridge is untouched
+    /// (multi-device-safe). Called before the seize, when this instance hasn't
+    /// spawned its own bridge yet, so it can't kill our own.
+    static func killOrphanedBridges(locationID: UInt32) {
+        guard locationID != 0 else { return } // can't scope safely without it
+        let pattern = String(
+            format: "Comprador.app/Contents/Resources/bridge.*--device-loc-id=0x%08x",
+            locationID)
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+        task.arguments = ["-9", "-f", pattern]
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = FileHandle.nullDevice
+        try? task.run()
+        task.waitUntilExit()
+        if task.terminationStatus == 0 {
+            cprLog("Comprador: reaped orphaned bridge(s) for loc 0x%08x", locationID)
         }
     }
 

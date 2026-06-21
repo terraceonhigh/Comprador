@@ -16,8 +16,8 @@ import Cocoa
 ///     stops the bridge, removes any registered hostname.
 ///
 /// Per-device state that *was* on AppDelegate, now here:
-///   - `bridge`, `mountManager`, `resumeCompanion`
-///   - `isConnecting`, `pendingAttach`, `registeredHostname`
+///   - `bridge`, `mountManager`
+///   - `isConnecting`, `pendingAttach`
 ///   - `connectStatus`, `connectStartedAt`, `connectTimer`,
 ///     `connectingStatusItem`
 ///
@@ -30,11 +30,9 @@ final class DeviceSession {
     let device: USBDevice
     let mountManager = MountManager()
 
-    // Per-device subprocess + companion. Both start nil; populated during
-    // connect(); cleared by teardown().
+    // Per-device subprocess. Starts nil; populated during connect(); cleared by
+    // teardown().
     private(set) var bridge: BridgeProcess?
-    private(set) var resumeCompanion: ResumeCompanion?
-    private(set) var registeredHostname: String?
 
     // Connect-phase flags. `isConnecting` is the lock that suppresses
     // duplicate attach events for the same physical session. `pendingAttach`
@@ -42,6 +40,16 @@ final class DeviceSession {
     // (MISTAKES.md entry 19a).
     var isConnecting = false
     var pendingAttach: USBDevice?
+
+    // Self-healing (G1b): if the bridge dies unexpectedly after a successful
+    // mount, recover by unmounting the stale volume and reconnecting. Bounded so
+    // a bridge that crashes on every start doesn't spin forever — `maxRecoveries`
+    // attempts within `recoveryWindow`, after which we give up and surface.
+    private var recoveryAttempts = 0
+    private var lastRecoveryAt: Date?
+    private let maxRecoveries = 3
+    private let recoveryWindow: TimeInterval = 120
+    private var tearingDown = false
 
     // Status-text fields driving the connecting line in the menu.
     // `connectingStatusItem` is a weak handle to the NSMenuItem AppDelegate
@@ -89,7 +97,7 @@ final class DeviceSession {
     // MARK: - Status text plumbing
 
     func setConnectStatus(_ s: String) {
-        NSLog("Comprador: [status] %@", s)
+        cprLog("Comprador: [status] %@", s)
         let isFirstCall = connectStartedAt == nil
         connectStatus = s
         if isFirstCall {
@@ -165,44 +173,54 @@ final class DeviceSession {
                     locationID: device.locationID
                 )
 
-                let displayName = bp.deviceName ?? device.displayName
-
-                // If the helper is approved, override the bridge's
-                // mDNS-derived `.local` hostname with a clean single-label
-                // name pulled from /etc/hosts.
-                var mountHost = bp.host
-                if HelperClient.isEnabled,
-                   let cleanLabel = registerCleanHostname(named: displayName) {
-                    mountHost = cleanLabel
+                // Eject sets isConnecting=false to cancel. The bridge spawn is a
+                // long await (up to ~20s of IOKit seize + libmtp open); if the
+                // user ejected during it, bail before mounting — otherwise we'd
+                // re-mount a device they intentionally ejected (the connect/
+                // teardown race). teardown() concurrently stops the bridge too;
+                // both are idempotent.
+                guard isConnecting else {
+                    cprLog("Comprador: connect cancelled during bridge spawn — aborting before mount")
+                    bp.stop()
+                    self.bridge = nil
+                    return
                 }
+
+                let displayName = bp.deviceName ?? device.displayName
 
                 await MainActor.run { setConnectStatus("Mounting…") }
 
-                let mountedURL: URL
-                if bp.proto == "nfs" {
-                    let volName = AppDelegate.sanitizeHostname(displayName)
-                    guard !volName.isEmpty else {
-                        throw MountError.mountFailed(-1)
-                    }
-                    mountedURL = try await mountManager.mountNFS(
-                        host: bp.host,
-                        port: port,
-                        volumeName: volName
-                    )
-                } else {
-                    mountedURL = try await mountManager.mount(
-                        host: mountHost,
-                        port: port,
-                        displayName: displayName
-                    )
-                    let bridgeURL = URL(string: "http://\(bp.host):\(port)/")!
-                    let companion = ResumeCompanion(bridgeURL: bridgeURL)
-                    companion.start()
-                    self.resumeCompanion = companion
+                // NFSv4 (Galatea) is the only serving mode since v0.4.0.
+                let volName = AppDelegate.sanitizeHostname(displayName)
+                guard !volName.isEmpty else {
+                    throw MountError.mountFailed(-1)
+                }
+                let mountedURL = try await mountManager.mountNFS(
+                    host: bp.host,
+                    port: port,
+                    volumeName: volName
+                )
+
+                // Ejected during the mount itself? Unmount what we just mounted
+                // and bail before announcing it to the delegate (which would put
+                // it in Finder's sidebar).
+                guard isConnecting else {
+                    cprLog("Comprador: connect cancelled during mount — unmounting, not announcing")
+                    await mountManager.unmount()
+                    bp.stop()
+                    self.bridge = nil
+                    return
+                }
+
+                // Supervise the live bridge: if it dies now (panic, libmtp
+                // fault, anything that isn't our own stop()), self-heal instead
+                // of leaving Finder pointed at a dead mount (G1b).
+                bp.onUnexpectedExit = { [weak self] in
+                    Task { await self?.handleUnexpectedBridgeExit() }
                 }
 
                 await MainActor.run {
-                    NSLog("Comprador: Device mounted as volume")
+                    cprLog("Comprador: Device mounted as volume")
                     stopConnectTimer()
                     connectStatus = ""
                     isConnecting = false
@@ -210,7 +228,7 @@ final class DeviceSession {
                 }
                 return
             } catch let bridgeErr as BridgeError where bridgeErr == .timeout {
-                NSLog("Comprador: Bridge timeout — prompting user")
+                cprLog("Comprador: Bridge timeout — prompting user")
                 BridgeProcess.postFileTransferNotification()
                 bp.stop()
                 self.bridge = nil
@@ -225,9 +243,9 @@ final class DeviceSession {
                 bp.stop()
                 self.bridge = nil
                 if attempt < retryDelays.count - 1 {
-                    NSLog("Comprador: Attempt %d failed (%@), retrying...", attempt + 1, err.localizedDescription)
+                    cprLog("Comprador: Attempt %d failed (%@), retrying...", attempt + 1, err.localizedDescription)
                 } else {
-                    NSLog("Comprador: All attempts failed — %@", err.localizedDescription)
+                    cprLog("Comprador: All attempts failed — %@", err.localizedDescription)
                     BridgeProcess.postFileTransferNotification()
                     await MainActor.run {
                         stopConnectTimer()
@@ -243,44 +261,61 @@ final class DeviceSession {
     // MARK: - Teardown
 
     func teardown() async {
-        resumeCompanion?.stop()
-        resumeCompanion = nil
+        // Suppress self-healing: a teardown (eject/detach) is an intentional
+        // stop. bridge.stop() also flags it, but set this first to close the
+        // race where the bridge died from USB loss just as teardown begins.
+        tearingDown = true
         if mountManager.isMounted {
             await mountManager.unmount()
         }
         bridge?.stop()
         bridge = nil
-
-        if let host = registeredHostname {
-            do {
-                try HelperClient.removeHost(host)
-            } catch {
-                NSLog("Comprador: helper removeHost(%@) failed: %@",
-                      host, error.localizedDescription)
-            }
-            registeredHostname = nil
-        }
+        tearingDown = false
     }
 
-    // MARK: - Hostname helper
+    // MARK: - Self-healing (G1b)
 
-    /// Sanitises a friendly device name into a DNS label and asks the
-    /// privileged helper to point it at 127.0.0.1 in /etc/hosts. Returns
-    /// the hostname on success, or nil on any failure (caller falls back
-    /// to whatever the bridge advertised — typically mDNS).
-    private func registerCleanHostname(named friendlyName: String) -> String? {
-        let label = AppDelegate.sanitizeHostname(friendlyName)
-        guard !label.isEmpty else { return nil }
-        do {
-            try HelperClient.addHost(label)
-            registeredHostname = label
-            NSLog("Comprador: registered hostname %@ via helper", label)
-            return label
-        } catch {
-            NSLog("Comprador: helper addHost(%@) failed: %@",
-                  label, error.localizedDescription)
-            return nil
+    /// Invoked (on an arbitrary queue, via BridgeProcess.onUnexpectedExit) when
+    /// the bridge dies after a successful mount. Unmounts the now-dead volume
+    /// and reconnects, bounded so a bridge that crashes on every start can't
+    /// spin forever. A non-technical user can't debug a frozen mount, so the
+    /// app makes a stuck bridge blip-and-recover instead of hang.
+    func handleUnexpectedBridgeExit() async {
+        // Don't fight an in-flight connect or teardown.
+        if isConnecting || tearingDown { return }
+
+        let now = Date()
+        if let last = lastRecoveryAt, now.timeIntervalSince(last) > recoveryWindow {
+            recoveryAttempts = 0 // crashes are far apart — treat as fresh
         }
+        recoveryAttempts += 1
+        lastRecoveryAt = now
+
+        if recoveryAttempts > maxRecoveries {
+            cprLog("Comprador: bridge died %d× within %.0fs — giving up auto-recovery",
+                   recoveryAttempts, recoveryWindow)
+            await teardown()
+            await MainActor.run {
+                delegate?.deviceSession(self, didFailWith: MountError.mountFailed(-1))
+            }
+            return
+        }
+
+        cprLog("Comprador: bridge died — self-healing (attempt %d/%d)",
+               recoveryAttempts, maxRecoveries)
+
+        // Drop the stale mount + dead bridge handle, then reconnect. connect()
+        // spawns a fresh BridgeProcess and remounts; its guard reads isConnecting.
+        if mountManager.isMounted {
+            await mountManager.unmount()
+        }
+        bridge = nil
+        await MainActor.run {
+            isConnecting = true
+            setConnectStatus("Reconnecting…")
+            delegate?.deviceSessionDidChangeMenuStructure(self)
+        }
+        await connect()
     }
 }
 

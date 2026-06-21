@@ -26,77 +26,20 @@ class MountManager {
         }
     }
 
-    /// Mounts a WebDAV URL and returns the mount path.
-    /// `host` is the URL host the bridge advertises (typically a per-device
-    /// `<name>.local` registered via mDNS); NetFS auto-names the volume from it.
-    func mount(host: String, port: Int, displayName: String) async throws -> URL {
-        let serverURL = URL(string: "http://\(host):\(port)/")! as CFURL
-        let mountDir = URL(fileURLWithPath: "/Volumes") as CFURL
-
-        NSLog("Comprador: Mounting WebDAV from %@:%d", host, port)
-
-        return try await withCheckedThrowingContinuation { continuation in
-            var mountPoints: Unmanaged<CFArray>?
-
-            let openOptions: NSMutableDictionary = [
-                kNAUIOptionKey: kNAUIOptionNoUI,
-            ]
-
-            // Empty mountOptions on purpose. We tried passing
-            // `kNetFSMountFlagsKey: MNT_SYNCHRONOUS` to suppress webdavfs's
-            // writeseq path (the source of -36 truncation on large Finder
-            // drags); statfs(2) on the resulting mount confirmed the flag
-            // is silently filtered out by webdavfs's mnt_flag handling.
-            // Don't try this again — webdavfs has no exposed knob to
-            // disable writeseq. See TODO.md "Make Finder error -36
-            // disappear for very large files" → option 2 for the path
-            // forward.
-            let mountOptions = NSMutableDictionary()
-
-            let rc = NetFSMountURLSync(
-                serverURL,
-                mountDir,
-                "" as CFString,
-                "" as CFString,
-                openOptions,
-                mountOptions,
-                &mountPoints
-            )
-
-            if rc != 0 {
-                NSLog("Comprador: Mount failed with error %d", rc)
-                continuation.resume(throwing: MountError.mountFailed(rc))
-                return
-            }
-
-            let resolvedPath: URL
-            if let points = mountPoints?.takeRetainedValue() as? [String],
-               let first = points.first {
-                resolvedPath = URL(fileURLWithPath: first)
-            } else {
-                resolvedPath = URL(fileURLWithPath: "/Volumes/\(host)")
-            }
-
-            self.mountPath = resolvedPath
-            NSLog("Comprador: Mounted at %@", resolvedPath.path)
-            continuation.resume(returning: resolvedPath)
-        }
-    }
-
     /// Unmounts the currently mounted volume.
     func unmount() async {
         guard let path = mountPath else { return }
-        NSLog("Comprador: Unmounting %@", path.path)
+        cprLog("Comprador: Unmounting %@", path.path)
 
         if let session = daSession,
            let disk = DADiskCreateFromVolumePath(kCFAllocatorDefault, session, path as CFURL) {
             DADiskUnmount(disk, DADiskUnmountOptions(kDADiskUnmountOptionDefault), { disk, dissenter, _ in
                 if let dissenter = dissenter {
                     let status = DADissenterGetStatus(dissenter)
-                    NSLog("Comprador: Clean unmount failed (status %d), forcing", status)
+                    cprLog("Comprador: Clean unmount failed (status %d), forcing", status)
                     DADiskUnmount(disk, DADiskUnmountOptions(kDADiskUnmountOptionForce), nil, nil)
                 } else {
-                    NSLog("Comprador: Unmounted")
+                    cprLog("Comprador: Unmounted")
                 }
             }, nil)
         } else {
@@ -171,13 +114,28 @@ class MountManager {
         try FileManager.default.createDirectory(at: mountpoint,
                                                 withIntermediateDirectories: false)
 
-        NSLog("Comprador: Mounting NFS on port %d at %@", port, mountpoint.path)
+        cprLog("Comprador: Mounting NFS on port %d at %@", port, mountpoint.path)
 
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/sbin/mount")
         p.arguments = [
             "-t", "nfs",
-            "-o", "port=\(port),mountport=\(port),nfsvers=3,nolocks,tcp",
+            // vers=4.0: the bridge now serves Galatea's userspace NFSv4 server
+            // (was willscott/go-nfs NFSv3 with nfsvers=3,nolocks). NFSv4 has
+            // integrated locking, so nolocks is dropped.
+            //
+            // acdirmin/acdirmax bound how long the client trusts a cached
+            // directory listing before re-validating its attributes. The
+            // default (up to 60s) means an out-of-band phone-side change — a
+            // photo taken while DCIM is open — can sit invisible for a minute.
+            // The bridge surfaces such changes by bumping a directory's ModTime
+            // on re-enumeration (see mtpfsal VirtualGetAttributes +
+            // mtp.populateDir), but the client only notices on its next GETATTR;
+            // a 2–10s window keeps the felt latency short. Cost is bounded: the
+            // bridge's own directoryTTL (2s) caps how often a GETATTR turns into
+            // an actual libmtp enumeration, so tighter polling here doesn't
+            // multiply device traffic.
+            "-o", "vers=4.0,port=\(port),mountport=\(port),tcp,acdirmin=2,acdirmax=10",
             "\(host):/",
             mountpoint.path,
         ]
@@ -191,7 +149,7 @@ class MountManager {
             let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
             let errMsg = String(data: errData, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            NSLog("Comprador: mount(8) failed with status %d: %@",
+            cprLog("Comprador: mount(8) failed with status %d: %@",
                   p.terminationStatus, errMsg)
             // Best-effort cleanup of the empty mountpoint we created.
             try? FileManager.default.removeItem(at: mountpoint)
@@ -199,7 +157,7 @@ class MountManager {
         }
 
         self.mountPath = mountpoint
-        NSLog("Comprador: NFS mounted at %@", mountpoint.path)
+        cprLog("Comprador: NFS mounted at %@", mountpoint.path)
         return mountpoint
     }
 
@@ -231,7 +189,7 @@ class MountManager {
                 guard let onRange = s.range(of: " on "),
                       let parenRange = s.range(of: " (webdav") else { continue }
                 let mp = String(s[onRange.upperBound..<parenRange.lowerBound])
-                NSLog("Comprador: cleaning up stale WebDAV mount %@", mp)
+                cprLog("Comprador: cleaning up stale WebDAV mount %@", mp)
                 forceUnmount(mp)
                 continue
             }
@@ -256,10 +214,10 @@ class MountManager {
                 let isOurPath = mp.contains("/Comprador/Volumes/")
                     || mp.hasPrefix("/Volumes/")  // legacy helper path
                 guard isOurPath else {
-                    NSLog("Comprador: skipping NFS mount at %@ (source looks ours, path doesn't)", mp)
+                    cprLog("Comprador: skipping NFS mount at %@ (source looks ours, path doesn't)", mp)
                     continue
                 }
-                NSLog("Comprador: cleaning up stale NFS mount %@", mp)
+                cprLog("Comprador: cleaning up stale NFS mount %@", mp)
                 forceUnmount(mp)
             }
         }

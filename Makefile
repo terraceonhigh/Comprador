@@ -1,6 +1,4 @@
 BRIDGE_OUT   := build/bridge
-HELPER_OUT   := build/comprador-helper
-NFS_STUB_OUT := build/nfsstub
 ICTEST1_OUT  := build/ictest1
 ICTEST2_OUT  := build/ictest2
 APP_NAME   := Comprador
@@ -15,7 +13,17 @@ DIST_DIR   := dist
 # Format: short SHA + "-dirty" if the worktree has uncommitted changes.
 BUILD_ID := $(shell git rev-parse --short HEAD 2>/dev/null)$(shell git diff --quiet 2>/dev/null || echo "-dirty")
 
-.PHONY: bridge bridge-test helper helper-test nfs-stub ictest1 ictest2 test-md5 icon app app-debug app-signed app-notarized app-swiftc dev dev-nfs run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
+# Release version stamped into the .app's Info.plist CFBundleShortVersionString
+# so macOS reports the actual release (not the long-stale "0.1.0" hardcoded
+# in MenuBarApp/Info.plist). BUILD_ID rides into CFBundleVersion so .diag
+# files, the About box, and Spotlight metadata can name the exact commit.
+#
+# Bumped manually at release-cut time, alongside CHANGELOG.md and the tag.
+# Worktree-aware: dev builds report "<version>-dev" so they're never confused
+# with a tagged release.
+RELEASE_VERSION := 0.4.0
+
+.PHONY: bridge build-all bridge-test ictest1 ictest2 test-md5 prefetch-probe icon app app-debug app-signed app-notarized app-swiftc dev dev-nfs galatea-dev galatea-mount galatea-umount run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
 
 ICON_SRC := images/icon.png
 ICON_OUT := MenuBarApp/Resources/Comprador.icns
@@ -48,11 +56,11 @@ $(ICON_OUT): $(ICON_SRC)
 bridge:
 	cd bridge && CGO_CFLAGS="-I$(CURDIR)/bridge/cvendor" CGO_LDFLAGS="-L/opt/homebrew/lib" $(GO) build -ldflags="-X main.BuildID=$(BUILD_ID)" -o ../$(BRIDGE_OUT) .
 
-helper:
-	cd helper && $(GO) build -o ../$(HELPER_OUT) .
-
-helper-test:
-	cd helper && $(GO) test -v ./...
+# Tree-wide compile + vendor-consistency check (every package and cmd tool).
+# Catches "inconsistent vendoring" after vendor edits — broader than `bridge`,
+# which only builds the main artifact.
+build-all:
+	cd bridge && CGO_CFLAGS="-I$(CURDIR)/bridge/cvendor" CGO_LDFLAGS="-L/opt/homebrew/lib" $(GO) build ./...
 
 # Bridge mtp-package tests. cgo flags must be set explicitly because go test
 # doesn't inherit them from the Makefile's `bridge` build rule.
@@ -94,11 +102,20 @@ ictest2:
 	@echo "Built: $(ICTEST2_OUT)"
 	@echo "Run:   ./$(ICTEST2_OUT)"
 
-# Phase 1 NFS pivot verification: memfs-backed NFS server with no MTP dependency.
-# Run this, then use the printed sudo mount command to verify macOS mounts
-# without the ~90s WebDAV quota wait.
-nfs-stub:
-	cd bridge && $(GO) build -o ../$(NFS_STUB_OUT) ./cmd/nfsstub
+# Empirical probe for the prefetch redesign (docs/PLAN-PREFETCH-REDESIGN.md
+# Step 1). Measures whether LIBMTP_GetPartialObject is viable for the
+# chunked-yield design. Run with a phone connected in File Transfer mode;
+# auto-picks the first file > 100 MB on the device.
+#
+#   make prefetch-probe
+#   ./build/prefetch-probe                      # 4 MB chunks (default), 64 MB total
+#   ./build/prefetch-probe -chunk=16 -bytes=128 # 16 MB chunks, 128 MB total
+#   ./build/prefetch-probe -skip-control        # skip the full-object read
+prefetch-probe:
+	@mkdir -p build
+	cd bridge && $(GO) build -o ../build/prefetch-probe ./cmd/prefetch-probe
+	@echo "Built: build/prefetch-probe"
+	@echo "Run:   ./build/prefetch-probe (with a phone connected in File Transfer mode)"
 
 # Bundle bridge + all dylibs into an app directory, fix rpaths
 define BUNDLE_BRIDGE
@@ -122,19 +139,6 @@ define BUNDLE_BRIDGE
 	codesign --force --sign - "$(1)/Contents/Frameworks/libusb-1.0.0.dylib"; \
 	codesign --force --sign - "$(1)/Contents/Resources/bridge"; \
 	echo "Bundled bridge + libmtp + libusb into $(1)"
-endef
-
-# Bundle the privileged helper binary + LaunchDaemon plist. SMAppService.daemon
-# expects the plist at Contents/Library/LaunchDaemons/<plist> and the binary
-# referenced by the plist's BundleProgram (relative to the app bundle root).
-define BUNDLE_HELPER
-	mkdir -p "$(1)/Contents/Library/LaunchDaemons"; \
-	rm -f "$(1)/Contents/MacOS/comprador-helper" \
-	      "$(1)/Contents/Library/LaunchDaemons/com.comprador.helper.plist"; \
-	cp $(HELPER_OUT) "$(1)/Contents/MacOS/comprador-helper"; \
-	cp helper/com.comprador.helper.plist "$(1)/Contents/Library/LaunchDaemons/"; \
-	codesign --force --sign - "$(1)/Contents/MacOS/comprador-helper"; \
-	echo "Bundled helper into $(1)"
 endef
 
 app: bridge icon
@@ -165,6 +169,31 @@ dev: bridge
 # Use this to verify Phase 2/3 NFS behaviour without needing the helper.
 dev-nfs: bridge
 	DYLD_LIBRARY_PATH=/opt/homebrew/lib ./$(BRIDGE_OUT) --nfs 2>&1
+
+# Phase-4 verification harness (mercer/galatea-integration): serve the live MTP
+# device over Galatea's userspace NFSv4 server instead of the patched
+# willscott/go-nfs. Read-only for now (mtpfsal mutations return ROFS). Built in
+# the standalone bridge-only harness, now that galatea is a normal vendored dep
+# (v0.2.0-alpha, manually vendored — `go mod vendor` is never run because it
+# would clobber the patched go-nfs fork). The production `bridge --nfs` path now
+# serves Galatea too; this harness is kept for serving without the menu-bar app.
+# Prints the vers=4.0 mount_nfs command. See bridge/cmd/galatea-serve, TODO.md.
+GALATEA_OUT := build/galatea-serve
+galatea-dev:
+	@mkdir -p build
+	cd bridge && CGO_CFLAGS="-I$(CURDIR)/bridge/cvendor" CGO_LDFLAGS="-L/opt/homebrew/lib" $(GO) build -o ../$(GALATEA_OUT) ./cmd/galatea-serve
+	DYLD_LIBRARY_PATH=/opt/homebrew/lib ./$(GALATEA_OUT) 2>&1
+
+# Mount the running galatea-dev server (pass PORT=N from its PORT= line).
+# vers=4.0 (Galatea is NFSv4), unprivileged loopback mount — no root.
+galatea-mount:
+	@mkdir -p /tmp/galmnt
+	mount_nfs -o vers=4.0,port=$(PORT),mountport=$(PORT),tcp localhost:/ /tmp/galmnt
+	@mount | grep /tmp/galmnt || true
+
+galatea-umount:
+	-umount -f /tmp/galmnt 2>/dev/null || true
+	@mount | grep /tmp/galmnt >/dev/null && echo "STILL MOUNTED" || echo "unmounted"
 
 run: app-debug
 	@killall $(APP_NAME) 2>/dev/null || true
@@ -211,7 +240,7 @@ BUILD_INFO_SWIFT := build/BuildInfo.swift
 SWIFT_DEBUG ?=
 SWIFT_DEBUG_FLAG := $(if $(SWIFT_DEBUG),-D DEBUG,)
 
-app-swiftc: bridge helper icon
+app-swiftc: bridge icon
 	@mkdir -p build/swift build
 	@printf 'enum BuildInfo { static let id = "%s" }\n' "$(BUILD_ID)" > $(BUILD_INFO_SWIFT)
 	swiftc -target $(SWIFT_TARGET) -O $(SWIFT_DEBUG_FLAG) \
@@ -226,11 +255,18 @@ app-swiftc: bridge helper icon
 	          $(SWIFT_APP)/Contents/Library/LaunchDaemons
 	cp $(SWIFT_BIN) $(SWIFT_APP)/Contents/MacOS/$(APP_NAME)
 	cp MenuBarApp/Info.plist $(SWIFT_APP)/Contents/Info.plist
+	@# Stamp real version + git hash into the bundle's Info.plist.
+	@# Must run BEFORE codesign so the signature covers the updated plist.
+	@# See docs/PLAN-BUILD-IDENTITY.md for the rationale (the 2026-05-18
+	@# Comprador.diag reported Version: 0.1.0 (1), masking the actual build).
+	/usr/libexec/PlistBuddy \
+		-c "Set :CFBundleShortVersionString $(RELEASE_VERSION)" \
+		-c "Set :CFBundleVersion $(BUILD_ID)" \
+		$(SWIFT_APP)/Contents/Info.plist
 	cp MenuBarApp/Resources/VendorIDs.plist $(SWIFT_APP)/Contents/Resources/
 	cp MenuBarApp/Resources/Comprador.icns $(SWIFT_APP)/Contents/Resources/
 	@printf 'APPL????' > $(SWIFT_APP)/Contents/PkgInfo
 	$(call BUNDLE_BRIDGE,$(SWIFT_APP))
-	$(call BUNDLE_HELPER,$(SWIFT_APP))
 	codesign --force --deep --sign - \
 		--entitlements MenuBarApp/Comprador.debug.entitlements \
 		--options runtime \
@@ -262,20 +298,16 @@ dist-swiftc: app-swiftc
 	@echo "Testers: right-click → Open on first launch (ad-hoc signed)"
 
 # Re-sign dist/Comprador.app with the local Developer ID Application
-# certificate. The bundle that comes out is suitable for replacing an
-# installed /Applications/Comprador.app while keeping the SMAppService
-# helper registration intact (SMAppService accepts cdhash changes when
-# the signature chain stays valid).
+# certificate, suitable for replacing an installed /Applications/Comprador.app.
 #
 # Skips notarization. macOS allows opening a properly-signed but
-# un-notarized app by right-click → Open on first launch. SMAppService
-# itself only requires Developer ID + hardened runtime, not notarization.
+# un-notarized app by right-click → Open on first launch.
 #
 # Uses Comprador.debug.entitlements (no com.apple.developer.system-extension.install)
 # because that entitlement requires a provisioning profile, which we
 # can't generate locally without an active development scheme. The
 # DriverKit install path is unavailable in app-signed builds; everything
-# else (USB matching, helper, NFS bridge) works.
+# else (USB matching, the NFS bridge) works.
 app-signed: dist-swiftc
 	@IDENTITY=$$(security find-identity -v -p codesigning \
 	            | awk '/Developer ID Application/{print $$2; exit}'); \
@@ -288,8 +320,7 @@ app-signed: dist-swiftc
 	for path in \
 	  "$$BUNDLE/Contents/Frameworks/libmtp.9.dylib" \
 	  "$$BUNDLE/Contents/Frameworks/libusb-1.0.0.dylib" \
-	  "$$BUNDLE/Contents/Resources/bridge" \
-	  "$$BUNDLE/Contents/MacOS/comprador-helper"; \
+	  "$$BUNDLE/Contents/Resources/bridge"; \
 	do \
 	  if [ -e "$$path" ]; then \
 	    echo "Signing $$path"; \

@@ -416,12 +416,74 @@ func (d *Device) SendFileFromReader(parentID, storageID uint32, name string, siz
 	return uint32(fi.item_id), nil
 }
 
+// CheckCapabilityGetPartialObject reports whether the device advertises support
+// for LIBMTP_GetPartialObject (partial-range reads of objects without
+// downloading the whole thing first). Critical for the prefetch redesign
+// (docs/PLAN-PREFETCH-REDESIGN.md) — devices that don't support it force the
+// handler-callback approach instead of the chunked-read approach.
+func (d *Device) CheckCapabilityGetPartialObject() bool {
+	return C.LIBMTP_Check_Capability(d.dev, C.LIBMTP_DEVICECAP_GetPartialObject) != 0
+}
+
+// GetPartialObject reads up to maxBytes from objectID starting at offset.
+// Returns the bytes actually read (may be shorter than maxBytes if offset+maxBytes
+// exceeds the object size, which is fine — libmtp truncates cleanly).
+//
+// Allocates a libmtp-managed buffer via LIBMTP_GetPartialObject and copies it
+// into a Go slice before freeing the C buffer. The Go slice is independent of
+// libmtp's allocator after this returns.
+//
+// Used by mtpfsal.VirtualRead for ranged reads off the device (one
+// rsize-bounded call per NFS READ) and by the empirical probe
+// (bridge/cmd/prefetch-probe/).
+func (d *Device) GetPartialObject(objectID uint32, offset uint64, maxBytes uint32) ([]byte, error) {
+	var data *C.uchar
+	var size C.uint
+	rc := C.LIBMTP_GetPartialObject(d.dev,
+		C.uint32_t(objectID),
+		C.uint64_t(offset),
+		C.uint32_t(maxBytes),
+		&data,
+		&size)
+	if rc != 0 {
+		d.dumpErrors()
+		return nil, fmt.Errorf("LIBMTP_GetPartialObject failed for object %d offset %d", objectID, offset)
+	}
+	if data == nil || size == 0 {
+		// Some devices return success-with-zero-bytes for offset >= filesize.
+		return nil, nil
+	}
+	// Copy into Go memory, then free libmtp's buffer. libmtp documents free()
+	// as the correct deallocator for the data pointer.
+	out := C.GoBytes(unsafe.Pointer(data), C.int(size))
+	C.free(unsafe.Pointer(data))
+	return out, nil
+}
+
 // DeleteObject deletes an object on the device.
 func (d *Device) DeleteObject(objectID uint32) error {
 	rc := C.LIBMTP_Delete_Object(d.dev, C.uint32_t(objectID))
 	if rc != 0 {
 		d.dumpErrors()
 		return fmt.Errorf("LIBMTP_Delete_Object failed for object %d", objectID)
+	}
+	return nil
+}
+
+// SetObjectName renames an object (file or folder) in place by setting its
+// filename property — no copy, no new object ID. MTP has no move-between-parents
+// op, so this only changes the name within the same parent; a cross-folder move
+// is still copy+delete at the caller. LIBMTP_Set_Object_Filename takes a
+// non-const char*, so the name is duplicated into a C string libmtp may write to.
+func (d *Device) SetObjectName(objectID uint32, name string) error {
+	cname := C.CString(name)
+	defer C.free(unsafe.Pointer(cname))
+
+	log.Printf("MTP SetObjectName(object=0x%x, name=%q)", objectID, name)
+	rc := C.LIBMTP_Set_Object_Filename(d.dev, C.uint32_t(objectID), cname)
+	if rc != 0 {
+		d.dumpErrors()
+		return fmt.Errorf("LIBMTP_Set_Object_Filename failed for object %d → %q", objectID, name)
 	}
 	return nil
 }

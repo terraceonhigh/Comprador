@@ -14,6 +14,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// rewires the attach handler to genuinely accept multiple devices.
     private var sessions: [UInt32: DeviceSession] = [:]
 
+    /// Devices ejected by the user, keyed by USB Location ID → eject time. An
+    /// eject stops the bridge, which releases the USB interface; the kernel then
+    /// re-binds and re-enumerates the (still-plugged) device, firing a
+    /// detach→attach burst within ~1s. Without this, that burst auto-reconnects
+    /// the device the user just ejected. We suppress reconnect for a short window
+    /// after an eject — long enough to swallow the one-shot re-enumeration, short
+    /// enough that a genuine later replug still reconnects. (Eject means "stop
+    /// until I physically replug"; the burst isn't a replug.)
+    private var recentlyEjected: [UInt32: Date] = [:]
+    private let ejectReconnectSuppressWindow: TimeInterval = 6
+
     /// Convenience for step-3 callers that still assume single-device. The
     /// existing guards mean at most one session is active; returning the
     /// first dict value matches the old `session` semantics exactly.
@@ -24,7 +35,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSLog("Comprador build: %@", BuildInfo.id)
+        cprLog("Comprador build: %@", BuildInfo.id)
 
         // Clear out any leftover webdav mounts from a prior session — otherwise
         // NetFS auto-suffixes today's mount as /Volumes/Pixel-6-1 and Finder
@@ -151,41 +162,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         loginItem.state = LoginItem.isEnabled ? .on : .off
         menu.addItem(loginItem)
 
-        let helperLabel: String
-        switch HelperClient.statusDescription {
-        case "enabled":          helperLabel = "Helper installed"
-        case "requiresApproval": helperLabel = "Helper needs approval…"
-        default:                 helperLabel = "Install helper…"
-        }
-        let helperItem = NSMenuItem(title: helperLabel,
-                                    action: #selector(installHelper),
-                                    keyEquivalent: "")
-        helperItem.state = HelperClient.isEnabled ? .on : .off
-        menu.addItem(helperItem)
-
         menu.addItem(NSMenuItem(title: "Quit Comprador",
                                 action: #selector(quitApp),
                                 keyEquivalent: "q"))
 
-#if DEBUG
         menu.addItem(NSMenuItem.separator())
         // Build identifier, clickable — copies BuildInfo.id to the
-        // clipboard so the architect can paste it into a bug report or
-        // a journal note without retyping. Brief "Copied!" flash on
-        // click as confirmation; reverts after ~1 s.
+        // clipboard so the user (or the architect) can paste it into
+        // a bug report or a journal note without retyping. Brief
+        // "Copied!" flash on click as confirmation; reverts after ~1 s.
+        //
+        // Promoted out of #if DEBUG 2026-05-18 after the v0.3.3
+        // retraction: when a production user hits a regression, the
+        // first thing we need from them is "which exact build are you
+        // running?" Burying this behind a debug flag means the answer
+        // is unavailable to the people who most need to surface it.
         let buildItem = NSMenuItem(title: "Build: \(BuildInfo.id)",
                                    action: #selector(copyBuildID(_:)),
                                    keyEquivalent: "")
         buildItem.target = self
         buildItem.toolTip = "Click to copy the build identifier to the clipboard"
         menu.addItem(buildItem)
-#endif
 
         statusItem.menu = menu
-    }
-
-    @objc private func installHelper() {
-        installHelperFlow()
     }
 
     /// Copies the bridge/app build identifier to the system clipboard,
@@ -216,37 +215,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             LoginItem.enable()
         }
         rebuildMenu()
-    }
-
-    /// Register the helper, open Login Items, then poll for approval so we
-    /// can confirm success without waiting for the next device attach.
-    private func installHelperFlow() {
-        HelperClient.register()
-        if let url = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") {
-            NSWorkspace.shared.open(url)
-        }
-        rebuildMenu()
-
-        // Poll for ~60s. If the user flips the toggle, congratulate;
-        // otherwise leave a hint via the menu state and move on.
-        Task { [weak self] in
-            for _ in 0..<60 {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                if HelperClient.isEnabled {
-                    await MainActor.run { [weak self] in
-                        self?.rebuildMenu()
-                        NSApp.activate(ignoringOtherApps: true)
-                        let done = NSAlert()
-                        done.messageText = "Helper installed"
-                        done.informativeText = "Future devices will mount with clean names like \"/Volumes/Pixel-6\" instead of \"/Volumes/Pixel-6.local\"."
-                        done.alertStyle = .informational
-                        done.addButton(withTitle: "OK")
-                        done.runModal()
-                    }
-                    return
-                }
-            }
-        }
     }
 
     /// Show the SwiftUI welcome window once on first launch. Replaces the
@@ -349,8 +317,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleDeviceAttached(_ device: USBDevice) {
-        NSLog("Comprador: Device attached — \(device.displayName) (vendor: 0x%04X, product: 0x%04X, locID: 0x%08X)",
+        cprLog("Comprador: Device attached — \(device.displayName) (vendor: 0x%04X, product: 0x%04X, locID: 0x%08X)",
               device.vendorID, device.productID, device.locationID)
+
+        // Suppress the post-eject re-enumeration burst: an eject releases the USB
+        // interface, the kernel re-enumerates the still-plugged device, and that
+        // attach would otherwise immediately re-mount what the user just ejected.
+        // A genuine replug arrives after the window and reconnects normally.
+        if let ejectedAt = recentlyEjected[device.locationID] {
+            if Date().timeIntervalSince(ejectedAt) < ejectReconnectSuppressWindow {
+                cprLog("Comprador: Ignoring attach — device was just ejected (replug to reconnect)")
+                return
+            }
+            recentlyEjected.removeValue(forKey: device.locationID) // window passed — a real replug
+        }
 
         // If a session for the same physical device (matched by USB
         // IOKit Location ID) already exists, treat the attach as a
@@ -363,11 +343,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // ~/Library/Application Support/Comprador/Volumes/<deviceName>.
         if let existing = sessions[device.locationID] {
             if existing.isConnecting {
-                NSLog("Comprador: Ignoring attach — connection already in progress")
+                cprLog("Comprador: Ignoring attach — connection already in progress")
                 return
             }
             if existing.isMounted {
-                NSLog("Comprador: Reattach while unmount in flight — queuing (entry 19a)")
+                cprLog("Comprador: Reattach while unmount in flight — queuing (entry 19a)")
                 existing.pendingAttach = device
                 return
             }
@@ -389,7 +369,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleDeviceDetached(_ device: USBDevice) {
-        NSLog("Comprador: Device detached — \(device.displayName) (vendor: 0x%04X, product: 0x%04X, locID: 0x%08X)",
+        cprLog("Comprador: Device detached — \(device.displayName) (vendor: 0x%04X, product: 0x%04X, locID: 0x%08X)",
               device.vendorID, device.productID, device.locationID)
 
         guard let active = sessions[device.locationID] else {
@@ -405,7 +385,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Ignore spurious detach events during connection — USB re-enumeration
         // causes rapid detach/attach cycles when the phone switches to MTP mode
         if active.isConnecting {
-            NSLog("Comprador: Ignoring detach — connection in progress (USB re-enumeration)")
+            cprLog("Comprador: Ignoring detach — connection in progress (USB re-enumeration)")
             return
         }
 
@@ -453,11 +433,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func ejectDevice(_ sender: Any?) {
         guard let active = sessionFor(sender) else { return }
-        NSLog("Comprador: Eject requested for \(active.displayName)")
+        cprLog("Comprador: Eject requested for \(active.displayName)")
         active.isConnecting = false
         active.pendingAttach = nil
         active.stopConnectTimer()
         let locID = active.device.locationID
+        // Mark ejected so the re-enumeration burst that bridge.stop() triggers
+        // doesn't auto-reconnect this device (see recentlyEjected).
+        recentlyEjected[locID] = Date()
         Task {
             await active.teardown()
             await MainActor.run {
@@ -495,7 +478,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// isMounted == true, and should queue via pendingAttach rather than discarding.
     @objc private func syntheticFlutter(_ sender: Any?) {
         guard let device = sessionFor(sender)?.device else { return }
-        NSLog("Comprador: ⚡ synthetic flutter — firing detach+reattach on \(device.displayName)")
+        cprLog("Comprador: ⚡ synthetic flutter — firing detach+reattach on \(device.displayName)")
         handleDeviceDetached(device)
         handleDeviceAttached(device)
     }
