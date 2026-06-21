@@ -635,16 +635,26 @@ func (s *Session) populateDir(dirPath string) []*ObjectMeta {
 		newPaths[dirPath+"/"+sanitizeName(e.Name)] = true
 	}
 
+	// wasPopulated captures whether this directory had a prior enumeration the
+	// NFS client may already have cached. changed tracks whether this re-fetch
+	// altered the child set (an add or a remove) — if so we advance the
+	// directory's ModTime at the end so its next GETATTR reports a newer
+	// ChangeID and the client invalidates its cached READDIR. Only meaningful
+	// when wasPopulated: first-time population has no client cache to bust.
+	wasPopulated := s.Objects.IsPopulated(dirPath)
+	changed := false
+
 	// Reconcile: anything in the old cache for this directory that the
 	// device no longer reports is a phone-side delete; remove it (and any
 	// cached descendants) recursively. We only do this when there *was* a
 	// prior enumeration — first-time population has no old state to clean.
-	if s.Objects.IsPopulated(dirPath) {
+	if wasPopulated {
 		for _, oldChild := range s.Objects.ListChildren(dirPath) {
 			if !newPaths[oldChild.Path] {
 				log.Printf("Reconcile %s: removing %s (no longer on device)",
 					dirPath, oldChild.Path)
 				s.Objects.RemoveRecursive(oldChild.Path)
+				changed = true
 			}
 		}
 	}
@@ -652,6 +662,15 @@ func (s *Session) populateDir(dirPath string) []*ObjectMeta {
 	var result []*ObjectMeta
 	for _, e := range entries {
 		objPath := dirPath + "/" + sanitizeName(e.Name)
+		// A path the device now reports that we had no cached entry for is a
+		// phone-side add (e.g. a photo just taken). Flag it so we bump the
+		// directory's ModTime below. Only counts as a surfaceable change when
+		// the directory was already populated (the client may have it cached).
+		if wasPopulated {
+			if _, existed := s.Objects.GetByPath(objPath); !existed {
+				changed = true
+			}
+		}
 		size := e.Size
 		// Android reports filesize=0 for a file recently written over MTP until
 		// its media scan finalizes the object (a transient window of seconds to
@@ -683,6 +702,17 @@ func (s *Session) populateDir(dirPath string) []*ObjectMeta {
 		}
 		s.Objects.Put(obj)
 		result = append(result, obj)
+	}
+
+	if changed {
+		// A child appeared or vanished out-of-band (photo taken, file deleted on
+		// the phone). Advance this directory's own ModTime so its next GETATTR
+		// reports a newer ChangeID and the NFS client drops its cached listing —
+		// otherwise the change stays invisible until a replug. Copy-then-Put so a
+		// concurrent reader never observes a torn ModTime (mirrors bumpDirMtime).
+		bumped := *meta
+		bumped.ModTime = time.Now()
+		s.Objects.Put(&bumped)
 	}
 
 	s.Objects.MarkPopulated(dirPath)

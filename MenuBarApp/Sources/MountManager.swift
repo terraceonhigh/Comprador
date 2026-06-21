@@ -123,7 +123,19 @@ class MountManager {
             // vers=4.0: the bridge now serves Galatea's userspace NFSv4 server
             // (was willscott/go-nfs NFSv3 with nfsvers=3,nolocks). NFSv4 has
             // integrated locking, so nolocks is dropped.
-            "-o", "vers=4.0,port=\(port),mountport=\(port),tcp",
+            //
+            // acdirmin/acdirmax bound how long the client trusts a cached
+            // directory listing before re-validating its attributes. The
+            // default (up to 60s) means an out-of-band phone-side change — a
+            // photo taken while DCIM is open — can sit invisible for a minute.
+            // The bridge surfaces such changes by bumping a directory's ModTime
+            // on re-enumeration (see mtpfsal VirtualGetAttributes +
+            // mtp.populateDir), but the client only notices on its next GETATTR;
+            // a 2–10s window keeps the felt latency short. Cost is bounded: the
+            // bridge's own directoryTTL (2s) caps how often a GETATTR turns into
+            // an actual libmtp enumeration, so tighter polling here doesn't
+            // multiply device traffic.
+            "-o", "vers=4.0,port=\(port),mountport=\(port),tcp,acdirmin=2,acdirmax=10",
             "\(host):/",
             mountpoint.path,
         ]

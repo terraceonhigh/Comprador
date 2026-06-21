@@ -347,6 +347,19 @@ func resolveStaged(reg *staging.Registry, session *mtp.Session, mtpPath string) 
 }
 
 func (d *mtpDir) VirtualGetAttributes(ctx context.Context, requested virtual.AttributesMask, a *virtual.Attributes) {
+	// Reconcile against out-of-band phone-side changes (a photo just taken, a
+	// file deleted in the phone's Files app) BEFORE reading this directory's
+	// meta below. EnsurePopulated is TTL-gated (a no-op within directoryTTL);
+	// when it does re-enumerate, populateDir advances this directory's ModTime
+	// if its child set changed — so the ChangeID fillCommon derives from ModTime
+	// moves, and the NFS client drops its cached READDIR on this very GETATTR.
+	// Without this the client never re-READDIRs a directory whose attributes
+	// look unchanged, and the new photo stays invisible until a replug. Skip the
+	// synthetic root ("/"): its children are the static storage list, populateDir
+	// has no entry for it, so re-enumerating it is a pointless session round-trip.
+	if d.mpath != "/" {
+		d.session.EnsurePopulated(d.mpath)
+	}
 	id := d.handleID()
 	var meta mtp.ObjectMeta
 	if m, ok := d.session.Objects.GetByPath(d.mpath); ok {
