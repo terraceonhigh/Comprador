@@ -1,5 +1,43 @@
 # Comprador — TODO
 
+## ⚠ RESUME HERE (2026-06-21) — v0.4.0 release, one step left: RETAG
+
+**State:** v0.4.0 is feature-complete, fully verified on device, and the
+release pipeline is fixed. The ONLY remaining action is to move the `v0.4.0`
+tag onto the fixed commit and let CI publish.
+
+**How we got here (this session, persona Mercer):**
+- Merged the Galatea integration (PR #26 → master `60f0fe35`); all ship gates
+  G1–G4 passed, signed build smoke-tested end-to-end on Pixel 6.
+- Found + fixed a directory-freshness bug (out-of-band phone changes — a photo
+  taken with the folder open — were invisible until replug). Commit `73255868`,
+  verified live. See [[galatea-phase-4-pivot]] memory for the full mechanism.
+- Tagged `v0.4.0` → **release CI FAILED at the swiftc step** (toolchain skew:
+  a weak-`self`-in-`@Sendable Task` capture in DeviceSession G1b code; macos-14
+  runner rejects as hard error, local toolchain only warned). Nothing shipped.
+- Fixed it (PR #27, `guard let self`) + added `.github/workflows/build-check.yml`
+  (a pull_request macOS build job — the missing pre-tag coverage). **PR #27 is
+  GREEN on macos-14 and MERGED to master.**
+
+**⏭ DO THIS NEXT — retag v0.4.0 onto the fixed master, then watch CI:**
+```
+git checkout master && git pull            # master now has PR#27's fix
+git push origin :refs/tags/v0.4.0          # delete old (broken) remote tag
+git tag -f v0.4.0 && git push origin v0.4.0 # re-tag on fixed HEAD
+```
+Then watch the run: `gh run list --workflow=release.yml --limit 1`. It will be
+SLOW (real Apple-notary wall time, several min at "Notarize the .app" — normal,
+not a hang). Success = a stapled `Comprador.dmg` on the GitHub Release. If it
+throws, grab the notary log: `gh run view <id> --log-failed`.
+
+**Optional follow-ups (NOT blocking the tag):**
+- Pin the Xcode version in both `release.yml` and `build-check.yml` so a future
+  runner-image bump can't reintroduce toolchain skew.
+- `.forgejo/workflows/helper.yml` still tests the removed helper — will go red on
+  master pushes. Gut or repoint it (bridge can't build on Linux: libmtp/darwin).
+
+---
+
 ## ⚠ NEXT SESSION — start here
 
 ### PIVOT (2026-06-07): v0.3.4 prefetch is PARKED — we're moving to Galatea.
