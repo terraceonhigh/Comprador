@@ -1,0 +1,39 @@
+# Pre-tag macOS build check.
+#
+# Why this exists: the release pipeline (release.yml) is tag-triggered, so
+# until v0.4.0 there was ZERO macOS build coverage before a tag. The G1b
+# self-heal code compiled locally (older Swift toolchain, warning only) but
+# the macos-14 runner's newer toolchain rejected a weak-`self` capture as a
+# hard error — discovered only after tagging. This job runs the SAME build
+# step release.yml runs (`make dist-swiftc`) on the SAME runner image, on
+# every PR, so compile-time skew surfaces on the PR instead of on the tag.
+#
+# Build-only: no secrets, no Developer ID signing, no notarization. It proves
+# the tree compiles and links; the release pipeline owns sign+notarize.
+
+name: Build check
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: brew install libmtp libusb go
+
+      - name: Go bridge — compile + vet (tree-wide vendor consistency)
+        run: make build-all
+
+      - name: Go bridge — tests
+        run: make bridge-test
+
+      - name: macOS app — full build (bridge + swiftc, ad-hoc signed)
+        # Identical to release.yml's "Build app bundle" step. This is the
+        # check that would have caught the Swift concurrency error pre-tag.
+        run: make dist-swiftc

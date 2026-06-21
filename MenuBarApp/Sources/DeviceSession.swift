@@ -162,7 +162,11 @@ final class DeviceSession {
 
                 // Surface key bridge-side milestones in the menu while connecting.
                 bp.onStatusLine = { [weak self] msg in
-                    DispatchQueue.main.async { self?.setConnectStatus(msg) }
+                    // Same weak-var-into-concurrent-closure issue as
+                    // onUnexpectedExit below: DispatchQueue.main.async takes a
+                    // @Sendable closure, so re-capture self immutably in its
+                    // capture list rather than referencing the enclosing weak var.
+                    DispatchQueue.main.async { [weak self] in self?.setConnectStatus(msg) }
                 }
 
                 let useNFS = true
@@ -216,7 +220,15 @@ final class DeviceSession {
                 // fault, anything that isn't our own stop()), self-heal instead
                 // of leaving Finder pointed at a dead mount (G1b).
                 bp.onUnexpectedExit = { [weak self] in
-                    Task { await self?.handleUnexpectedBridgeExit() }
+                    // Bind a strong, immutable `self` before the Task. A weak
+                    // capture is modeled as a *var* (ARC can zero it across a
+                    // concurrency boundary), so referencing it inside the
+                    // @Sendable Task is "reference to captured var 'self' in
+                    // concurrently-executing code" — a hard error on the macos-14
+                    // runner's Swift toolchain (it only warns locally). guard-let
+                    // makes the capture immutable.
+                    guard let self else { return }
+                    Task { await self.handleUnexpectedBridgeExit() }
                 }
 
                 await MainActor.run {
