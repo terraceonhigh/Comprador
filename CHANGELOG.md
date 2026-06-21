@@ -34,6 +34,9 @@ NFSv4's floor tolerates multi-minute libmtp reads, so that machinery is gone.
 - The NFSv4 mandatory-attribute panic that could crash the bridge is closed via
   a single attribute chokepoint.
 - Finder reports accurate free space (statfs), so drag-and-drop pre-flight works.
+- Changes made on the phone while a folder is open in Finder — a photo just taken,
+  a file deleted in the phone's Files app — now surface within a few seconds
+  instead of requiring a physical replug.
 
 **Removed:** the WebDAV server (`bridge/webdav`), the willscott NFSv3 path
 (`bridge/nfs`) and its prefetch cache, their vendored dependencies, and **the
@@ -44,9 +47,9 @@ label. Removing it eliminates the bundle's largest privilege-escalation surface
 and the admin-password prompt; the cost is that volumes are named from mDNS
 (`<device>.local`) rather than a clean `/etc/hosts` label.
 
-**Known limitations (preview):** tested on one device family (Pixel 6);
-clean-eject via the menu is not yet GUI-verified; and a USB-interface lock can
-still require a physical replug specifically across system sleep/wake. See
+**Known limitations:** verified on two vendors (Pixel 6 and Sony Xperia), not yet
+an exhaustive multi-vendor sweep; and a USB-interface lock can still require a
+physical replug specifically across system sleep/wake. See
 [docs/PRE-LAUNCH.md](docs/PRE-LAUNCH.md).
 
 ## v0.3.2 — 2026-05-09

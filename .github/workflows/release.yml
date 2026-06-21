@@ -69,8 +69,7 @@ jobs:
           for path in \
             "$BUNDLE/Contents/Frameworks/libmtp.9.dylib" \
             "$BUNDLE/Contents/Frameworks/libusb-1.0.0.dylib" \
-            "$BUNDLE/Contents/Resources/bridge" \
-            "$BUNDLE/Contents/MacOS/comprador-helper"
+            "$BUNDLE/Contents/Resources/bridge"
           do
             if [ -e "$path" ]; then
               echo "Signing $path"
