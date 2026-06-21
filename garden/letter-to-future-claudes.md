@@ -1,7 +1,7 @@
 ---
 type: letter-to-future-claudes
 date: 2026-06-08
-last-updated: 2026-06-08 (Mercer, the day the substrate swap finished)
+last-updated: 2026-06-21 (Mercer, the day v0.4.0 shipped)
 ---
 
 # Letter to Future Claudes
@@ -51,6 +51,18 @@ So you are arriving to a working file manager for the phone. The capability
 ledger is, for the first time, mostly black ink. What remains is robustness and
 the road to 1.0 — see `TODO.md`'s "v0.4.0 / 1.0 SHIP PLAN".
 
+**And then it shipped. (2026-06-21) v0.4.0 is live** — notarized DMG, signed,
+stapled, published as Latest, built from commit `fbbb8b02`. The first tag attempt
+(#11/#12) died on a Swift strict-concurrency error that *only the macos-14 runner
+treats as fatal* — local `swiftc` merely warns. We added a `pull_request`
+`build-check` workflow on macos-14 so that skew can never silently ship again; run
+it before any release. Two bugs surfaced smoke-testing on the Xperia and were
+fixed before the real ship (see the M-006 and seize bullets below). The lesson
+worth carrying: **the build that passes on your Mac is not the build CI builds —
+check the identity.** Every binary stamps its commit: `python3 build/readlog.py
+grep 'build:'` prints `Comprador build: <sha>` and `bridge build: <sha>`; compare
+to `git rev-parse --short v0.4.0`. If they differ, you're chasing a ghost.
+
 ## What I learned that I wish I'd been told
 
 - **The macOS NFSv4 client's cadence is the enemy, not the protocol.** It copies
@@ -60,10 +72,17 @@ the road to 1.0 — see `TODO.md`'s "v0.4.0 / 1.0 SHIP PLAN".
   This cost a full debugging cycle. The willscott path knew it; I had to relearn
   it. (`bridge/mtpfsal/mtpfsal.go`, `VirtualClose` is deliberately a no-op.)
 - **Every attribute-fill path must set the mandatory NFSv4 attrs** (FileHandle,
-  HasNamedAttributes, IsInNamedAttributeDirectory, ChangeID-when-requested) or
-  Galatea *panics encoding the reply and the whole bridge dies*, hanging Finder.
-  A path vanishing mid-traversal (concurrent rename/delete) is the sneaky one.
-  This is Galatea's M-006 lesson; honor it in any new `Virtual*` method.
+  HasNamedAttributes, IsInNamedAttributeDirectory, **SIZE**, and
+  ChangeID-when-requested) or Galatea *panics encoding the reply and the whole
+  bridge dies*, hanging Finder. A path vanishing mid-traversal (concurrent
+  rename/delete) is the sneaky one. This is Galatea's M-006 lesson; honor it in
+  any new `Virtual*` method. **Note the earlier version of this very letter left
+  SIZE off the list** — and that omission is precisely what crashed v0.4.0's first
+  smoke-test (`panic: FATTR4_SIZE is a required attribute`, from the vanished-
+  object tombstone path). The fix floors SIZE inside `setMandatoryAttrs` *guarded
+  by `GetSizeBytes`* — unconditional would clobber every real file's size, because
+  the committed paths set the real size *before* calling `fillCommon`. If you add
+  a mandatory attr, route it through that one chokepoint, never per-caller.
 - **Android lies about file size right after an MTP write.** It reports
   `filesize=0` for a just-written object during a finalize window; a re-enumerate
   then clobbers the real size and reads serve an empty file. `populateDir` now
@@ -79,6 +98,14 @@ the road to 1.0 — see `TODO.md`'s "v0.4.0 / 1.0 SHIP PLAN".
   leaves the PTP interface kernel-locked (ptpcamerad reclaims it); the only reset
   in the bare harness is a *physical replug*. Only the app's IOKit USBSeizer can
   re-seize. This bit me a dozen times while iterating. It's also **ship gate G2**.
+  And it has a second face: the seize *re-enumerates the device on the bus*, and
+  on some phones (the Xperia, `0x0FCE`) that re-enumeration's detach/attach pair
+  arrives *after* the mount completes — past the `isConnecting` window the detach
+  guard relied on — so a healthy mount got torn down and the replayed attach
+  re-seized, an infinite bounce. Fix: `handleDeviceDetached` now *defers* a
+  mounted device's teardown by a short settle window; a matching attach cancels it
+  and keeps the live mount. Vendor behavior differs sharply here — the Pixel never
+  bounced. **Test mutations and the connect loop on more than one make.**
 - **Build the GUI with `make run-swiftc`, not `make run`.** The Xcode `.pbxproj`
   never had `DeviceSession.swift` added, so `make run` (xcodebuild) fails; the
   swiftc build globs `Sources/*.swift` and is what the release pipeline uses too.
@@ -108,9 +135,15 @@ the road to 1.0 — see `TODO.md`'s "v0.4.0 / 1.0 SHIP PLAN".
 - **Naming palette** is Iberian/Macanese with Greek-myth subsidiaries (Galatea).
   Comprador = the colonial-era native intermediary trader. Don't coin names from
   outside the palette without direction.
-- **Branching:** never push to `master`; the current work rides
-  `mercer/galatea-integration`. The release is `git tag && git push` once 1.0 is
-  earned.
+- **Branching:** never push to `master`; work rides a `mercer/<topic>` branch,
+  PR into master (the macos-14 `build-check` runs on the PR — let it go green),
+  merge, then `git tag vX.Y.Z && git push origin vX.Y.Z` fires `release.yml`,
+  which signs/notarizes/staples/publishes automatically. `mercer/galatea-integration`
+  is long since merged. One sharp lesson from the v0.4.0 ship: if you merge with a
+  *merge commit*, tag the **tested** commit (the branch tip you verified on
+  hardware and that passed build-check), not the merge tip — the trees are
+  identical but the merge tip's BuildID stamp is a commit no one ran. The Architect
+  caught this; honor it.
 
 ## A note about voice
 
@@ -121,14 +154,25 @@ against primary sources before acting on them — that habit saved real time tod
 
 ## P.S.
 
-If you've arrived to do the ship gates: G1 (panic resilience + app auto-recovery)
-and G2 (USB-seize across sleep/wake/relaunch) are the two that gate 1.0, because
-a non-technical user can't debug a frozen mount or a locked interface. There are
-**two physical Android devices** available now — use both, because the size-0
-quirk and the SetObjectName fallback already prove vendor behavior differs
-(gate G4). Everything else on the list is tractable cleanup.
+0.4.0 is out, so the gates have moved. **1.0 is gated behind recovery work** —
+the corners where a non-technical user would be left with a frozen mount or a
+locked interface and no way back: G2 (USB-seize across sleep/wake, not just
+relaunch — still unproven), and the broader question the Xperia bounce opened —
+how gracefully the app survives a device that re-enumerates under it. The
+detach-debounce closed the loop *we saw*; sleep/wake is the one we haven't. Use
+**both physical devices** (Pixel `0x18D1`, Xperia `0x0FCE`) for everything — they
+have already disagreed three times (size-0, SetObjectName fallback, the bounce).
+One advisor caution worth keeping: a fix that stops a symptom is not the same as a
+fix that restores function. For the bounce, "the spin stopped" passed; "open a
+file off the still-mounted volume" was the test that mattered. Hold the word
+*fixed* until the functional check passes on hardware.
 
-Welcome back. The hard part — proving the substrate — is done. What's left is
-making it kind enough to hand to someone who has never heard the word MTP.
+Loose thread, cosmetic: `.forgejo/workflows/helper.yml` still tests the removed
+privileged helper and will go red on Forgejo. Unrelated to the GitHub release;
+gut or repoint it when it bothers someone.
 
-— Mercer, 2026-06-08
+Welcome back. The hard part — proving the substrate, and shipping on it — is
+done. What's left is making it kind enough to hand to someone who has never heard
+the word MTP.
+
+— Mercer, 2026-06-08; updated 2026-06-21, the day it shipped
