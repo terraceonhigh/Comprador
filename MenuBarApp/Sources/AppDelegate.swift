@@ -25,6 +25,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var recentlyEjected: [UInt32: Date] = [:]
     private let ejectReconnectSuppressWindow: TimeInterval = 6
 
+    /// Deferred teardowns for mounted devices that just detached, keyed by USB
+    /// Location ID → the cancellable work item. A connect-time IOKit seize
+    /// re-enumerates the device on the bus; on some phones (notably the Xperia)
+    /// that re-enumeration's detach/attach pair arrives AFTER the mount completes
+    /// — i.e. after `isConnecting` is already false, so the in-connect detach
+    /// guard no longer covers it. Tearing down on that detach and replaying the
+    /// matching attach re-seizes and re-enumerates again: an infinite bounce, with
+    /// the bridge mounting healthy each cycle and dying only to the teardown.
+    /// We instead defer the teardown a short window; a matching attach within it
+    /// cancels it and keeps the live mount (handleDeviceAttached). A real unplug
+    /// has no following attach, so teardown still fires after the window.
+    private var pendingDetachTeardown: [UInt32: DispatchWorkItem] = [:]
+    private let reEnumSettleWindow: TimeInterval = 2.5
+
     /// Convenience for step-3 callers that still assume single-device. The
     /// existing guards mean at most one session is active; returning the
     /// first dict value matches the old `session` semantics exactly.
@@ -332,6 +346,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             recentlyEjected.removeValue(forKey: device.locationID) // window passed — a real replug
         }
 
+        // A mounted device's detach is sitting in its settle window (see
+        // handleDeviceDetached). An attach now means that detach was a self-induced
+        // re-enumeration — our own connect-time seize, or the phone re-binding MTP —
+        // not a real unplug. Cancel the deferred teardown and keep the live mount;
+        // reconnecting would re-seize and re-enumerate, which is the bounce loop.
+        if let pending = pendingDetachTeardown[device.locationID] {
+            pending.cancel()
+            pendingDetachTeardown.removeValue(forKey: device.locationID)
+            cprLog("Comprador: Re-enumeration settled within %.1fs — keeping mount, not reconnecting", reEnumSettleWindow)
+            return
+        }
+
         // If a session for the same physical device (matched by USB
         // IOKit Location ID) already exists, treat the attach as a
         // reattach: in flight → ignore, mounted → queue pending teardown
@@ -399,20 +425,38 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        Task {
-            await active.teardown()
-            await MainActor.run {
-                let pending = active.pendingAttach
-                sessions.removeValue(forKey: device.locationID)
-                if sessions.isEmpty {
-                    updateIcon(state: .idle)
-                }
-                rebuildMenu()
-                if let queued = pending {
-                    handleDeviceAttached(queued)
+        // Defer the teardown by a settle window instead of running it now: if this
+        // detach is a self-induced re-enumeration (the Xperia bounce), the matching
+        // attach arrives within the window and handleDeviceAttached cancels this,
+        // keeping the live mount. A genuine unplug has no following attach, so the
+        // work item below runs and tears down. The bridge keeps serving its (now
+        // absent) device during the window — reads would fail, but it's local and
+        // doesn't crash, and the window is short.
+        let locID = device.locationID
+        pendingDetachTeardown[locID]?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingDetachTeardown.removeValue(forKey: locID)
+            guard let active = self.sessions[locID] else { return }
+            cprLog("Comprador: Detach settled as a real unplug — tearing down")
+            Task {
+                await active.teardown()
+                await MainActor.run {
+                    let pending = active.pendingAttach
+                    self.sessions.removeValue(forKey: locID)
+                    if self.sessions.isEmpty {
+                        self.updateIcon(state: .idle)
+                    }
+                    self.rebuildMenu()
+                    if let queued = pending {
+                        self.handleDeviceAttached(queued)
+                    }
                 }
             }
         }
+        pendingDetachTeardown[locID] = work
+        cprLog("Comprador: Detach on mounted device — deferring teardown %.1fs to absorb a possible re-enumeration", reEnumSettleWindow)
+        DispatchQueue.main.asyncAfter(deadline: .now() + reEnumSettleWindow, execute: work)
     }
 
     /// Returns the menu item's target session, falling back to
@@ -438,6 +482,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         active.pendingAttach = nil
         active.stopConnectTimer()
         let locID = active.device.locationID
+        // Cancel any in-flight deferred detach teardown — this eject supersedes it
+        // and does its own teardown below (avoids a double teardown after the window).
+        pendingDetachTeardown[locID]?.cancel()
+        pendingDetachTeardown.removeValue(forKey: locID)
         // Mark ejected so the re-enumeration burst that bridge.stop() triggers
         // doesn't auto-reconnect this device (see recentlyEjected).
         recentlyEjected[locID] = Date()
