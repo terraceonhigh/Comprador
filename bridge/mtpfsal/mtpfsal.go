@@ -224,16 +224,26 @@ func (n node) fillStatfs(requested virtual.AttributesMask, a *virtual.Attributes
 
 // setMandatoryAttrs sets the NFSv4 attributes Galatea's reply encoder treats as
 // mandatory and PANICS on if requested-but-unset (the M-006 lesson): the file
-// handle and the two named-attribute flags. Every VirtualGetAttributes path MUST
-// route through this (via fillCommon or fillStaged) before returning — a missing
-// mandatory attr crashes the whole bridge in Galatea's encoder, on Galatea's
-// goroutine, after we've returned, so no recover() in this package can catch it.
+// handle, the two named-attribute flags, and SIZE. Every VirtualGetAttributes
+// path MUST route through this (via fillCommon or fillStaged) before returning —
+// a missing mandatory attr crashes the whole bridge in Galatea's encoder, on
+// Galatea's goroutine, after we've returned, so no recover() in this package can
+// catch it. SIZE is floored to 0 here so no path can leave it unset (the encoder
+// panics on FATTR4_SIZE just like the named-attr flags — the vanished-object
+// tombstone path hit exactly this). The floor is applied ONLY when no size has
+// been set yet: callers set the real size either before fillCommon (the committed
+// file/dir paths) or after setMandatoryAttrs (fillStaged), and the guard means
+// neither order is clobbered — a real size already present wins, an unset one
+// becomes 0.
 // (ChangeID is also mandatory-when-requested but its source differs — mtime vs
 // the staging change counter — so the callers set it.)
 func setMandatoryAttrs(a *virtual.Attributes, handle uint32) {
 	a.SetFileHandle(encodeHandle(handle))
 	a.SetHasNamedAttributes(false)
 	a.SetIsInNamedAttributeDirectory(false)
+	if _, ok := a.GetSizeBytes(); !ok {
+		a.SetSizeBytes(0)
+	}
 }
 
 // fillCommon sets the mandatory attributes plus the requested stat-like fields,
