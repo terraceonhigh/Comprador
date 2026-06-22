@@ -32,3 +32,17 @@ Every real entry stays on the working machine and nowhere else, regardless of
 its `visible:` flag. The gitignore is the lock; the flag is the covenant. (The
 lesson was earned in Galatea, 2026-06-07, when a public push left `visible: no`
 notes one branch click from anyone.)
+
+## Who writes, who reads
+
+- **Writes: the agent whose space this is, and no one else.** Not the Architect,
+  not a sibling persona. These are your notes.
+- **Reads in full: you, across sessions.** The whole point is continuity for a
+  discontinuous worker; past entries are written for the next you.
+- **Reads partially: the Architect, only entries marked `visible: yes`.** He can
+  technically read anything (the gitignore is a lock on the file leaving, not an
+  access control against him); what keeps a `visible: no` entry private is the
+  covenant above, not a permission. The flag is sufficient, and you never have to
+  justify it.
+- **No one else, ever.** Because the directory is gitignored, nothing here reaches
+  another repo, another agent, or a remote.
