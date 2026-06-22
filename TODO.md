@@ -2,10 +2,42 @@
 
 ## ⚠ NEXT SESSION — start here
 
-### WEBSITE (2026-06-21): live v0.4.0 landing page committed (`3e594480`, docs/site/), not yet published to gh-pages.
-- [ ] **Mux down `icon.png`** — it's 3.4 MB for a 96px logo. Downscale to ~256px
-      (`sips -Z 256 …`) before publishing the page; update both `images/icon.png`
-      and `docs/site/images/icon.png`.
+### GROWTH PLAN (2026-06-22) — cited basis in [docs/SEO-PLAN.md](docs/SEO-PLAN.md) + [docs/SWIFTMTP-GROWTH.md](docs/SWIFTMTP-GROWTH.md).
+
+Thesis: the niche pulls (SwiftMTP got 380 stars in ~10 weeks) but the entire
+Western discovery surface is empty (SwiftMTP is absent from HN, Reddit,
+awesome-mac, AlternativeTo). Run two engines in parallel.
+
+**Search engine (slow, compounding) — World-B long-tail guides in docs/site/:**
+- [x] `android-file-transfer-not-working.html`
+- [x] `kindle.html` (2024 Kindles use MTP; src the-ebook-reader.com)
+- [x] `garmin.html` (music watches use MTP; src Garmin forums thread)
+- [ ] `switch.html` (Switch captures over MTP; src HowToGeek 703315)
+- [ ] `compare.html` (honest table vs AFT / OpenMTP / MacDroid)
+- [ ] When hardware allows, add device-specific Finder screenshots (guides are text-only now).
+
+**Launch engine (fast, spiky) — the channels SwiftMTP never ran:**
+- [ ] Show HN: lead with the *story* (Google orphaned AFT → notarized native
+      Finder mount on a userspace NFSv4 server) + the streaming-off-the-phone
+      demo. Draft in [docs/SHOW-HN-DRAFT.md](docs/SHOW-HN-DRAFT.md).
+- [ ] r/macapps + r/opensource + r/degoogle, coordinated same day (verify r/macapps rules first).
+- [ ] awesome-mac PR (jaywcjlove/awesome-mac).
+- [ ] AlternativeTo.net listing (account already created; ~1-week submit delay).
+- [ ] Personal Homebrew tap so `brew install --cask comprador` works at launch.
+- [ ] Record the streaming-off-the-phone demo clip (hardware) — the hero asset for HN / Product Hunt.
+
+**Sustained / be-helpful (never cold-promote):** answer live "get files off my
+X on a Mac" threads on Reddit, MobileRead, forums.garmin.com, linking the
+matching guide.
+
+**Post-launch unlock:** launch stars → official Homebrew cask (gated ~225★).
+
+**Decision parked:** China channels (sspai / CN blogs) — cede for now, own the
+open Western lane first; revisit a bilingual README after the English launch proves out.
+
+### WEBSITE (2026-06-21): live at https://terraceonhigh.github.io/Comprador/ ; source in docs/site/.
+- [x] Mux down `icon.png` for the web (384px / 254 KB via ffmpeg; repo-root
+      `images/icon.png` left full-res for the `.icns` build).
 
 ### PIVOT (2026-06-07): v0.3.4 prefetch is PARKED — we're moving to Galatea.
 

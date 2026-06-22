@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Garmin watch not showing up in Finder on your Mac? · Comprador</title>
+<meta name="description" content="Garmin music watches (Fenix, Epix, Forerunner) connect over MTP, which macOS doesn't read natively, so the watch never appears in Finder. Here's how to mount it like a drive to add music or pull GPX and activity files. Free and open source.">
+<link rel="canonical" href="https://terraceonhigh.github.io/Comprador/garmin.html">
+<meta name="theme-color" content="#f4ebe1">
+<link rel="icon" href="images/icon.png">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="Garmin watch not showing up in Finder on your Mac?">
+<meta property="og:description" content="Garmin's music watches use MTP, which macOS can't read natively. Here's how to mount your Garmin in Finder to add music or copy off your activity files. Free and open source.">
+<meta property="og:url" content="https://terraceonhigh.github.io/Comprador/garmin.html">
+<meta property="og:image" content="https://terraceonhigh.github.io/Comprador/images/demo-light.png">
+<meta name="twitter:card" content="summary_large_image">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    { "@type": "Question", "name": "Why won't my Garmin show up in Finder on my Mac?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Garmin's music-capable watches connect over MTP rather than as a USB drive. Windows reads MTP on its own; macOS does not, so the watch charges but never appears in Finder until you add software that speaks MTP." } },
+    { "@type": "Question", "name": "Which Garmin devices use MTP?",
+      "acceptedAnswer": { "@type": "Answer", "text": "The music-capable watches, including the Fenix, Epix, and Forerunner music models. Many non-music Garmin units still offer a plain USB mass-storage mode and mount on a Mac without help; the music watches are the ones that use MTP." } },
+    { "@type": "Question", "name": "Can I copy music on, or pull activity and GPX files off?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes. Once the watch is mounted in Finder you can drag music into its music folder and copy activity files, GPX routes, and other data out of the GARMIN folder, the same as any other volume." } },
+    { "@type": "Question", "name": "Does it need Developer Options or work on Apple Silicon?",
+      "acceptedAnswer": { "@type": "Answer", "text": "There is no developer mode to enable on a watch. Comprador is a native app, signed and notarized by Apple, for macOS 13 or later on Apple Silicon." } },
+    { "@type": "Question", "name": "Is it safe?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Free and open source, no telemetry. It talks to the watch over USB and serves the files to Finder over a loopback connection the network can't reach. Nothing leaves your Mac." } }
+  ]
+}
+</script>
+
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="guide.css">
+<script src="script.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="index.html">Comprador</a>
+  <a class="btn small" href="https://github.com/terraceonhigh/Comprador/releases/latest">Download</a>
+</header>
+
+<main>
+  <article class="guide">
+    <h1>Your Garmin won't show up in Finder?</h1>
+    <p class="lead">Plug a music-capable Garmin watch into a Mac and, more often than not,
+      nothing happens. It charges, but Finder never lists it. The watch isn't broken, and
+      neither is your Mac. They just don't speak the same protocol.</p>
+
+    <h2>What's going on</h2>
+    <p>Garmin's music watches, the Fenix, Epix, and Forerunner music models among them, connect
+      over MTP rather than as a plain USB drive. Windows handles MTP without help. macOS doesn't,
+      so the watch shows up nowhere in Finder. For years the answer was Android File Transfer,
+      a tool Google has since abandoned and which breaks on current Macs anyway. Garmin's own
+      forums are full of people stuck on exactly this.</p>
+
+    <h2>Mount it in Finder instead</h2>
+    <p>Comprador shows the watch in Finder like a USB drive. Add music, or copy your activity
+      files and routes off, by dragging them. No payment, and nothing to enable on the watch.
+      It's free and open source.</p>
+    <ol>
+      <li>Plug the watch in with a cable that carries data, not a charge-only one.</li>
+      <li>If the watch asks how to connect, choose MTP. The music watches default to it.</li>
+      <li>The watch appears in Finder's sidebar under Locations. Open the GARMIN folder to copy
+        music in or pull GPX and activity files out. Eject it before you unplug.</li>
+    </ol>
+
+    <h2>How it compares</h2>
+    <table class="compare">
+      <thead>
+        <tr><th></th><th class="me">Comprador</th><th>Android&nbsp;File&nbsp;Transfer</th><th>OpenMTP</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="col">Free &amp; open source</td><td class="me y">Yes</td><td class="n">Free, closed</td><td class="y">Yes</td></tr>
+        <tr><td class="col">Shows up in Finder, like a drive</td><td class="me y">Yes</td><td class="n">No</td><td class="n">No</td></tr>
+        <tr><td class="col">Still maintained</td><td class="me y">Yes</td><td class="n">Abandoned</td><td class="y">Yes</td></tr>
+        <tr><td class="col">Works with any MTP device</td><td class="me y">Yes</td><td class="y">Most</td><td class="y">Most</td></tr>
+      </tbody>
+    </table>
+    <p class="note">Non-music Garmin units often offer a plain USB mass-storage mode and mount
+      on a Mac without any of this. The music watches are the ones that need MTP.</p>
+
+    <h2>Questions</h2>
+    <details>
+      <summary>Which Garmin devices need this?</summary>
+      <p>The music-capable watches: Fenix, Epix, and the Forerunner music models, among others.
+        Many non-music units still mount as a normal USB drive.</p>
+    </details>
+    <details>
+      <summary>Why won't my Garmin show up on my Mac?</summary>
+      <p>The music watches speak MTP, and macOS has no built-in MTP support. The watch connects
+        and charges, but Finder never lists it until something on the Mac translates MTP.</p>
+    </details>
+    <details>
+      <summary>Can I add music, or copy my activities off?</summary>
+      <p>Both. Once it's mounted, drag music into the watch's music folder, and pull activity
+        files, GPX routes, and the rest out of the GARMIN folder like any other volume.</p>
+    </details>
+    <details>
+      <summary>Does it work on Apple Silicon?</summary>
+      <p>Yes. It's a native app, signed and notarized by Apple, for macOS 13 or later. There's
+        no developer mode to turn on.</p>
+    </details>
+    <details>
+      <summary>Is it safe?</summary>
+      <p>Free and open source, no telemetry. It talks to the watch over USB and serves the files
+        to Finder over a loopback connection the network can't reach. Nothing leaves your Mac.</p>
+    </details>
+
+    <div class="cta">
+      <a class="btn" href="https://github.com/terraceonhigh/Comprador/releases/latest">Download for Mac</a>
+      <a class="btn ghost" href="index.html">What is Comprador?</a>
+    </div>
+  </article>
+
+  <footer>
+    <p class="platform">Apple Silicon, macOS 13 or later. <strong>Signed by Apple.</strong></p>
+    <p class="links">
+      <a href="https://github.com/terraceonhigh/Comprador/releases/latest">Download</a>
+      <a href="https://github.com/terraceonhigh/Comprador">Source</a>
+      <a href="https://github.com/terraceonhigh/Comprador/blob/master/LICENSE">License (GPLv3+)</a>
+      <button id="funToggle" type="button" class="funlinks" aria-pressed="false">Fun mode</button>
+    </p>
+    <p class="also"><em>Also worth knowing about:</em> <a href="https://github.com/sannidhyaroy/Soduto">Soduto</a>, a macOS client for KDE Connect, because, Apple or not, you want your devices in symphony.</p>
+  </footer>
+
+</main>
+</body>
+</html>

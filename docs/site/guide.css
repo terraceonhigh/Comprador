@@ -1,0 +1,42 @@
+/* ============================================================
+   Comprador guide pages: layout on top of style.css
+   Linked by the device/how-to pages (kindle, garmin, ...).
+   ============================================================ */
+
+main { max-width: 720px; }
+
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  max-width: 720px; margin: 0 auto; padding: 22px 24px 0;
+}
+.topbar .wordmark { font-family: var(--font-brand); font-size: 1.4rem; letter-spacing: 0.01em; color: var(--text); }
+.topbar .wordmark:hover { text-decoration: none; }
+.btn.small { padding: 8px 18px; font-size: 0.95rem; }
+
+.guide { text-align: left; padding: 10px 0 4px; }
+.guide h1 { font-size: clamp(1.8rem, 4.6vw, 2.5rem); line-height: 1.15; letter-spacing: -0.01em;
+            margin: 0.2em 0 0.45em; font-weight: 700; }
+.guide h2 { font-size: 1.4rem; margin: 1.9em 0 0.4em; font-weight: 700; }
+.guide p  { margin: 0.7em 0; font-size: 1.08rem; }
+.guide .lead { font-size: 1.2rem; }
+.guide ol { padding-left: 1.3em; }
+.guide li { margin: 0.45em 0; font-size: 1.08rem; }
+.guide .shot { margin: 1.6em 0; }
+
+.compare { width: 100%; border-collapse: collapse; margin: 1.2em 0; font-size: 1rem; }
+.compare th, .compare td { border-bottom: 1px solid var(--rule); padding: 9px 8px; text-align: left; }
+.compare thead th { font-weight: 700; }
+.compare td.col { color: var(--muted); }
+.compare td.y { color: var(--accent); font-weight: 700; }
+.compare td.n { color: var(--faint); }
+.compare .me { background: var(--card); }
+.note { font-size: 0.92rem; color: var(--muted); }
+
+details { border-top: 1px solid var(--rule); padding: 0.75em 0; }
+details:last-of-type { border-bottom: 1px solid var(--rule); }
+details summary { cursor: pointer; font-weight: 600; font-size: 1.06rem; list-style-position: inside; }
+details p { margin: 0.5em 0 0.2em; color: var(--muted); }
+
+.guide .cta { justify-content: flex-start; margin-top: 2.2em; }
+
+@media (max-width: 600px) { .topbar { max-width: none; padding: 16px 16px 0; } }

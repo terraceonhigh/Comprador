@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Android File Transfer alternatives for Mac, compared honestly · Comprador</title>
+<meta name="description" content="An honest comparison of the ways to move files between an Android phone (or any MTP device) and a Mac: Comprador, the abandoned Android File Transfer, OpenMTP, and MacDroid. What each does, what it costs, and where each one loses.">
+<link rel="canonical" href="https://terraceonhigh.github.io/Comprador/compare.html">
+<meta name="theme-color" content="#f4ebe1">
+<link rel="icon" href="images/icon.png">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="Android File Transfer alternatives for Mac, compared honestly">
+<meta property="og:description" content="Comprador vs Android File Transfer vs OpenMTP vs MacDroid: what each does, what it costs, and where each one loses. Including where Comprador loses.">
+<meta property="og:url" content="https://terraceonhigh.github.io/Comprador/compare.html">
+<meta property="og:image" content="https://terraceonhigh.github.io/Comprador/images/demo-light.png">
+<meta name="twitter:card" content="summary_large_image">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    { "@type": "Question", "name": "What's the best free Android File Transfer alternative for Mac?",
+      "acceptedAnswer": { "@type": "Answer", "text": "The two free, open-source options are Comprador and OpenMTP. Comprador mounts the phone in Finder as a real volume; OpenMTP gives you a separate dual-pane window. If you want it to behave like a USB drive in Finder, Comprador; if you prefer a dedicated file-manager window, OpenMTP." } },
+    { "@type": "Question", "name": "Is MacDroid free?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Partly. MacDroid's free tier is one-way (phone to Mac). Two-way transfer and edit-in-place need the paid PRO version, and its fast mode relies on ADB, which means turning on Developer Options and USB debugging." } },
+    { "@type": "Question", "name": "Is Android File Transfer still worth using?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Not really. Google quietly removed its download in early 2024 and the page now serves a Windows-only app. It's unmaintained and increasingly fails on Apple Silicon and recent macOS." } },
+    { "@type": "Question", "name": "What does Comprador do that the others don't?",
+      "acceptedAnswer": { "@type": "Answer", "text": "It's the only one that is free and open source AND mounts the device as a real Finder volume AND needs no kernel extension and no developer mode AND ships signed and notarized. Each competitor is missing at least one of those. Because it serves the files over NFSv4, you can also play or scrub a video straight off the phone without copying it to the Mac first." } }
+  ]
+}
+</script>
+
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="guide.css">
+<script src="script.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="index.html">Comprador</a>
+  <a class="btn small" href="https://github.com/terraceonhigh/Comprador/releases/latest">Download</a>
+</header>
+
+<main>
+  <article class="guide">
+    <h1>Android File Transfer alternatives for Mac, compared</h1>
+    <p class="lead">Most "best alternative" lists are written by the company selling one of the
+      options. This one isn't, so it also says where Comprador loses. If you just want files
+      between an Android phone (or any MTP device) and your Mac, here are the real choices.</p>
+
+    <h2>The short version</h2>
+    <table class="compare">
+      <thead>
+        <tr><th></th><th class="me">Comprador</th><th>Android&nbsp;File&nbsp;Transfer</th><th>OpenMTP</th><th>MacDroid</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="col">Free &amp; open source</td><td class="me y">Yes</td><td class="n">Free, closed</td><td class="y">Yes</td><td class="n">Paid</td></tr>
+        <tr><td class="col">Shows up in Finder, like a drive</td><td class="me y">Yes</td><td class="n">No</td><td class="n">No</td><td class="y">Yes</td></tr>
+        <tr><td class="col">Nothing to open and babysit</td><td class="me y">Yes</td><td class="n">No</td><td class="n">No</td><td class="y">Yes</td></tr>
+        <tr><td class="col">No kernel extension or permission prompt</td><td class="me y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="n">No</td></tr>
+        <tr><td class="col">No developer mode / USB debugging</td><td class="me y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="n">No</td></tr>
+        <tr><td class="col">Still maintained</td><td class="me y">Yes</td><td class="n">No</td><td class="y">Yes</td><td class="y">Yes</td></tr>
+        <tr><td class="col">Signed &amp; notarized by Apple</td><td class="me y">Yes</td><td class="n">Old</td><td class="n">No</td><td class="y">Yes</td></tr>
+      </tbody>
+    </table>
+
+    <h2>The longer version</h2>
+    <p><strong>Android File Transfer</strong> is the one everyone starts with and the reason
+      most people end up here. Google quietly pulled its download in early 2024; the page now
+      serves a Windows-only app. It still runs if you find an old copy, but it's unmaintained,
+      caps files at 4 GB, and increasingly throws "Could not connect to the device" on Apple
+      Silicon. Treat it as gone.</p>
+    <p><strong>OpenMTP</strong> is the free, open-source one most people land on next, and it's
+      good. The catch is that it's a separate dual-pane app window you keep open and watch
+      during transfers, rather than the phone showing up in Finder. If that's the experience
+      you want, it's a solid pick.</p>
+    <p><strong>MacDroid</strong> is the polished paid option. It does mount in Finder, but the
+      free tier only copies one way (phone to Mac), two-way needs PRO, its fast path uses ADB
+      (so Developer Options and USB debugging), and it asks for system-extension permissions on
+      first launch. If you don't mind paying and granting that, it works well.</p>
+    <p><strong>Comprador</strong> is free and open source, mounts the device as an ordinary
+      Finder volume, needs no kernel extension and no developer mode, and ships signed and
+      notarized. It's the only one of the four with all of those at once. One thing none of the
+      others do: because it serves the files over NFSv4, you can play or scrub a video straight
+      off the phone in place, without copying it to the Mac first.</p>
+
+    <h2>Where Comprador loses</h2>
+    <p>It's Apple Silicon and macOS 13 or later only, with no Intel build. It's USB only, with
+      no wireless transfer. And it's newer than OpenMTP, so it has less of a track record. If
+      you're on an Intel Mac or you want Wi-Fi transfer, one of the others (or a tool like
+      Soduto for wireless) will serve you better.</p>
+
+    <div class="cta">
+      <a class="btn" href="https://github.com/terraceonhigh/Comprador/releases/latest">Download for Mac</a>
+      <a class="btn ghost" href="index.html">What is Comprador?</a>
+    </div>
+  </article>
+
+  <footer>
+    <p class="platform">Apple Silicon, macOS 13 or later. <strong>Signed by Apple.</strong></p>
+    <p class="links">
+      <a href="https://github.com/terraceonhigh/Comprador/releases/latest">Download</a>
+      <a href="https://github.com/terraceonhigh/Comprador">Source</a>
+      <a href="https://github.com/terraceonhigh/Comprador/blob/master/LICENSE">License (GPLv3+)</a>
+      <button id="funToggle" type="button" class="funlinks" aria-pressed="false">Fun mode</button>
+    </p>
+    <p class="also"><em>Also worth knowing about:</em> <a href="https://github.com/sannidhyaroy/Soduto">Soduto</a>, a macOS client for KDE Connect, because, Apple or not, you want your devices in symphony.</p>
+  </footer>
+
+</main>
+</body>
+</html>
