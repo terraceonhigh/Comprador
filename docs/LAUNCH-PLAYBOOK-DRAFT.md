@@ -3,8 +3,15 @@
 
 Written 2026-05-11 in dialogue with the Architect, after the
 MacDroid competitive briefing and the SEO + colleague-copy
-research passes. This is one Mercer's strategic read at one
-moment, not committed plan. Edit freely.
+research passes; refreshed 2026-06-21 after v0.4.0 shipped and
+the dedicated SEO/off-page plan landed. This is one Mercer's
+strategic read, not committed plan. Edit freely.
+
+This playbook is the *strategy/sequencing* layer. The keyword
+strategy, winnable long-tail clusters, positioning table, and the
+full off-page/directory breakdown now live in
+[docs/SEO-PLAN.md](SEO-PLAN.md) — cross-referenced below rather
+than duplicated.
 
 Premise: at v0.4.0, the leverage is distribution, not monetization.
 Donations cover real costs (Apple Developer Program $99/year, the
@@ -20,6 +27,13 @@ product.
 -->
 
 # Launch playbook — v0.4.0
+
+> **Status (2026-06-21):** v0.4.0 has **shipped** — a notarized,
+> signed, stapled `.dmg` is live on GitHub Releases (commit
+> `fbbb8b02`) and the website is **live** at
+> <https://terraceonhigh.github.io/Comprador/>. The product is
+> launch-ready; the work in front of us is the distribution
+> sequence below, no longer a pre-tag blocker list.
 
 ## The framing
 
@@ -47,19 +61,21 @@ subset of visitors who want to support the project without making
 them switch channels. Strictly additive to the existing Interac
 path documented in `README.md` — they coexist; users choose.
 
-### 2. Homebrew Cask submission
+### 2. Homebrew — personal tap now, official cask later
 
-`brew install --cask comprador` is a credibility marker. Homebrew
-Cask has gatekeeping (a real review pulls the cask into the upstream
-repo), and being there signals legitimacy to the technical-adjacent
-crowd. The leverage is downstream: those users evangelize to
-less-technical friends with a single-command install ("just install
-Homebrew first, then this").
+`brew install --cask comprador` is a credibility marker, but the
+**official** Homebrew Cask is gated: it needs roughly **≥225 stars /
+90 forks**, and the repo is currently at **0 stars**. So the official
+cask is a *post-launch unlock*, not a Day-1 move — the
+launch → stars → cask sequence is the whole game (see
+[SEO-PLAN.md §5](SEO-PLAN.md)).
 
-The submission itself is a `brew bump-cask-pr` or manual PR against
-[Homebrew/homebrew-cask](https://github.com/Homebrew/homebrew-cask).
-Format: one ruby file describing the cask. Comparable indie utilities
-already there are the templates to copy from.
+What *is* available today, with no notability gate, is a **personal
+Homebrew tap**: `brew install --cask` works immediately against our
+own tap. Stand that up now for the technical-adjacent crowd; their
+single-command install ("just install Homebrew first, then this") is
+what they evangelize to less-technical friends. File the official
+homebrew-cask PR once the star threshold is cleared.
 
 ### 3. Reciprocal acknowledgment with Soduto
 
@@ -88,7 +104,10 @@ A press kit needs:
 - A short demo GIF or video showing plug-in-and-it's-in-Finder
 - Two-paragraph pitch — the user-facing one, no protocols
 - One-paragraph technical note — for the writers who'd want to mention
-  the helper-free NFS architecture or the multi-device subprocess model
+  the substrate (**Galatea**, an in-house userspace **NFSv4** server
+  over loopback; the WebDAV layer, the `willscott/go-nfs` NFSv3 path,
+  and the privileged root helper were all removed in v0.4.0) or the
+  multi-device subprocess model
 - Press contact: the project email and the architect's name
 
 Outreach is one personal email per blogger, *not* a broadcast. Tone:
@@ -96,6 +115,14 @@ Outreach is one personal email per blogger, *not* a broadcast. Tone:
 interesting." Mention the unusual thing — the NFS pivot, the
 ImageCaptureCore investigation, the concurrent multi-device — that
 gives the writer a story angle they can use.
+
+**Get the Android File Transfer framing right in every piece of
+copy.** Do *not* write "discontinued in May 2024" — that's vendor SEO
+myth, not fact. The accurate, more-damning line: Google **quietly
+orphaned** it (the download link was removed in early 2024 and the
+page now serves a Windows-only app); it's **unmaintained and broken
+on Apple Silicon / recent macOS**. Full framing in
+[SEO-PLAN.md §3](SEO-PLAN.md).
 
 Scales poorly. Matters a lot for the first wave.
 
@@ -107,9 +134,14 @@ Hacker News specifically rewards the *author-tells-the-story* format.
 Comprador has unusually good narrative material:
 
 - The ImageCaptureCore investigation that turned out to be a dead end
-- The NFS pivot that eliminated the 90-second mount wait
+- The NFS pivot that eliminated the 90-second WebDAV mount wait — and
+  the second pivot to **Galatea**, an in-house userspace **NFSv4**
+  server, whose multi-minute read tolerance let us delete the entire
+  NFSv3 prefetch/JUKEBOX workaround — and means you can now stream a
+  video straight off the phone (play it, scrub it) where NFSv3 timed out
 - The helper-free architecture (turns out `mount -t nfs` to localhost
-  works unprivileged on macOS)
+  works unprivileged on macOS, so the root helper was vestigial and
+  is gone)
 - The concurrent multi-device support that none of the in-tree
   references actually do
 - The cgo callback buffer-reuse fix that's the difference between
@@ -119,18 +151,35 @@ Each of those is a Show HN paragraph. The post is *"here's what we
 learned"*, not *"look at our product."* The former lands harder
 because it's information about the platform, not a sales pitch.
 
-**Timing matters.** Show HN after items 1–3 from the Free Four have
-had a week to chew. Cold Show HN, with no Homebrew cask, no press
-coverage, no GitHub Sponsors button, lands flatter — readers click
-through and find a less-furnished home. Letting the credibility
-signals accumulate first means the readers who do click through
-arrive at a project that already looks established.
+**Timing matters.** Show HN after the Free Four have had a week to
+chew (and after the AlternativeTo.net account has cleared its ~1-week
+submission delay — start that account *now*; see
+[SEO-PLAN.md §6](SEO-PLAN.md)). Cold Show HN, with no personal
+Homebrew tap, no press coverage, no GitHub Sponsors button, lands
+flatter — readers click through and find a less-furnished home.
+Letting the credibility signals accumulate first means the readers
+who do click through arrive at a project that already looks
+established. Best window is Tue–Thu morning US time; stay in-thread.
 
-Parallel posts to **r/mac**, **r/macapps**, and (cross-posted with
-care) **r/AndroidQuestions** — each subreddit has its own register;
-don't recycle copy. r/mac wants the user-visible benefit; r/macapps
-wants the technical note; r/AndroidQuestions wants the AFT-replacement
-positioning.
+**Channel discipline is load-bearing — there are two kinds of channel
+and they are not interchangeable.** The full list lives in
+[SEO-PLAN.md §5](SEO-PLAN.md); the rule that governs this playbook:
+
+- **Announce channels** welcome a launch post: **Show HN**,
+  **r/macapps** (check self-promo rules first), **r/opensource /
+  r/degoogle / r/fossdroid** (the no-telemetry fit), and **r/swift /
+  r/macosprogramming** (the Galatea NFSv4 / cgo-libmtp architecture
+  earns goodwill and stars). Tailor the register per channel — don't
+  recycle copy.
+- **Be-helpful-only channels** will **ban cold promotion.** The
+  device, e-reader, and Garmin communities — **MobileRead**,
+  **forums.garmin.com**, **r/kobo, r/onyx_boox, r/Garmin,
+  r/NintendoSwitch**, the Android/Pixel/Samsung subs, **r/mac**, and
+  the **MacRumors Forums** — are not launch surfaces. There you answer
+  existing "how do I transfer files / why won't my device show up"
+  threads and link Comprador only when it genuinely answers the
+  question. This is a slow, ongoing helpful presence, not a Day-0
+  blast.
 
 ## The dormant escalation path — only if donations don't cover costs
 
@@ -169,10 +218,15 @@ only if the donation line genuinely doesn't keep up with real costs.
   does its own work; comparison-chart energy turns the project into
   a vendor-vs-vendor argument that wastes the disruption advantage.
 
-## Prerequisites before Day 0
+## Prerequisites before the announcement wave
 
-Two items block the v0.4.0 tag and the sequence below. Both are
-tracked in [TODO.md "Pre-launch UX items"](../TODO.md).
+v0.4.0 has tagged and shipped, so these no longer block the *release*
+— but they remain prerequisites for the *announcement wave*, since
+both shape the first impression a press/HN reader forms. Confirm
+their current state against [TODO.md "Pre-launch UX items"](../TODO.md)
+and [docs/PRE-LAUNCH.md](PRE-LAUNCH.md) before Day 0 — **flag: I have
+not verified whether either shipped in v0.4.0; the CHANGELOG doesn't
+mention them explicitly.**
 
 - **User-facing disclosure of the `ptpcamerad` kill.** Comprador
   temporarily preempts other USB-camera-reading apps (Image Capture,
@@ -183,35 +237,46 @@ tracked in [TODO.md "Pre-launch UX items"](../TODO.md).
   small friction up front beats discovery-by-bug-report after the
   press wave lands.
 - **Update detector with Homebrew-aware suppression.** The playbook
-  ships across two distribution channels at once (direct .dmg and
-  Homebrew Cask). Sparkle handles the direct path; Homebrew-installed
-  copies need the Sparkle prompt suppressed so the in-app update flow
-  doesn't bypass `brew upgrade --cask comprador`. Without this,
-  Homebrew users get a confusing double-update experience and may
-  publicly complain — bad for the credibility marker the Cask
-  submission was supposed to be.
+  ships across two distribution channels at once (direct .dmg and the
+  Homebrew tap/cask). Sparkle handles the direct path; Homebrew-
+  installed copies need the Sparkle prompt suppressed so the in-app
+  update flow doesn't bypass `brew upgrade --cask comprador`. Without
+  this, Homebrew users get a confusing double-update experience and
+  may publicly complain — bad for the credibility marker the cask was
+  supposed to be.
 
-Both shipped, then proceed to Day 0.
+Confirm both are in the shipped build, then proceed to Day 0.
 
 ## Concrete first-week sequence when v0.4.0 ships
 
-In rough order, assuming the architect has a free week after the
-v0.4.0 tag:
+In rough order, assuming the architect has a free week to run the
+announcement wave (the v0.4.0 tag and DMG are already done):
 
-1. **Day 0:** Tag v0.4.0; .dmg available on GitHub Releases.
-2. **Day 1:** GitHub Sponsors button enabled. Press kit drafted
+1. **Day -7 (now):** Create the **AlternativeTo.net** account — it
+   has a ~1-week submission delay, so it gates the whole sequence.
+   Add **GitHub repo topics** (`mtp`, `android-file-transfer`,
+   `macos`, `finder`, `nfs`, `libmtp`, `usb`) — trivial, do today.
+   Both per [SEO-PLAN.md §6](SEO-PLAN.md).
+2. **Day 0:** v0.4.0 already live (notarized DMG on GitHub Releases,
+   website live). GitHub Sponsors button enabled. Press kit drafted
    (screenshots, GIF, two-paragraph pitch, one-paragraph technical
    note). Soduto reciprocal-mention email drafted.
-3. **Day 2–3:** Press emails sent (5–10 indie Mac bloggers,
-   personalized). Soduto email sent. Homebrew Cask PR drafted.
-4. **Day 4–7:** Cask PR submitted and shepherded through review;
-   responding to any early press replies. Letting any blog coverage
-   appear.
-5. **Day 7–10:** Once the cask is merged and at least one blog
-   mention exists, Show HN drafted and submitted. Parallel posts
-   to r/mac, r/macapps, r/AndroidQuestions in distinct registers.
-6. **Day 10+:** Triage. Respond to issues, capture feedback, write
-   the postmortem letter for the next Mercer.
+3. **Day 1–3:** Press emails sent (5–10 indie Mac bloggers,
+   personalized). Soduto email sent. **Personal Homebrew tap** stood
+   up (no notability gate). AlternativeTo.net listing submitted once
+   the account clears.
+4. **Day 4–7:** Responding to early press replies; letting any blog
+   coverage appear. PR to **awesome-mac** + niche awesome-lists.
+5. **Day 7–10:** With the tap live and at least one blog mention,
+   **Show HN** drafted and submitted (Tue–Thu AM US). Parallel
+   announce-channel posts (**r/macapps**, **r/opensource /
+   r/degoogle / r/fossdroid**, **r/swift / r/macosprogramming**) in
+   distinct registers. **Not** the device/e-reader subs — those are
+   be-helpful-only (see the channel-discipline note above).
+6. **Day 10+:** Triage. Respond to issues, capture feedback. Begin
+   the slow be-helpful presence in MobileRead / Garmin / device subs.
+   The **official** homebrew-cask PR unlocks once the repo clears the
+   ~225-star gate. Write the postmortem letter for the next Mercer.
 
 ## The thing to remember
 

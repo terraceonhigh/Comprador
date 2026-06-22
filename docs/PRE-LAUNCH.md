@@ -1,28 +1,34 @@
 # Pre-launch readiness — Reddit / Hacker News
 
-> **⚠ Stale baseline (2026-06-08).** The substance below predates the
-> **Galatea substrate swap** (v0.4.0): Comprador now serves NFSv4, not WebDAV
-> or willscott-NFSv3, and read / write / full file management all work live.
-> The current honest status and known limitations are the v0.4.0 entry in
-> [CHANGELOG.md](../CHANGELOG.md); the pitch and known-issues sections here need
-> a refresh against that before any announcement — a with-the-Architect task,
-> since it's a product/messaging call. Treat the specifics below as v0.3.2-era.
-
-**Status — 2026-05-10:** Comprador is at v0.3.2, working, not
-yet publicly announced. This doc tracks the path from "shipping
-quietly to early users" to "ready for a Reddit / HN post." Both
-the things we have today and the things contingent on the next
-two-to-four weeks of work.
+**Status — 2026-06-21:** Comprador is at **v0.4.0** — shipped (a
+notarized, signed, stapled DMG is live on
+[GitHub Releases](https://github.com/terraceonhigh/Comprador/releases/tag/v0.4.0),
+built from commit `fbbb8b02`) and working, but **not yet publicly
+announced**. This doc tracks the remaining path from "shipping
+quietly to early users" to "ready for a Reddit / HN post." The
+landing page is live at
+**https://terraceonhigh.github.io/Comprador/** (source in
+[docs/site/](site/)); the discovery and channel strategy lives in
+[docs/SEO-PLAN.md](SEO-PLAN.md), which is the companion to this doc
+for the announcement itself.
 
 This doc gets updated as the launch approaches. The structure
 below is the durable shape; the contents change.
 
-## What we'd be announcing today (v0.3.2 baseline)
+## What we'd be announcing today (v0.4.0 baseline)
 
 A working macOS app that mounts Android phones (and PTP/MTP
 cameras) as Finder volumes. Plug in, tap File Transfer, the
-phone appears in the Locations sidebar. ~7 MB notarized DMG,
-macOS 13+, Apple Silicon only.
+phone appears in the Locations sidebar — then **browse, copy off,
+copy on, delete, rename, and reorganise** files in place, all
+through Finder. ~7 MB notarized DMG, macOS 13+, Apple Silicon only.
+
+The Finder layer is **Galatea**, an in-house userspace **NFSv4**
+server the Go bridge runs over loopback; the Swift menu-bar app
+mounts it with `mount -t nfs`. No kernel extension, no macFUSE, no
+privileged helper — the earlier WebDAV server, the patched
+`willscott/go-nfs` NFSv3 path, and the root helper were all
+**removed in v0.4.0** (see [CHANGELOG.md](../CHANGELOG.md)).
 
 ### Defensible claims today
 
@@ -30,6 +36,10 @@ macOS 13+, Apple Silicon only.
   beyond drag-to-Applications. No Developer Options on the
   phone. No kernel extension. No SIP disable. No subscription.
   No account.
+- **Full two-way file management.** Browse, copy off, copy on,
+  delete, rename (instant, in-place), create folders, move files
+  and whole folders — all in Finder. Verified live on a Pixel 6:
+  a 1 GB read and a 1.07 GB single-transfer write, byte-identical.
 - **Notarized.** First launch is just a double-click; no
   right-click → Open dance.
 - **No telemetry, no phone-home.** The bridge binds to
@@ -37,8 +47,8 @@ macOS 13+, Apple Silicon only.
   [SECURITY.md](SECURITY.md).
 - **Native menu bar app.** ~7 MB DMG, not Electron, not a web
   view, not a 360 MB shell.
-- **NFSv3 mount, sub-second mount time.** No 90-second WebDAV
-  preflight wait. The mount feels like a USB stick.
+- **NFSv4 mount (Galatea), sub-second mount time.** No 90-second
+  WebDAV preflight wait. The mount feels like a USB stick.
 - **Works with cameras too.** Anything libmtp recognizes as
   MTP- or PTP-class. Tested with phones (Sony Xperia, Pixel)
   and PTP cameras (Canon, Nikon, Sony, Fuji).
@@ -57,7 +67,7 @@ macOS 13+, Apple Silicon only.
 | Does it work with iPhones? | No. iPhones don't speak MTP. Use Image Capture / Photos / iCloud / Finder for those. |
 | Does it work over Wi-Fi? | No. USB only. Wireless MTP is technically possible but the protocol surface roughly doubles for little gain. |
 | What's the catch? | Listed below under "Known issues we will disclose." |
-| Is it safe? | Threat model at [SECURITY.md](SECURITY.md). Loopback-only NFS, no telemetry, library validation disabled (for bundled dylibs), USB entitlement scoped to known MTP vendors, privileged helper bundled but not on the mount path (slated for removal in v0.4.0). |
+| Is it safe? | Threat model at [SECURITY.md](SECURITY.md). Loopback-only NFS, no telemetry, library validation disabled (for bundled dylibs), USB entitlement scoped to known MTP vendors. The privileged root helper was **removed in v0.4.0** (loopback NFS mounts unprivileged, so it was vestigial) — there is no longer any root component or admin-password prompt. |
 | Why's it called Comprador? | Portuguese-origin term for the native intermediary in Western trading firms operating in colonial-era Macau and Canton. The project takes its visual palette from Iberian/Macanese vernacular (the logo is a 1705 Merian engraving — see [NOTICES.md "Logo"](../NOTICES.md)). |
 
 ### Known issues we will disclose
@@ -65,57 +75,56 @@ macOS 13+, Apple Silicon only.
 Be honest. These are the things people will hit. Disclose
 proactively rather than letting comment threads surface them.
 
-- **First-plug-after-app-start may fail.** If a phone is
-  already connected when Comprador launches, our bridge may
-  not win the USB-interface claim race against macOS's
-  `ptpcamerad`. The app shows a notification: unplug and
-  replug. We hope to remove this entirely if the
-  [ImageCaptureCore research](RESEARCH-IMAGECAPTURECORE.md)
-  pays off.
+- **A USB-interface lock can still require a physical replug
+  across system sleep/wake.** v0.4.0 narrowed the old
+  first-plug-after-launch failure considerably: the app
+  self-heals when the bridge dies (detects the exit, unmounts
+  the stale volume, re-spawns and remounts), and an
+  orphaned-bridge reaper lets a relaunch seize the USB interface
+  without a physical replug. The residual case is the
+  `ptpcamerad` claim race specifically after sleep/wake, where a
+  replug is still sometimes needed. The
+  [ImageCaptureCore research](RESEARCH-IMAGECAPTURECORE.md) is
+  the candidate permanent fix.
 - **Apple Silicon only, macOS 13+.** Intel Mac and older macOS
   are not supported. Intel is not on the roadmap; older macOS
   may be a future ask.
-- **Single device at a time** *(currently)*. Concurrent
-  multi-device is the next major feature. Plan in
-  [PLAN-MULTI-DEVICE.md](PLAN-MULTI-DEVICE.md). Gated on the
-  cgo callback buffer-reuse fix being in [TODO.md
-  "Roadmap imperative"](../TODO.md).
-- **Per-storage quota is aggregated** *(currently)*. Phones
-  with SD cards report aggregate free space to Finder, which
-  can mislead Finder's "X GB available" preflight. Fix planned
-  in [PLAN-MULTI-STORAGE.md](PLAN-MULTI-STORAGE.md).
-- **Memory cliff on 8 GiB Macs with multi-GiB transfers.** Per
-  [MISTAKES.md entry 8a](MISTAKES.md), the cgo callback path
-  leaks ~one-file-size's worth of `VM_ALLOCATE` regions per
-  transfer until the bridge dies. Fix is ~30 lines of Go;
-  [TODO.md "Roadmap imperative"](../TODO.md). On 16 GiB+ Macs
-  this is rarely user-visible.
+- **Per-storage quota may be aggregated.** v0.4.0 reports accurate
+  free space to Finder so drag-and-drop pre-flight works; whether
+  phones with SD cards still report a single aggregate across
+  storages (rather than per-storage) is not separately confirmed.
+  Fix plan in [PLAN-MULTI-STORAGE.md](PLAN-MULTI-STORAGE.md).
 - **No auto-update.** Manual DMG download from GitHub Releases.
   Trade-off: also no silent supply-chain attack vector.
   Sparkle-style auto-update is on the longer-term roadmap.
 
-## What we'd be announcing in 2–4 weeks
+## What's already in vs. still ahead
 
-Contingent on three pieces of work landing in roughly the order
-listed. Each is bounded; none requires open-ended research.
+### Already landed (shipped in v0.4.0)
 
-### Definite (with the cgo fix)
+- **Multi-GiB transfers no longer leak memory.** The cgo callback
+  buffer-reuse fix landed (verified 2026-05-14: ~67 `VM_ALLOCATE`
+  regions, ~8 MB RSS after a 9 GiB transfer, versus the pre-fix
+  409 regions). Bridge footprint stays bounded regardless of file
+  size. The full-scale 9 GiB acceptance retest is still an open
+  verification follow-up in [TODO.md](../TODO.md), but the fix
+  itself is in.
+- **Concurrent multi-device — verified working on hardware.** Two
+  phones (or a phone and a camera) plugged in at once, each its own
+  Finder Locations entry, browseable in parallel; every device gets
+  its own bridge subprocess, mount, and quota. No in-tree reference
+  (OpenMTP, SwiftMTP) does this concurrently.
+- **Stream media straight off the phone.** The NFSv4 floor tolerates
+  multi-minute reads, so you can play a video or scrub through it in
+  place — watch a documentary off the phone without copying it to the
+  Mac first. The retired NFSv3 path timed out on exactly this.
 
-The cgo callback buffer-reuse fix is ~30 lines of Go. It
-unlocks:
+### Still ahead
 
-- **Multi-GiB transfers stop leaking memory.** Bridge process
-  footprint stays bounded regardless of file size.
-- **Concurrent multi-device becomes shippable.** Two phones
-  plugged in, two Finder Locations sidebar entries, both
-  browseable in parallel. This is the genuinely-unique feature
-  in this niche — verified by source-reading of OpenMTP and
-  SwiftMTP that neither does this concurrently.
-
-### Plausible (with the multi-storage implementation)
-
-Per-storage `statfs(2)`. Bridge already has the data layer;
-fix is a small go-nfs patch and adapter routing. ~1 day.
+- **Per-storage `statfs(2)`.** v0.4.0 reports accurate aggregate
+  free space; per-storage reporting for SD-card phones is the
+  remaining refinement. Plan in
+  [PLAN-MULTI-STORAGE.md](PLAN-MULTI-STORAGE.md).
 
 ### Contingent on ImageCaptureCore tests
 
@@ -130,21 +139,42 @@ If they pass:
   kernel-claim race; if we don't fight, we don't need it.
 - **App Store distribution becomes plausible.** Currently
   sandbox-blocked by the kill operation.
-- **Privileged helper comes out faster.** Already slated for
-  v0.4.0 removal.
+
+(The privileged helper is already gone, removed in v0.4.0 — that
+strand of the original investigation is settled independently of
+these tests.)
 
 If they fail, nothing changes architecturally — we keep
-libmtp + seizure + helper + dext-on-roadmap. The doc becomes a
-closed investigation.
+libmtp + seizure + dext-on-roadmap. The doc becomes a closed
+investigation.
 
 ## The pitch
 
 A two-sentence version for the post title and first paragraph:
 
-> Comprador mounts your Android phone (or PTP camera) as a
-> Finder volume. Plug in, tap File Transfer, drag files. No
-> install ceremony, no developer mode, no kernel extension, no
-> Electron, no telemetry, no subscription.
+> Comprador mounts your Android phone (or PTP camera) as a real
+> Finder volume — browse, copy, delete, and rename in place. Plug
+> in, tap File Transfer, done. Free and open source, no app window
+> to babysit, no kernel extension, no developer mode, no Electron,
+> no telemetry, no subscription.
+
+The differentiator is the **combination**, not any single leg.
+"Native Finder mount" alone isn't unique (MacDroid markets it;
+FUSE/CLI tools do it); free-and-OSS alone isn't (OpenMTP is). What
+no rival offers is the whole stool at once — free + open-source +
+a *true Finder volume* (not an app window) + nothing to open or
+babysit + no kernel/system extension + no developer mode + and
+still consumer-grade (notarized, auto-detecting menu-bar app). See
+the per-rival comparison grid in
+[docs/SEO-PLAN.md §3](SEO-PLAN.md); that table, and the channel
+plan in §5, are the source for the announcement copy — don't
+re-derive them here.
+
+Positioning sentence the research supports:
+
+> Your phone shows up in Finder like a USB drive. No app to open,
+> no kernel extension, no developer mode, no payment — free and
+> open source.
 
 What it's *not*, said clearly:
 
@@ -156,12 +186,13 @@ What it's *not*, said clearly:
 - Not a UI competitor to OpenMTP. We have no UI of our own
   beyond a menu bar icon; the UI is Finder.
 
-The differentiator (after the cgo fix lands):
+The differentiator (shipped in v0.4.0):
 
 > Comprador is the only Mac app that lets you mount two phones
 > simultaneously in Finder. Plug in your phone and your
 > partner's, drag files between them, treat them as
-> independent volumes.
+> independent volumes. Stream a video off either one without
+> copying it across first.
 
 The differentiator (after ImageCaptureCore lands, if it does):
 
@@ -204,11 +235,13 @@ specific and tickable.
 - [x] NOTICES.md attributes all third-party code and assets
 - [x] README explains "How It Works" in three steps
 - [x] Logo (Merian/Sluyter, public domain)
-- [ ] **cgo callback buffer-reuse fix landed.** Removes the memory
-      cliff. ([TODO.md](../TODO.md))
-- [ ] **Verified on at least one device class beyond the project's
-      primary Sony Xperia 10 III.** Camera (any PTP), Pixel,
-      Samsung, OnePlus. Ideally three.
+- [x] **cgo callback buffer-reuse fix landed.** Removes the memory
+      cliff; verified 2026-05-14 (the full-scale 9 GiB acceptance
+      retest is an open verification follow-up). ([TODO.md](../TODO.md))
+- [~] **Verified on at least one device class beyond the project's
+      primary Sony Xperia 10 III.** v0.4.0 verified live on a
+      **Pixel 6** (second vendor); ideally widen to three (a PTP
+      camera, Samsung, or OnePlus).
 
 ### Soft requirements (launch with these noted as caveats)
 
@@ -218,8 +251,15 @@ specific and tickable.
 - [ ] ImageCaptureCore tests run, results documented *(if
       tests pass, the pitch shifts and launch waits for the
       pivot; if they fail, ship without)*
+- [x] Landing page live at
+      **https://terraceonhigh.github.io/Comprador/**
+      (source in [docs/site/](site/)); on-page SEO shipped per
+      [SEO-PLAN.md](SEO-PLAN.md). Satellite how-to pages and
+      off-page channel work (AlternativeTo, awesome-mac, repo
+      topics) are tracked there, not here.
 - [ ] README polished for non-developer reader (less jargon,
-      more screenshots)
+      more screenshots); swept for v0.4.0 (no stale WebDAV /
+      helper / NFSv3 references)
 - [ ] Screenshots / GIF in README that show the actual flow
       (plug in, tap, mount appears) — not just static frames
 
@@ -252,9 +292,9 @@ Wait until:
 
 When an item lands or unlands, update its status. When the
 ImageCaptureCore tests run, fold their results into the pitch
-section. When the cgo fix ships, update the differentiator
-language. When a real user reports something we hadn't
-anticipated, add it to "Known issues."
+section. When a
+real user reports something we hadn't anticipated, add it to
+"Known issues."
 
 The doc is not the launch announcement itself. The launch
 announcement uses the pitch + known issues + the screenshot

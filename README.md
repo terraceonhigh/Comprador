@@ -7,7 +7,9 @@
 </p>
 
 Plug in. Comprador mounts the device as a Finder volume — no extra app
-to open, no kernel extension, no subscription.
+to open, no kernel extension, no developer mode, no subscription.
+
+Website: <https://terraceonhigh.github.io/Comprador/>
 
 ## How It Works
 
@@ -52,10 +54,6 @@ just a double-click — no Gatekeeper warning, no right-click dance.
   The proper fix is a DriverKit extension, which is on the roadmap.
   Workaround for now: launch Comprador *before* plugging in.
 - **Apple Silicon only** — no Intel build yet.
-- **Single device at a time** *(today)*. Concurrent multi-device
-  is the next major feature on the roadmap: N phones plugged in,
-  N Finder sidebar entries, all browseable in parallel. Plan
-  documented in [docs/PLAN-MULTI-DEVICE.md](docs/PLAN-MULTI-DEVICE.md).
 
 ## Building from Source
 
@@ -78,27 +76,20 @@ See [docs/BUILDING.md](docs/BUILDING.md) for full build instructions.
 
 Comprador has two main components:
 
-**Go NFS Bridge** — A standalone binary that connects to the phone
-via libmtp (cgo) and serves its filesystem over NFSv3 on a loopback
-port. macOS speaks NFSv3 natively, so no kernel extension is needed
-on the Mac side.
+**Go Bridge** — A standalone binary that connects to the phone
+via libmtp (cgo) and serves its filesystem from **Galatea**, an in-house
+userspace NFSv4 server, on a random loopback port. macOS speaks NFSv4
+natively, so no kernel extension is needed on the Mac side.
 
 **Swift Menu Bar App** — Watches for USB devices via IOKit (matched by
-known Android vendor IDs *or* USB Still Image / PTP class), spawns the
-bridge when an MTP/PTP device is detected, and mounts the bridge's NFS
-endpoint as a Finder volume via `/sbin/mount -t nfs` to localhost
-(no privileged helper required — verified on macOS 13+).
-
-**Privileged Helper** *(optional, cosmetic only)* — A small Go LaunchDaemon
-registered via `SMAppService.daemon`. The mount path doesn't need it; the
-only thing it still does is drop the `.local` suffix from the Finder
-sidebar (`/Volumes/Pixel-6` instead of `/Volumes/Pixel-6.local`) by
-managing an `/etc/hosts` block. The user is prompted once on first
-launch; without the helper everything works, the volume just keeps the
-`.local` form.
+known Android vendor IDs *or* USB Still Image / PTP class), seizes the
+PTP interface, spawns the bridge when an MTP/PTP device is detected, and
+mounts the bridge's NFS endpoint as a Finder volume via
+`/sbin/mount -t nfs` to localhost (no privileged helper required —
+verified on macOS 13+).
 
 ```
-Phone ←USB→ libmtp ←cgo→ Go bridge ←NFSv3 (localhost)→ Finder
+Phone ←USB→ libmtp ←cgo→ Go bridge (Galatea NFSv4) ←localhost→ Finder
                                 ↑
                          hostname from
                        Settings.Global.DEVICE_NAME
@@ -119,10 +110,14 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 - Volume named after the device (the same name you set under Android
   Settings → About → Device name, via MTP `DeviceFriendlyName`)
 - "Start at Login" toggle via `SMAppService.mainApp`
-- Optional privileged helper that drops the `.local` suffix from the
-  Finder sidebar (`/Volumes/Pixel-6` instead of `/Volumes/Pixel-6.local`)
+- Self-heals if the bridge dies: unmounts the stale volume, respawns,
+  and remounts
 - Picks up most cameras (PTP class), not just Android phones — libmtp
   decides what's actually mountable
+- Concurrent multi-device: plug in two phones (or a phone and a camera)
+  and browse both at once, each its own volume in the sidebar
+- Stream media in place: play or scrub a video straight off the phone
+  without copying it to the Mac first
 
 See [TODO.md](TODO.md) for the full roadmap.
 
@@ -153,11 +148,8 @@ sync. Comprador is for *non*-Apple phones and PTP/MTP cameras.
 
 **How do I uninstall?**
 Drag `Comprador.app` from `/Applications` to the Trash. The Login Item
-registration goes with it. If you installed the optional helper for
-clean volume names, it will also be torn down. The
-Comprador-managed block in `/etc/hosts` (also optional helper only) is
-left in place — remove it manually with `sudo $EDITOR /etc/hosts` if
-you want it gone; look for the `# BEGIN Comprador` markers.
+registration goes with it. There is no privileged helper, daemon, or
+system modification to clean up — Comprador never installs one.
 
 **Finder shows the volume but no files (or transfers stall).**
 The MTP session has gotten into a bad state — usually because the
@@ -178,7 +170,9 @@ Number 7 times). Too much friction for non-technical users.
 **macFUSE?** Requires a kernel extension, which means disabling SIP or
 navigating Gatekeeper. Not acceptable for a consumer app.
 
-**Android File Transfer?** Abandoned by Google, buggy, 4GB file limit.
+**Android File Transfer?** Google quietly orphaned it — removed the
+download link in early 2024, and that page now serves a Windows-only
+app. It's unmaintained and breaks on Apple Silicon / recent macOS.
 
 **File Provider API?** Designed for cloud storage. MTP's stateful,
 session-locked protocol doesn't map well to File Provider's pull-based model.
@@ -194,8 +188,8 @@ session-locked protocol doesn't map well to File Provider's pull-based model.
 
 Comprador began as a fork of [OpenMTP](https://github.com/ganeshrvel/openmtp)
 by Ganesh Rathinavel, but no source from that project remains — Comprador
-is a clean reimplementation with a different architecture (Go NFS bridge +
-Swift menu bar app, in place of Electron + Node.js).
+is a clean reimplementation with a different architecture (a Go bridge
+serving NFSv4 + a Swift menu bar app, in place of Electron + Node.js).
 
 ## Support
 
@@ -216,5 +210,5 @@ If you'd rather contribute code or testing, see
 
 [GNU General Public License, version 3 or later](LICENSE).
 
-Third-party components and their licenses (libmtp, `golang.org/x/net`)
-are listed in [NOTICES](NOTICES.md).
+Third-party components and their licenses (libmtp, Galatea) are listed
+in [NOTICES](NOTICES.md).
