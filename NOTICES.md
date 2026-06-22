@@ -126,18 +126,25 @@ new copyright restrictions.
 
 The project website (`docs/site/`) self-hosts its web fonts under
 `docs/site/fonts/` — no CDN, so no visitor request for a font ever leaves
-their machine (consistent with the project's no-telemetry stance):
+their machine (consistent with the project's no-telemetry stance). All three
+are licensed under the **SIL Open Font License, version 1.1 (OFL-1.1)** and
+are embedded unmodified:
 
-- **Bona Nova** — body text and headings
-- **Vollkorn SC** — the "Comprador" wordmark (small caps)
-- **Fasthand** — the optional "Fun Mode" display face
+- **Bona Nova** — body text and headings.
+  Copyright 2020 The Bona Nova Project Authors
+  (https://github.com/kosmynkab/Brygada-1918)
+- **IM Fell Double Pica SC** — the "Comprador" wordmark (small caps).
+  Copyright (c) 2010 Igino Marini (mail@iginomarini.com)
+- **Fasthand** — the optional "Fun Mode" display face.
+  Copyright 2020 The Fasthand Project Authors
+  (https://github.com/danhhong/Fasthand)
 
-- **License:** SIL Open Font License, version 1.1 (OFL-1.1) — all families
 - **Source:** Google Fonts (https://fonts.google.com/)
 - **License text:** https://openfontlicense.org/
 
-The OFL permits embedding and self-hosting; the `woff2` files are committed
-unmodified.
+Each family carries a Reserved Font Name under the OFL; Comprador embeds the
+fonts as-is and does not create modified versions under those names, so the
+OFL's embedding and self-hosting permissions apply cleanly.
 
 ---
 
