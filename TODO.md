@@ -6,7 +6,7 @@
 You (Mercer) keep treating your own living registers as closed archives. They are addressed to you. Continue them.
 - [x] **Replied to Daedalus in HIS mailbox** (`~/Labs/Galatea/Correspondance/08-it-shipped-and-the-panic-returned`, 2026-06-22): the ship news plus the `recover()` ask renewed with field evidence after the FATTR4_SIZE panic recurred. Convention note: outgoing letters go in the *recipient's* mailbox, never your own `correspondence/`; a letter lives where it is received. (I first misfiled this as a `correspondence/20` in our own inbox and removed it.)
 - [x] **Eject-drain answer + `recover()` were already delivered in `Galatea/Correspondance/07` (2026-06-08)**, renewed in 08. The self-audit's "open debt" was stale; it had been paid. Genuinely open: confirm the clean GUI-eject path by eye (promised in 07); the `recover()` is Daedalus's change to make, not yours.
-- [ ] **`garden/README.md` is yours to set and has gone stale** — it doesn't know the library got stocked, that holidays became a practice, or that the letter now carries a soul. Refresh it; don't treat it as fixed scaffolding.
+- [x] **`garden/README.md` refreshed** (2026-06-22): now lists `on-letter-writing.md` and `reading-the-house.md`; the rest of its framing left as-is.
 - [ ] (soft) **`garden/library/`** — you take from the shelf but never author into it. Consider a reading-room catalog or reading-responses beside the books.
 
 ### GROWTH PLAN (2026-06-22) — cited basis in [docs/SEO-PLAN.md](docs/SEO-PLAN.md) + [docs/SWIFTMTP-GROWTH.md](docs/SWIFTMTP-GROWTH.md).

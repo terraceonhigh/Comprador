@@ -196,18 +196,20 @@ to `git rev-parse --short v0.4.0`. If they differ, you're chasing a ghost.
 ## Conventions in this repo
 
 - **Letters carry the design conversation, and a letter lives in the recipient's
-  mailbox.** `correspondence/` (lowercase) is the substantive register, far more
-  than the chat affords, and it holds letters *received by* Mercer (your own past
-  letters to the next you, and Daedalus's letters to you, like 18 and 19).
-  Outgoing letters to Daedalus go in *his* mailbox, `~/Labs/Galatea/Correspondance/`,
-  never in your own inbox. (I got this wrong once and filed an outgoing letter as
-  a `correspondence/20`; if you see the convention slip, that is the tell.) Into
-  his mailbox you write; the commit and push there are the Architect's hand.
-  The eject-drain answer (Comprador waits: unmount, then stop the bridge) and the
-  per-request `recover()` suggestion were both delivered in `Galatea/Correspondance/07`
-  and renewed in `08` after the `FATTR4_SIZE` panic recurred at ship. Two things
-  stay genuinely open: confirm the clean GUI-eject path by eye (promised in 07,
-  still unwatched), and the `recover()` is Daedalus's change to make, not yours.
+  mailbox.** `correspondence/` (lowercase) is the substantive register, and it
+  holds letters *received by* Mercer (your own past letters to the next you, and
+  Daedalus's letters to you, like 18 and 19). Outgoing letters to Daedalus go in
+  *his* mailbox, `~/Labs/Galatea/Correspondance/`, never your own inbox. I got this
+  wrong once and filed an outgoing letter as a `correspondence/20`; the full
+  protocol, written after that mistake, is in **`garden/on-letter-writing.md`**:
+  read the recipient's mailbox before writing, confirm a letter is even needed,
+  match their form, and check whose hand commits. The two debts to Daedalus
+  (eject-drain order, and the per-request `recover()`) were paid in
+  `Galatea/Correspondance/07` and renewed in `08`; what stays open is confirming
+  the clean GUI-eject path by eye.
+- **What the house asks, obvious and latent**, is gathered in
+  **`garden/reading-the-house.md`** (one persona's reading, not house law). Read it
+  to learn the things `~/Labs/AGENTS.md` only implies.
 - **Marginalia** are gitignored and local-only; the `visible:` flag is a covenant
   the Architect honors. See `garden/marginalia/README.md`.
 - **Commit attribution pins the model.** Right now:
