@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Android File Transfer not working on Mac? Why it fails, and the fix · Comprador</title>
+<meta name="description" content="Android File Transfer is unmaintained and breaks on modern Macs: 'Could not connect to the device,' the 4 GB limit, Apple Silicon. Here's why, what to try, and how to mount your Android in Finder instead. Free and open source.">
+<link rel="canonical" href="https://terraceonhigh.github.io/Comprador/android-file-transfer-not-working.html">
+<meta name="theme-color" content="#f4ebe1">
+<link rel="icon" href="images/icon.png">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="Android File Transfer not working on Mac? Why it fails, and the fix">
+<meta property="og:description" content="Google quietly orphaned Android File Transfer; it breaks on modern Macs. Here's the honest explanation, and how to mount your Android in Finder instead. Free and open source.">
+<meta property="og:url" content="https://terraceonhigh.github.io/Comprador/android-file-transfer-not-working.html">
+<meta property="og:image" content="https://terraceonhigh.github.io/Comprador/images/demo-light.png">
+<meta name="twitter:card" content="summary_large_image">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    { "@type": "Question", "name": "Is Android File Transfer discontinued?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Google never posted a formal discontinuation notice, but it quietly removed the download link from android.com in early 2024, and that page now serves a Windows-only app. Android File Transfer is unmaintained and increasingly fails on Apple Silicon and recent macOS releases." } },
+    { "@type": "Question", "name": "Why won't my Android phone show up on my Mac?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Usually one of three things: a charge-only USB cable that carries no data, the phone not set to File Transfer mode, or the transfer app itself being broken. The first two are quick to check; the third is Android File Transfer's own fault." } },
+    { "@type": "Question", "name": "Does Comprador need Developer Options or USB debugging?",
+      "acceptedAnswer": { "@type": "Answer", "text": "No. You never enable Developer Options or USB debugging. Plug the phone in and tap File Transfer on its USB notification." } },
+    { "@type": "Question", "name": "Does it work on Apple Silicon?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes. Comprador is a native app, signed and notarized by Apple, for macOS 13 or later on Apple Silicon." } },
+    { "@type": "Question", "name": "Is it safe?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Comprador is free and open source with no telemetry. It talks to your phone over USB and serves the files to Finder over a loopback connection the network can't reach. Nothing leaves your Mac." } }
+  ]
+}
+</script>
+
+<link rel="stylesheet" href="style.css">
+<script src="script.js"></script>
+
+<style>
+  /* guide-specific layout on top of the shared design system */
+  main { max-width: 720px; }
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    max-width: 720px; margin: 0 auto; padding: 22px 24px 0;
+  }
+  .topbar .wordmark { font-family: var(--font-brand); font-size: 1.4rem; letter-spacing: 0.01em; color: var(--text); }
+  .topbar .wordmark:hover { text-decoration: none; }
+  .btn.small { padding: 8px 18px; font-size: 0.95rem; }
+
+  .guide { text-align: left; padding: 10px 0 4px; }
+  .guide h1 { font-size: clamp(1.8rem, 4.6vw, 2.5rem); line-height: 1.15; letter-spacing: -0.01em;
+              margin: 0.2em 0 0.45em; font-weight: 700; }
+  .guide h2 { font-size: 1.4rem; margin: 1.9em 0 0.4em; font-weight: 700; }
+  .guide p  { margin: 0.7em 0; font-size: 1.08rem; }
+  .guide .lead { font-size: 1.2rem; }
+  .guide ol { padding-left: 1.3em; }
+  .guide li { margin: 0.45em 0; font-size: 1.08rem; }
+  .guide .shot { margin: 1.6em 0; }
+
+  .compare { width: 100%; border-collapse: collapse; margin: 1.2em 0; font-size: 1rem; }
+  .compare th, .compare td { border-bottom: 1px solid var(--rule); padding: 9px 8px; text-align: left; }
+  .compare thead th { font-weight: 700; }
+  .compare td.col { color: var(--muted); }
+  .compare td.y { color: var(--accent); font-weight: 700; }
+  .compare td.n { color: var(--faint); }
+  .compare .me { background: var(--card); }
+  .note { font-size: 0.92rem; color: var(--muted); }
+
+  details { border-top: 1px solid var(--rule); padding: 0.75em 0; }
+  details:last-of-type { border-bottom: 1px solid var(--rule); }
+  details summary { cursor: pointer; font-weight: 600; font-size: 1.06rem; list-style-position: inside; }
+  details p { margin: 0.5em 0 0.2em; color: var(--muted); }
+
+  .guide .cta { justify-content: flex-start; margin-top: 2.2em; }
+
+  @media (max-width: 600px) { .topbar { max-width: none; padding: 16px 16px 0; } }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="index.html">Comprador</a>
+  <a class="btn small" href="https://github.com/terraceonhigh/Comprador/releases/latest">Download</a>
+</header>
+
+<main>
+  <article class="guide">
+    <h1>Android File Transfer isn't working on your Mac?</h1>
+    <p class="lead">You're not doing anything wrong. The app is abandoned. Google quietly pulled
+      Android File Transfer's download link from android.com back in early 2024, and that page
+      now points to a Windows-only app instead. The tool itself never got another update, so it
+      fails more and more on current Macs.</p>
+
+    <h2>What's actually going on</h2>
+    <p>There was never a formal "discontinued" notice, which is half of why this is so
+      confusing. But the download is gone, the only replacement Google points you to
+      (Quick Share) is Windows-only, and the old app chokes on Apple Silicon and recent macOS.
+      The symptoms are always the same:</p>
+    <ol>
+      <li><strong>"Could not connect to the device,"</strong> over and over, when the connection drops or never opens.</li>
+      <li>A hard <strong>4&nbsp;GB limit per file</strong>, so one large video just refuses to copy.</li>
+      <li>It works once, then quits after the phone sleeps, or after the next macOS update.</li>
+    </ol>
+
+    <h2>Quick things to try first</h2>
+    <ol>
+      <li>Use a cable that carries data, not a charge-only one. If the phone charges but never shows up, swap the cable first.</li>
+      <li>On the phone, pull down the notification shade and tap <strong>File Transfer</strong> (it's sometimes labelled "MTP" or "Transferring files").</li>
+      <li>Unplug, replug, and try a different USB port.</li>
+    </ol>
+    <p>If that fixes it, great. If it works once and dies the next time, or never opens at all,
+      the problem is the app, not your setup.</p>
+
+    <h2>The simpler fix: skip the broken app</h2>
+    <p>Comprador shows your phone in Finder like a USB drive. There's no separate window to
+      babysit, no kernel extension, and no Developer Options to dig through. It's free and
+      open source.</p>
+    <ol>
+      <li>Plug your phone in with a data cable.</li>
+      <li>Pull down the notification shade and tap <strong>File Transfer</strong>.</li>
+      <li>Your phone appears in Finder's sidebar under Locations. Drag files in and out, like any other volume.</li>
+    </ol>
+    <div class="shot">
+      <img src="images/demo-light.png" alt="An Android phone mounted as a volume in macOS Finder: a Pixel 6 under Locations in the sidebar, its internal storage open in the window">
+    </div>
+
+    <h2>How it compares</h2>
+    <table class="compare">
+      <thead>
+        <tr><th></th><th class="me">Comprador</th><th>Android&nbsp;File&nbsp;Transfer</th><th>OpenMTP</th><th>MacDroid</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="col">Free &amp; open source</td><td class="me y">Yes</td><td class="n">Free, closed</td><td class="y">Yes</td><td class="n">Paid</td></tr>
+        <tr><td class="col">Shows up in Finder (no separate window)</td><td class="me y">Yes</td><td class="n">No</td><td class="n">No</td><td class="y">Yes</td></tr>
+        <tr><td class="col">No kernel extension</td><td class="me y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="n">No</td></tr>
+        <tr><td class="col">Still maintained</td><td class="me y">Yes</td><td class="n">Abandoned</td><td class="y">Yes</td><td class="y">Yes</td></tr>
+      </tbody>
+    </table>
+    <p class="note">MacDroid's free tier only copies one way (phone&nbsp;to&nbsp;Mac), and its fast
+      mode needs Developer Options and USB debugging. OpenMTP is free and open source, but it runs
+      in its own dual-pane window instead of mounting as a Finder volume.</p>
+
+    <h2>Questions</h2>
+    <details>
+      <summary>Is Android File Transfer discontinued?</summary>
+      <p>No formal notice, but Google removed the download in early 2024 and the page now
+        serves a Windows-only app. It's unmaintained and increasingly fails on Apple Silicon
+        and recent macOS.</p>
+    </details>
+    <details>
+      <summary>Why won't my Android phone show up on my Mac?</summary>
+      <p>Usually a charge-only cable, the phone not set to File Transfer mode, or the transfer
+        app being broken. The first two take a second to check; the third is Android File
+        Transfer's own fault.</p>
+    </details>
+    <details>
+      <summary>Does Comprador need Developer Options or USB debugging?</summary>
+      <p>No. You never touch Developer Options. Plug in, tap File Transfer, done.</p>
+    </details>
+    <details>
+      <summary>Does it work on Apple Silicon?</summary>
+      <p>Yes. It's a native app, signed and notarized by Apple, for macOS 13 or later.</p>
+    </details>
+    <details>
+      <summary>Is it safe?</summary>
+      <p>Free and open source, no telemetry. It talks to your phone over USB and serves the
+        files to Finder over a loopback connection the network can't reach. Nothing leaves
+        your Mac.</p>
+    </details>
+
+    <div class="cta">
+      <a class="btn" href="https://github.com/terraceonhigh/Comprador/releases/latest">Download for Mac</a>
+      <a class="btn ghost" href="index.html">What is Comprador?</a>
+    </div>
+  </article>
+
+  <footer>
+    <p class="platform">Apple Silicon, macOS 13 or later. <strong>Signed by Apple.</strong></p>
+    <p class="links">
+      <a href="https://github.com/terraceonhigh/Comprador/releases/latest">Download</a>
+      <a href="https://github.com/terraceonhigh/Comprador">Source</a>
+      <a href="https://github.com/terraceonhigh/Comprador/blob/master/LICENSE">License (GPLv3+)</a>
+      <button id="funToggle" type="button" class="funlinks" aria-pressed="false">Fun mode</button>
+    </p>
+    <p class="also"><em>Also worth knowing about:</em> <a href="https://github.com/sannidhyaroy/Soduto">Soduto</a>, a macOS client for KDE Connect, because, Apple or not, you want your devices in symphony.</p>
+  </footer>
+
+</main>
+</body>
+</html>

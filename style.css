@@ -1,0 +1,126 @@
+/* ============================================================
+   Comprador: shared design system
+   Used by the landing page and the guide pages so the aesthetic
+   is one source of truth. Page-specific layout lives in each
+   page's own <style> block.
+   ============================================================ */
+
+/* ---- self-hosted fonts (SIL OFL): no CDN, nothing leaves the visitor's machine ---- */
+@font-face { font-family: "Bona Nova"; font-style: normal; font-weight: 400; font-display: swap;
+             src: url("fonts/bona-nova-400.woff2") format("woff2"); }
+@font-face { font-family: "Bona Nova"; font-style: italic; font-weight: 400; font-display: swap;
+             src: url("fonts/bona-nova-400italic.woff2") format("woff2"); }
+@font-face { font-family: "Bona Nova"; font-style: normal; font-weight: 700; font-display: swap;
+             src: url("fonts/bona-nova-700.woff2") format("woff2"); }
+@font-face { font-family: "Fasthand"; font-style: normal; font-weight: 400; font-display: swap;
+             src: url("fonts/fasthand-400.woff2") format("woff2"); }
+@font-face { font-family: "IM Fell Double Pica SC"; font-style: normal; font-weight: 400; font-display: swap;
+             src: url("fonts/im-fell-double-pica-sc-400.woff2") format("woff2"); }
+
+:root {
+  /* ---- type ---- */
+  --font-body:    "Bona Nova", Georgia, "Times New Roman", serif;
+  --font-brand:   "IM Fell Double Pica SC", "Bona Nova", Georgia, serif;
+  --font-ui:      -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+
+  /* ---- anchor: cream #f4ebe1; everything offset from --base-h ---- */
+  --base:   #f4ebe1;
+  --base-h: 21;
+
+  --page-bg:    var(--base);
+  --bg:         hsl(calc(var(--base-h) + 9), 45%, 92%);   /* parchment sheet */
+  --dot:        hsl(var(--base-h), 50%, 76%);
+  --sheet-edge: hsl(var(--base-h), 38%, 90%);
+  --card:       hsl(var(--base-h), 48%, 93%);
+  --rule:       hsl(var(--base-h), 32%, 86%);
+
+  --text:      hsl(var(--base-h), 22%, 13%);
+  --muted:     hsl(var(--base-h), 12%, 38%);
+  --faint:     hsl(var(--base-h), 10%, 55%);
+  --on-accent: hsl(var(--base-h), 60%, 98%);
+
+  --accent:       hsl(calc(var(--base-h) - 11), 64%, 44%);   /* pomegranate bloom */
+  --accent-hover: hsl(calc(var(--base-h) - 11), 66%, 36%);
+
+  --link:       hsl(calc(var(--base-h) + 171), 34%, 36%);    /* museum teal complement */
+  --link-hover: hsl(calc(var(--base-h) + 171), 40%, 28%);
+}
+
+* { box-sizing: border-box; }
+html, body { min-height: 100%; }
+body {
+  margin: 0; padding: 0;
+  color: var(--text);
+  font-family: var(--font-body);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  background-color: var(--page-bg);
+}
+
+/* fixed engraving backdrop, cover-fit to a box 15% larger than the viewport
+   on both axes (aspect-ratio-safe, iOS-safe). --backdrop is set by script.js. */
+body::before {
+  content: "";
+  position: fixed;
+  top: -7.5%; left: -7.5%;
+  width: 115%; height: 115%;
+  z-index: -1;
+  background-image: var(--backdrop, url("images/backdrops/pdia-c81e576a-9cba-43b1-90cf-836d27e06730.jpg"));
+  background-position: center center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+
+a { color: var(--link); text-decoration: none; }
+a:hover { color: var(--link-hover); text-decoration: underline; }
+img { max-width: 100%; height: auto; }
+
+/* the sheet: content floats above the backdrop */
+main {
+  max-width: 920px;
+  margin: 48px auto;
+  padding: 0 48px;
+  background: var(--bg);
+  border: 1px solid var(--sheet-edge);
+  border-radius: 18px;
+  box-shadow: 0 30px 80px -32px rgba(120,60,30,0.45),
+              0 2px 10px rgba(120,60,30,0.10);
+  overflow: hidden;
+}
+
+/* framed screenshot */
+.shot img { width: 100%; border-radius: 12px; display: block; }
+
+/* download button */
+.cta { display: flex; gap: 14px; justify-content: center; align-items: center;
+       flex-wrap: wrap; margin: 8px 0 6px; }
+.btn {
+  display: inline-block; padding: 13px 30px; border-radius: 980px;
+  font-size: 1.05rem; font-weight: 600;
+  background: var(--accent); color: var(--on-accent);
+}
+.btn:hover { background: var(--accent-hover); text-decoration: none; }
+.btn.ghost { background: transparent; color: var(--link); padding: 13px 18px; }
+.btn.ghost:hover { background: transparent; text-decoration: underline; }
+
+/* footer */
+footer { text-align: center; padding: 40px 0 80px; color: var(--faint);
+         font-size: 0.9rem; max-width: 40em; margin: 0 auto; }
+footer .platform { color: var(--muted); margin-bottom: 1.8em; }
+footer .also a { color: var(--link); }
+footer .links { margin: 0 0 1.6em; }
+footer .links a { margin: 0 10px; color: var(--muted); }
+
+/* Fun Mode: swaps the whole page to Fasthand; the brand wordmark holds via --font-brand */
+html.fun { --font-body: "Fasthand", "Bona Nova", cursive; }
+.funlinks {
+  font: inherit; color: var(--muted); background: none; border: 0;
+  padding: 0; margin: 0 10px; cursor: pointer; -webkit-appearance: none; appearance: none;
+}
+.funlinks:hover { color: var(--link-hover); text-decoration: underline; }
+
+.brand { font-family: var(--font-brand); font-style: normal; }   /* "Comprador" wordmark in running text */
+
+@media (max-width: 600px) {
+  main { margin: 14px; padding: 0 22px; border-radius: 14px; }
+}

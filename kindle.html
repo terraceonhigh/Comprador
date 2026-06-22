@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kindle not showing up on your Mac? Here's the fix · Comprador</title>
+<meta name="description" content="Newer Kindles (2024 and later) connect over MTP, which macOS doesn't read on its own, so your Kindle never appears in Finder. Here's why, and how to mount it like a drive to sideload books. Free and open source.">
+<link rel="canonical" href="https://terraceonhigh.github.io/Comprador/kindle.html">
+<meta name="theme-color" content="#f4ebe1">
+<link rel="icon" href="images/icon.png">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="Kindle not showing up on your Mac? Here's the fix">
+<meta property="og:description" content="The 2024 Kindles switched to MTP, which macOS can't read natively. Here's how to mount your Kindle in Finder and sideload books. Free and open source.">
+<meta property="og:url" content="https://terraceonhigh.github.io/Comprador/kindle.html">
+<meta property="og:image" content="https://terraceonhigh.github.io/Comprador/images/demo-light.png">
+<meta name="twitter:card" content="summary_large_image">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    { "@type": "Question", "name": "Why doesn't my Kindle show up on my Mac?",
+      "acceptedAnswer": { "@type": "Answer", "text": "The 2024 and later Kindles connect over MTP instead of acting like a plain USB drive. Windows reads MTP on its own; macOS does not, so the Kindle charges but never appears in Finder until you add software that speaks MTP." } },
+    { "@type": "Question", "name": "Which Kindles use MTP?",
+      "acceptedAnswer": { "@type": "Answer", "text": "The 2024 models: the basic Kindle, the 12th-generation Paperwhite, the Colorsoft, and the Scribe. Older Kindles showed up as a normal USB drive and still do." } },
+    { "@type": "Question", "name": "Do I need Amazon's Send to Kindle app?",
+      "acceptedAnswer": { "@type": "Answer", "text": "No. Comprador mounts the Kindle in Finder so you can drag books straight onto it. Amazon's Send to Kindle app also works, but it runs in its own window and only handles Kindles." } },
+    { "@type": "Question", "name": "Does it work on Apple Silicon?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes. Comprador is a native app, signed and notarized by Apple, for macOS 13 or later." } },
+    { "@type": "Question", "name": "Is it safe?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Free and open source, no telemetry. It talks to the Kindle over USB and serves the files to Finder over a loopback connection the network can't reach. Nothing leaves your Mac." } }
+  ]
+}
+</script>
+
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="guide.css">
+<script src="script.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="index.html">Comprador</a>
+  <a class="btn small" href="https://github.com/terraceonhigh/Comprador/releases/latest">Download</a>
+</header>
+
+<main>
+  <article class="guide">
+    <h1>Your Kindle won't show up on your Mac?</h1>
+    <p class="lead">If you bought a Kindle in the last year and it stopped appearing when you
+      plug it in, you didn't break anything. Amazon changed how the newer models talk to a
+      computer, and the change doesn't sit well with macOS.</p>
+
+    <h2>What changed</h2>
+    <p>The 2024 Kindles, including the basic Kindle, the 12th-generation Paperwhite, the
+      Colorsoft, and the Scribe, switched to MTP. Older Kindles showed up as a plain USB drive
+      you could open in Finder. The new ones don't. Windows reads MTP without any help, but
+      macOS doesn't, so a 2024 Kindle charges happily and never appears in the sidebar. Amazon
+      worked around this by tucking a USB file manager into its Send to Kindle app.</p>
+
+    <h2>Mount it in Finder instead</h2>
+    <p>Comprador shows the Kindle in Finder like a USB drive, so you can drag books straight
+      onto it. There's nothing to set up on the Kindle, and nothing to pay. It's free and open
+      source.</p>
+    <ol>
+      <li>Plug the Kindle in with a cable that carries data, not a charge-only one.</li>
+      <li>It appears in Finder's sidebar under Locations, named as your Kindle.</li>
+      <li>Open it and drop your books into the documents folder. Eject it before you unplug.</li>
+    </ol>
+
+    <h2>How it compares</h2>
+    <table class="compare">
+      <thead>
+        <tr><th></th><th class="me">Comprador</th><th>Send to Kindle</th><th>OpenMTP</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="col">Free &amp; open source</td><td class="me y">Yes</td><td class="n">Free, closed</td><td class="y">Yes</td></tr>
+        <tr><td class="col">Shows up in Finder, like a drive</td><td class="me y">Yes</td><td class="n">No</td><td class="n">No</td></tr>
+        <tr><td class="col">Works with any MTP device, not just Kindle</td><td class="me y">Yes</td><td class="n">Kindle only</td><td class="y">Yes</td></tr>
+        <tr><td class="col">Nothing to open first</td><td class="me y">Yes</td><td class="n">No</td><td class="n">No</td></tr>
+      </tbody>
+    </table>
+    <p class="note">Send to Kindle is fine if you only ever load one Kindle and don't mind its
+      own window. OpenMTP is free and open source too, but it runs as a separate dual-pane app
+      rather than mounting in Finder.</p>
+
+    <h2>Questions</h2>
+    <details>
+      <summary>Which Kindles need this?</summary>
+      <p>The 2024 models: the basic Kindle, the 12th-generation Paperwhite, the Colorsoft, and
+        the Scribe. Pre-2024 Kindles still mount as a normal USB drive.</p>
+    </details>
+    <details>
+      <summary>Why doesn't my Kindle show up on my Mac?</summary>
+      <p>The new Kindles speak MTP, and macOS has no built-in MTP support. The Kindle connects
+        and charges, but Finder never lists it until something on the Mac translates MTP.</p>
+    </details>
+    <details>
+      <summary>Do I need Amazon's Send to Kindle app?</summary>
+      <p>No. Comprador puts the Kindle in Finder so you can drag books onto it. Send to Kindle
+        works as well, but it lives in its own window and only handles Kindles.</p>
+    </details>
+    <details>
+      <summary>Does it work on Apple Silicon?</summary>
+      <p>Yes. It's a native app, signed and notarized by Apple, for macOS 13 or later.</p>
+    </details>
+    <details>
+      <summary>Is it safe?</summary>
+      <p>Free and open source, no telemetry. It talks to the Kindle over USB and serves the
+        files to Finder over a loopback connection the network can't reach. Nothing leaves
+        your Mac.</p>
+    </details>
+
+    <div class="cta">
+      <a class="btn" href="https://github.com/terraceonhigh/Comprador/releases/latest">Download for Mac</a>
+      <a class="btn ghost" href="index.html">What is Comprador?</a>
+    </div>
+  </article>
+
+  <footer>
+    <p class="platform">Apple Silicon, macOS 13 or later. <strong>Signed by Apple.</strong></p>
+    <p class="links">
+      <a href="https://github.com/terraceonhigh/Comprador/releases/latest">Download</a>
+      <a href="https://github.com/terraceonhigh/Comprador">Source</a>
+      <a href="https://github.com/terraceonhigh/Comprador/blob/master/LICENSE">License (GPLv3+)</a>
+      <button id="funToggle" type="button" class="funlinks" aria-pressed="false">Fun mode</button>
+    </p>
+    <p class="also"><em>Also worth knowing about:</em> <a href="https://github.com/sannidhyaroy/Soduto">Soduto</a>, a macOS client for KDE Connect, because, Apple or not, you want your devices in symphony.</p>
+  </footer>
+
+</main>
+</body>
+</html>

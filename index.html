@@ -3,21 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Comprador — Your phone, in Finder · Android File Transfer alternative for Mac</title>
-<meta name="description" content="A free Android File Transfer alternative for Mac: mount Android phones, cameras, Kindles and other MTP devices in Finder over USB, like any other volume. Open source, signed by Apple — no developer mode, no kernel extension.">
+<title>Comprador · Your phone, in Finder · Android File Transfer alternative for Mac</title>
+<meta name="description" content="A free Android File Transfer alternative for Mac: mount Android phones, cameras, Kindles and other MTP devices in Finder over USB, like any other volume. Open source, signed by Apple. No developer mode, no kernel extension.">
 <link rel="canonical" href="https://terraceonhigh.github.io/Comprador/">
 <meta name="theme-color" content="#f4ebe1">
 <link rel="icon" href="images/icon.png">
 
 <!-- Open Graph / social -->
 <meta property="og:type" content="website">
-<meta property="og:title" content="Comprador — Your phone, in Finder">
-<meta property="og:description" content="A free Android File Transfer alternative for Mac. Mount Android phones, cameras and other MTP devices in Finder over USB — open source, signed by Apple.">
+<meta property="og:title" content="Comprador · Your phone, in Finder">
+<meta property="og:description" content="A free Android File Transfer alternative for Mac. Mount Android phones, cameras and other MTP devices in Finder over USB. Open source, signed by Apple.">
 <meta property="og:url" content="https://terraceonhigh.github.io/Comprador/">
 <meta property="og:image" content="https://terraceonhigh.github.io/Comprador/images/demo-light.png">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Comprador — Your phone, in Finder">
-<meta name="twitter:description" content="A free Android File Transfer alternative for Mac — mount Android phones, cameras and MTP devices in Finder over USB. Open source.">
+<meta name="twitter:title" content="Comprador · Your phone, in Finder">
+<meta name="twitter:description" content="A free Android File Transfer alternative for Mac. Mount Android phones, cameras and MTP devices in Finder over USB. Open source.">
 
 <script type="application/ld+json">
 {
@@ -26,7 +26,7 @@
   "name": "Comprador",
   "applicationCategory": "UtilitiesApplication",
   "operatingSystem": "macOS 13 or later (Apple Silicon)",
-  "description": "A free, open-source Android File Transfer alternative for Mac. Mounts MTP devices — Android phones, cameras, Kindles, and more — in Finder over USB, like any other volume.",
+  "description": "A free, open-source Android File Transfer alternative for Mac. Mounts MTP devices (Android phones, cameras, Kindles, and more) in Finder over USB, like any other volume.",
   "url": "https://terraceonhigh.github.io/Comprador/",
   "downloadUrl": "https://github.com/terraceonhigh/Comprador/releases/latest",
   "softwareVersion": "0.4.0",
@@ -37,7 +37,7 @@
 <meta name="twitter:image" content="https://terraceonhigh.github.io/Comprador/images/demo-light.png">
 
 <style>
-  /* ---- self-hosted fonts (SIL OFL) — no CDN, nothing leaves the visitor's machine ---- */
+  /* ---- self-hosted fonts (SIL OFL): no CDN, nothing leaves the visitor's machine ---- */
   @font-face { font-family: "Bona Nova"; font-style: normal; font-weight: 400; font-display: swap;
                src: url("fonts/bona-nova-400.woff2") format("woff2"); }
   @font-face { font-family: "Bona Nova"; font-style: italic; font-weight: 400; font-display: swap;
@@ -56,29 +56,29 @@
     --font-ui:      -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
 
     /* ---- the anchor: cream #f4ebe1; derived colours offset from --base-h ---- */
-    --base:   #f4ebe1;   /* the underlay/anchor — parchment cream, matching the Morghen plates */
+    --base:   #f4ebe1;   /* the underlay/anchor: parchment cream, matching the Morghen plates */
     --base-h: 21;        /* derivation hue (the peach the accents + ink were tuned around); kept
                             fixed so every derived colour below keeps its current hex value */
 
-    /* surfaces — base hue, varying saturation + lightness */
+    /* surfaces: base hue, varying saturation + lightness */
     --page-bg:    var(--base);                    /* the backdrop */
-    --bg:         hsl(calc(var(--base-h) + 9), 45%, 92%);  /* the sheet — the plate's parchment cream (~#f4ebe2) */
+    --bg:         hsl(calc(var(--base-h) + 9), 45%, 92%);  /* the sheet: the plate's parchment cream (~#f4ebe2) */
     --dot:        hsl(var(--base-h), 50%, 76%);   /* backdrop dot-screen */
     --sheet-edge: hsl(var(--base-h), 38%, 90%);   /* faint sheet border */
     --card:       hsl(var(--base-h), 48%, 93%);
     --rule:       hsl(var(--base-h), 32%, 86%);   /* dividers */
 
-    /* ink — warm near-blacks: base hue, low saturation */
+    /* ink: warm near-blacks: base hue, low saturation */
     --text:      hsl(var(--base-h), 22%, 13%);
     --muted:     hsl(var(--base-h), 12%, 38%);
     --faint:     hsl(var(--base-h), 10%, 55%);
     --on-accent: hsl(var(--base-h), 60%, 98%);    /* text sitting on the accent */
 
-    /* accent — pomegranate bloom: hue offset -11 (the plate's real red, ~hue 10), deep + saturated */
+    /* accent: pomegranate bloom: hue offset -11 (the plate's real red, ~hue 10), deep + saturated */
     --accent:       hsl(calc(var(--base-h) - 11), 64%, 44%);
     --accent-hover: hsl(calc(var(--base-h) - 11), 66%, 36%);
 
-    /* links — the plate's one cool note: a museum teal at the base complement (+171 = hue 192) */
+    /* links: the plate's one cool note: a museum teal at the base complement (+171 = hue 192) */
     --link:       hsl(calc(var(--base-h) + 171), 34%, 36%);
     --link-hover: hsl(calc(var(--base-h) + 171), 40%, 28%);
   }
@@ -94,7 +94,7 @@
     background-color: var(--page-bg);
   }
 
-  /* fixed engraving backdrop — fitted with cover to a box 15% larger than the
+  /* fixed engraving backdrop, fitted with cover to a box 15% larger than the
      viewport in BOTH dimensions, so the zoom-in holds on every aspect ratio
      (no gaps) and doesn't rely on background-attachment: fixed (iOS-safe) */
   body::before {
@@ -193,13 +193,13 @@
   footer .links a { margin: 0 10px; color: var(--muted); }
 
   /* ---- Fun Mode: swap the whole page to Fasthand. The control is an inline
-     footer item styled exactly like its surrounding text. ---- */
+     footer link, coloured to match the adjacent Download/Source/License links. ---- */
   html.fun { --font-body: "Fasthand", "Bona Nova", cursive; }
-  .funlink {
-    font: inherit; color: var(--link); background: none; border: 0; padding: 0;
-    cursor: pointer; -webkit-appearance: none; appearance: none;
+  .funlinks {
+    font: inherit; color: var(--muted); background: none; border: 0;
+    padding: 0; margin: 0 10px; cursor: pointer; -webkit-appearance: none; appearance: none;
   }
-  .funlink:hover { color: var(--link-hover); text-decoration: underline; }
+  .funlinks:hover { color: var(--link-hover); text-decoration: underline; }
 
   @media (max-width: 600px) {
     main { margin: 14px; padding: 0 22px; border-radius: 14px; }
@@ -211,7 +211,7 @@
   /* pick a random backdrop before first paint (no flash of a default) */
   (function () {
     // Filippo Morghen engravings (public domain). Pool baked from images/backdrops/
-    // — a static page can't list a folder, so regenerate this array when files change.
+    // a static page can't list a folder, so regenerate this array when files change.
     var backdrops = [
       "images/backdrops/pdia-1de63329-8e80-495d-9589-0d66c3d4afb9.jpg",
       "images/backdrops/pdia-2ced97c7-4cfd-47c7-85a3-aa03d14124dc.jpg",
@@ -234,20 +234,20 @@
 <main>
 
   <div class="hero">
-    <img class="logo" src="images/icon.png" alt="Comprador — a Merian 1705 pomegranate plate, a brown butterfly with eyespots resting on a red bloom">
+    <img class="logo" src="images/icon.png" alt="Comprador: a Merian 1705 pomegranate plate, a brown butterfly with eyespots resting on a red bloom">
     <h1>Comprador</h1>
     <p class="tagline">Your Android phone, in Finder.</p>
-    <p class="sub">Plug it in. Drag, drop, browse — like anything else.</p>
+    <p class="sub">Plug it in. Drag, drop, browse, like anything else.</p>
 
     <div class="cta">
       <a class="btn" href="https://github.com/terraceonhigh/Comprador/releases/latest">Download for Mac</a>
       <a class="btn ghost" href="https://github.com/terraceonhigh/Comprador">View source on GitHub</a>
     </div>
     <p class="reqline">Free and open source · Apple Silicon · macOS 13 or later</p>
-    <p class="seo-note">A free Android File Transfer alternative for Mac — phones, cameras, e-readers, and more.</p>
+    <p class="seo-note">A free Android File Transfer alternative for Mac: phones, cameras, e-readers, and more.</p>
 
     <div class="shot">
-      <img src="images/demo-light.png" alt="An Android phone mounted as a volume in macOS Finder — a Pixel 6 listed under Locations in the sidebar (Pixel-6.local), its internal storage open in the window">
+      <img src="images/demo-light.png" alt="An Android phone mounted as a volume in macOS Finder: a Pixel 6 listed under Locations in the sidebar (Pixel-6.local), its internal storage open in the window">
     </div>
   </div>
 
@@ -256,7 +256,7 @@
     <p>Each one in your sidebar. Browse one while another transfers.</p>
 
    <div class="shot">
-      <img src="images/demo-light-multi.png" alt="Two devices mounted at once in macOS Finder — a Pixel 6 and a Sony Xperia both listed under Locations in the sidebar, the Xperia's SD card and the phone's internal storage open in separate windows">
+      <img src="images/demo-light-multi.png" alt="Two devices mounted at once in macOS Finder: a Pixel 6 and a Sony Xperia both listed under Locations in the sidebar; the Xperia's SD card and the phone's internal storage open in separate windows">
     </div> 
   </section>
 
@@ -278,9 +278,9 @@
       <a href="https://github.com/terraceonhigh/Comprador/releases/latest">Download</a>
       <a href="https://github.com/terraceonhigh/Comprador">Source</a>
       <a href="https://github.com/terraceonhigh/Comprador/blob/master/LICENSE">License (GPLv3+)</a>
-      <button id="funToggle" type="button" class="funlink" aria-pressed="false">Fun mode</button>
+      <button id="funToggle" type="button" class="funlinks" aria-pressed="false">Fun mode</button>
     </p>
-    <p class="also"><em>Also worth knowing about:</em> <a href="https://github.com/sannidhyaroy/Soduto">Soduto</a> — a macOS client for KDE Connect, because — Apple or not — you want your devices in symphony.</p>
+    <p class="also"><em>Also worth knowing about:</em> <a href="https://github.com/sannidhyaroy/Soduto">Soduto</a>, a macOS client for KDE Connect, because, Apple or not, you want your devices in symphony.</p>
   </footer>
 
 </main>
