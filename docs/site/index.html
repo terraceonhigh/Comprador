@@ -28,7 +28,7 @@
 
     /* surfaces — base hue, varying saturation + lightness */
     --page-bg:    var(--base);                    /* the backdrop */
-    --bg:         hsl(var(--base-h), 60%, 98%);   /* the floating sheet — barely-peach white */
+    --bg:         hsl(calc(var(--base-h) + 9), 45%, 92%);  /* the sheet — the plate's parchment cream (~#f4ebe2) */
     --dot:        hsl(var(--base-h), 50%, 76%);   /* backdrop dot-screen */
     --sheet-edge: hsl(var(--base-h), 38%, 90%);   /* faint sheet border */
     --card:       hsl(var(--base-h), 48%, 93%);
@@ -40,13 +40,13 @@
     --faint:     hsl(var(--base-h), 10%, 55%);
     --on-accent: hsl(var(--base-h), 60%, 98%);    /* text sitting on the accent */
 
-    /* accent — pomegranate: hue shifted -16 deg toward red, deep + saturated (~#b83127) */
-    --accent:       hsl(calc(var(--base-h) - 16), 64%, 44%);
-    --accent-hover: hsl(calc(var(--base-h) - 16), 66%, 36%);
+    /* accent — pomegranate bloom: hue offset -11 (the plate's real red, ~hue 10), deep + saturated */
+    --accent:       hsl(calc(var(--base-h) - 11), 64%, 44%);
+    --accent-hover: hsl(calc(var(--base-h) - 11), 66%, 36%);
 
-    /* links — same red family, a touch darker so they read distinct from buttons */
-    --link:       hsl(calc(var(--base-h) - 16), 55%, 40%);
-    --link-hover: hsl(calc(var(--base-h) - 16), 60%, 31%);
+    /* links — the plate's one cool note: a museum teal at the base complement (+171 = hue 192) */
+    --link:       hsl(calc(var(--base-h) + 171), 34%, 36%);
+    --link-hover: hsl(calc(var(--base-h) + 171), 40%, 28%);
   }
   * { box-sizing: border-box; }
   html, body { min-height: 100%; }
@@ -56,12 +56,24 @@
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
-    /* fixed peach backdrop with a fine dot-screen texture (after whiona.me) */
+    /* peach underlay; the engraving rides a fixed ::before layer (below) */
     background-color: var(--page-bg);
-    background-image:
-      radial-gradient(var(--dot) 0.5px, transparent 0.5px) 0 0 / 4px 4px,
-      radial-gradient(var(--dot) 0.5px, transparent 0.5px) 2px 2px / 4px 4px;
-    background-attachment: fixed;
+  }
+
+  /* fixed engraving backdrop — fitted with cover to a box 15% larger than the
+     viewport in BOTH dimensions, so the zoom-in holds on every aspect ratio
+     (no gaps) and doesn't rely on background-attachment: fixed (iOS-safe) */
+  body::before {
+    content: "";
+    position: fixed;
+    top: -7.5%; left: -7.5%;
+    width: 115%; height: 115%;
+    z-index: -1;
+    /* chosen at load by the picker in <head>; falls back to one if JS is off */
+    background-image: var(--backdrop, url("images/backdrops/pdia-c81e576a-9cba-43b1-90cf-836d27e06730.jpg"));
+    background-position: center center;
+    background-size: cover;
+    background-repeat: no-repeat;
   }
   a { color: var(--link); text-decoration: none; }
   a:hover { color: var(--link-hover); text-decoration: underline; }
@@ -150,6 +162,26 @@
     section.feature { padding: 64px 0; }
   }
 </style>
+<script>
+  /* pick a random backdrop before first paint (no flash of a default) */
+  (function () {
+    // Filippo Morghen engravings (public domain). Pool baked from images/backdrops/
+    // — a static page can't list a folder, so regenerate this array when files change.
+    var backdrops = [
+      "images/backdrops/pdia-1de63329-8e80-495d-9589-0d66c3d4afb9.jpg",
+      "images/backdrops/pdia-2ced97c7-4cfd-47c7-85a3-aa03d14124dc.jpg",
+      "images/backdrops/pdia-5b147ab6-6a07-4595-8acd-01f0120cfa67.jpg",
+      "images/backdrops/pdia-833f13c1-9e65-4577-aa25-77bf7291199f.jpg",
+      "images/backdrops/pdia-c81e576a-9cba-43b1-90cf-836d27e06730.jpg",
+      "images/backdrops/pdia-cc7ec694-7ad0-4426-80a1-5ce7b5381d1c.jpg",
+      "images/backdrops/pdia-e1745bcb-4f13-4992-b764-b77278c304b7.jpg",
+      "images/backdrops/pdia-f454ebc9-7849-4dae-a8f3-451723807b00.jpg",
+      "images/backdrops/pdia-fdd4be5e-993f-47e5-8e05-100cbbdb574c.jpg"
+    ];
+    var pick = backdrops[Math.floor(Math.random() * backdrops.length)];
+    document.documentElement.style.setProperty("--backdrop", 'url("' + pick + '")');
+  })();
+</script>
 </head>
 <body>
 <main>

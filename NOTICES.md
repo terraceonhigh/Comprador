@@ -103,6 +103,25 @@ derivative remains in the public domain.
 
 ---
 
+## Website backdrop art
+
+The project website (`docs/site/`) draws a random background on each load
+from a set of engravings by **Filippo Morghen** (b. 1730), an 18th-century
+Italian engraver — including plates from his series imagining fantastical
+life on the Moon (gourd-dwellings, ruins, and allegorical scenes).
+
+- **Original works:** engravings by Filippo Morghen
+- **Source:** Public Domain Image Archive —
+  https://pdimagearchive.org/galleries/artists/filippo-morghen/
+- **License of originals:** Public Domain Worldwide (no additional rights;
+  the works are out of copyright by age).
+
+The images are committed unmodified under
+`docs/site/images/backdrops/`. They are decorative only and introduce no
+new copyright restrictions.
+
+---
+
 ## Galatea
 
 The Go bridge embeds [Galatea](https://github.com/terraceonhigh/galatea),
