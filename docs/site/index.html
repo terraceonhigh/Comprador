@@ -6,7 +6,7 @@
 <title>Comprador — Your phone, in Finder</title>
 <meta name="description" content="See your Android phone and USB cameras in Finder, mounted like any other volume. Drag, drop, browse — no developer mode, no kernel extension. Free and open source, signed by Apple, for macOS.">
 <link rel="canonical" href="https://terraceonhigh.github.io/Comprador/">
-<meta name="theme-color" content="#f7d7c6">
+<meta name="theme-color" content="#f4ebe1">
 <link rel="icon" href="images/icon.png">
 
 <!-- Open Graph / social -->
@@ -23,8 +23,9 @@
 <style>
   :root {
     /* ---- the anchor: nail #f7d7c6, derive everything else from its hue ---- */
-    --base:   #f7d7c6;   /* peach — the one fixed point  ( = hsl(21, 75%, 87%) ) */
-    --base-h: 21;        /* its hue. Change this one number and the whole site reharmonises. */
+    --base:   #f4ebe1;   /* the underlay/anchor — parchment cream, matching the Morghen plates */
+    --base-h: 21;        /* derivation hue (the peach the accents + ink were tuned around); kept
+                            fixed so every derived colour below keeps its current hex value */
 
     /* surfaces — base hue, varying saturation + lightness */
     --page-bg:    var(--base);                    /* the backdrop */
@@ -127,7 +128,6 @@
   .shot { margin: 52px auto 0; max-width: 820px; }
   .shot img {
     width: 100%; border-radius: 12px; display: block;
-    box-shadow: 0 12px 32px -16px rgba(60,40,10,0.30), 0 1px 4px rgba(60,40,10,0.10);
   }
 
   /* ---- feature sections ---- */
@@ -199,7 +199,7 @@
     <p class="reqline">Free and open source · Apple Silicon · macOS 13 or later</p>
 
     <div class="shot">
-      <img src="images/demo-light.png" alt="An Android phone mounted as a volume in macOS Finder — a Pixel 6's internal storage open in a Finder window, the device name shown in the path bar below">
+      <img src="images/demo-light.png" alt="An Android phone mounted as a volume in macOS Finder — a Pixel 6 listed under Locations in the sidebar (Pixel-6.local), its internal storage open in the window">
     </div>
   </div>
 
@@ -208,7 +208,7 @@
     <p>Each one in your sidebar. Browse one while another transfers.</p>
 
    <div class="shot">
-      <img src="images/demo-light-multi.png" alt="Two devices mounted at once in macOS Finder — one phone's internal storage and a Sony Xperia's SD card, open in separate Finder windows">
+      <img src="images/demo-light-multi.png" alt="Two devices mounted at once in macOS Finder — a Pixel 6 and a Sony Xperia both listed under Locations in the sidebar, the Xperia's SD card and the phone's internal storage open in separate windows">
     </div> 
   </section>
 
