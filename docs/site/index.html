@@ -36,7 +36,7 @@
   :root {
     /* ---- type ---- */
     --font-body:    "Bona Nova", Georgia, "Times New Roman", serif;   /* the page voice */
-    --font-display: "IM Fell Double Pica SC", "Bona Nova", Georgia, serif;  /* the Comprador wordmark (small caps) */
+    --font-brand:   "IM Fell Double Pica SC", "Bona Nova", Georgia, serif;  /* the Comprador wordmark (small caps); hero + sign-off, holds through Fun Mode */
     --font-ui:      -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
 
     /* ---- the anchor: cream #f4ebe1; derived colours offset from --base-h ---- */
@@ -114,7 +114,7 @@
   .hero { text-align: center; padding: 84px 0 8px; }
   .hero img.logo { width: 144px; height: 144px; margin: 0 auto 22px; display: block; }
   .hero h1 {
-    font-family: var(--font-display);
+    font-family: var(--font-brand);
     font-size: clamp(2.6rem, 7vw, 4rem);
     line-height: 1.05; letter-spacing: 0.01em;   /* small caps want a hair of openness, not negative tracking */
     margin: 0 0 0.18em; font-weight: 400;
@@ -165,6 +165,7 @@
   .signoff { text-align: center; padding: 96px 0 8px; border-top: 1px solid var(--rule); }
   .signoff p { font-size: clamp(1.5rem, 4vw, 2rem); font-style: italic; font-weight: 400;
                color: var(--text); margin: 0; }
+  .brand { font-family: var(--font-brand); font-style: normal; }   /* brand name: wordmark face, upright, in every mode */
 
   /* ---- footer ---- */
   footer { text-align: center; padding: 40px 0 80px; color: var(--faint);
@@ -176,7 +177,7 @@
 
   /* ---- Fun Mode: swap the whole page to Fasthand. The control is an inline
      footer item styled exactly like its surrounding text. ---- */
-  html.fun { --font-body: "Fasthand", "Bona Nova", cursive; --font-display: "Fasthand", cursive; }
+  html.fun { --font-body: "Fasthand", "Bona Nova", cursive; }
   .funlink {
     font: inherit; color: inherit; background: none; border: 0; padding: 0;
     cursor: pointer; -webkit-appearance: none; appearance: none;
@@ -247,7 +248,7 @@
   </section>
 
   <div class="signoff">
-    <p>Comprador. At your service.</p>
+    <p><span class="brand">Comprador</span>. At your service.</p>
     <div class="cta" style="margin-top:1.8em">
       <a class="btn" href="https://github.com/terraceonhigh/Comprador/releases/latest">Download for Mac</a>
     </div>
