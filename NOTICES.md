@@ -103,6 +103,51 @@ derivative remains in the public domain.
 
 ---
 
+## Website backdrop art
+
+The project website (`docs/site/`) draws a random background on each load
+from a set of engravings by **Filippo Morghen** (b. 1730), an 18th-century
+Italian engraver — including plates from his series imagining fantastical
+life on the Moon (gourd-dwellings, ruins, and allegorical scenes).
+
+- **Original works:** engravings by Filippo Morghen
+- **Source:** Public Domain Image Archive —
+  https://pdimagearchive.org/galleries/artists/filippo-morghen/
+- **License of originals:** Public Domain Worldwide (no additional rights;
+  the works are out of copyright by age).
+
+The images are committed unmodified under
+`docs/site/images/backdrops/`. They are decorative only and introduce no
+new copyright restrictions.
+
+---
+
+## Website fonts
+
+The project website (`docs/site/`) self-hosts its web fonts under
+`docs/site/fonts/` — no CDN, so no visitor request for a font ever leaves
+their machine (consistent with the project's no-telemetry stance). All three
+are licensed under the **SIL Open Font License, version 1.1 (OFL-1.1)** and
+are embedded unmodified:
+
+- **Bona Nova** — body text and headings.
+  Copyright 2020 The Bona Nova Project Authors
+  (https://github.com/kosmynkab/Brygada-1918)
+- **IM Fell Double Pica SC** — the "Comprador" wordmark (small caps).
+  Copyright (c) 2010 Igino Marini (mail@iginomarini.com)
+- **Fasthand** — the optional "Fun Mode" display face.
+  Copyright 2020 The Fasthand Project Authors
+  (https://github.com/danhhong/Fasthand)
+
+- **Source:** Google Fonts (https://fonts.google.com/)
+- **License text:** https://openfontlicense.org/
+
+Each family carries a Reserved Font Name under the OFL; Comprador embeds the
+fonts as-is and does not create modified versions under those names, so the
+OFL's embedding and self-hosting permissions apply cleanly.
+
+---
+
 ## Galatea
 
 The Go bridge embeds [Galatea](https://github.com/terraceonhigh/galatea),
