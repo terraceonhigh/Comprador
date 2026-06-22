@@ -1,6 +1,8 @@
 # Build artifacts
 build/
 dist/
+# Throwaway .app bundles from notarization step-comparison debugging (May 2026).
+dist-compare/
 
 # macOS
 .DS_Store
@@ -38,6 +40,9 @@ testfiles/
 
 # Local worktrees / scheduled-task state (per-machine, not in git)
 .claude/
+# Registered git worktrees live here (e.g. test/morning-scripts); the checkouts
+# are per-machine and must never be tracked by the parent repo.
+worktrees/
 
 # Cross-agent coordination scratch files
 forGPT.md
