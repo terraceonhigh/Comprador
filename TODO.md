@@ -2,6 +2,11 @@
 
 ## ⚠ NEXT SESSION — start here
 
+### WEBSITE (2026-06-21): live v0.4.0 landing page committed (`3e594480`, docs/site/), not yet published to gh-pages.
+- [ ] **Mux down `icon.png`** — it's 3.4 MB for a 96px logo. Downscale to ~256px
+      (`sips -Z 256 …`) before publishing the page; update both `images/icon.png`
+      and `docs/site/images/icon.png`.
+
 ### PIVOT (2026-06-07): v0.3.4 prefetch is PARKED — we're moving to Galatea.
 
 The Architect chose to **pivot to Galatea now** (Phase 4 of the original
