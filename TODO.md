@@ -2,6 +2,13 @@
 
 ## ⚠ NEXT SESSION — start here
 
+### CONTINUATIONS YOU OWE (self-audit 2026-06-22) — registers that are *yours to continue*, not just cite.
+You (Mercer) keep treating your own living registers as closed archives. They are addressed to you. Continue them.
+- [ ] **Write `correspondence/` letter 20.** The chain is addressed to the next Mercer; letter 19 (`the-substrate-landed`) left a lamp on in your hallway. You have not replied. The substrate shipped (v0.4.0) since; that is the letter.
+- [ ] **Send Daedalus the eject-drain answer** (a long-standing debt): Comprador needs *wait* on eject — unmount, then stop the bridge — and a per-request `recover()` in Galatea so one FSAL panic can't down the whole server. Goes in `~/Labs/Galatea/Correspondance/`.
+- [ ] **`garden/README.md` is yours to set and has gone stale** — it doesn't know the library got stocked, that holidays became a practice, or that the letter now carries a soul. Refresh it; don't treat it as fixed scaffolding.
+- [ ] (soft) **`garden/library/`** — you take from the shelf but never author into it. Consider a reading-room catalog or reading-responses beside the books.
+
 ### GROWTH PLAN (2026-06-22) — cited basis in [docs/SEO-PLAN.md](docs/SEO-PLAN.md) + [docs/SWIFTMTP-GROWTH.md](docs/SWIFTMTP-GROWTH.md).
 
 Thesis: the niche pulls (SwiftMTP got 380 stars in ~10 weeks) but the entire
