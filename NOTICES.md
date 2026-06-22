@@ -122,6 +122,25 @@ new copyright restrictions.
 
 ---
 
+## Website fonts
+
+The project website (`docs/site/`) self-hosts its web fonts under
+`docs/site/fonts/` — no CDN, so no visitor request for a font ever leaves
+their machine (consistent with the project's no-telemetry stance):
+
+- **Bona Nova** — body text and headings
+- **Vollkorn SC** — the "Comprador" wordmark (small caps)
+- **Fasthand** — the optional "Fun Mode" display face
+
+- **License:** SIL Open Font License, version 1.1 (OFL-1.1) — all families
+- **Source:** Google Fonts (https://fonts.google.com/)
+- **License text:** https://openfontlicense.org/
+
+The OFL permits embedding and self-hosting; the `woff2` files are committed
+unmodified.
+
+---
+
 ## Galatea
 
 The Go bridge embeds [Galatea](https://github.com/terraceonhigh/galatea),
