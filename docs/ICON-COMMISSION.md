@@ -83,14 +83,21 @@ her only for the artwork. The two lists below draw that line.
 
 ### The split: what she delivers vs. what we handle
 
-**Sofia delivers (artwork only):**
-1. The **master artwork at 1024×1024 px**, square, full-frame.
-2. The **editable source file** (Illustrator/Affinity/Figma/Procreate, whatever
-   she works in), with layers intact. This is worth asking for: it lets us
-   produce the small sizes and the menu-bar version without going back to her
-   for every tweak. A flattened PNG is a dead end for that.
-3. A **single-color (monochrome) version** of the central motif. She is already
-   sketching in monochrome, so this is a small extra step, not a new commission.
+**Sofia delivers** one design in **two forms**, plus the source:
+1. The **full-colour app icon** (Dock/Finder): master artwork at 1024×1024 px,
+   square, full-frame.
+2. The **monochrome glyph** (menu bar): the same central motif reduced to a flat,
+   single-colour silhouette on a transparent background, no shading or shadow.
+   She is already sketching in monochrome, so this is a small extra step from the
+   same mark, not a second project.
+3. The **editable source file** (Illustrator/Affinity/Figma/Procreate, whatever
+   she works in), with layers intact, so we can produce the small sizes without
+   going back to her for every tweak.
+
+The two-form requirement is structural, not cosmetic: it means the design must be
+built around **one strong central shape** that survives being stripped to a flat
+silhouette. That is a spec, so it stays in the outward brief; our guesses about
+*what* that shape should be do not (see the note below).
 
 **We handle (no need to involve her):**
 - Generating every required pixel size (the 10-PNG set: 16, 32, 128, 256, 512,
@@ -159,26 +166,24 @@ often miss. In rough priority order:
    The current placeholder is PD (Merian/Sluyter, 1705). Just confirm anything
    she incorporates is clean.
 
-### Concept synthesis, for her benefit
+### Concept and motifs (INTERNAL ONLY, deliberately not sent to her)
 
-She is working from a scatter of chat lines. If she would find it useful, hand
-her a one-paragraph synthesis instead:
+Decision 2026-06-22: the outward brief gives her **the links and the specs, and
+nothing else**. We do not hand her a prescribed concept, a mood board in words,
+or a motif list, so her own reading can flourish. The website, the Wikipedia
+page, and the placeholder carry all the meaning and mood she needs; let them do
+that work rather than steering her with our guesses.
 
-> Comprador is the *intermediary*: the translator who stood at a colonial port
-> and let two worlds trade. The app does the same for a Mac and a phone. Make an
-> icon about **mediation and passage between two worlds**, in an Iberian/colonial
-> register: baroque, rococo, or organic Art Nouveau, the churches and old
-> buildings of a port town. The website's world is parchment, pomegranate-red,
-> and antique engraving, so the icon should feel cut from the same paper.
+The notes below are kept for *our* reference (so we can recognise a strong
+direction when we see it), not to be pasted to her:
 
-Motifs that fit, if she wants prompts (entirely optional, she has latitude):
-- The **pomegranate** (continuity with the placeholder; a fruit mythologically
-  tied to passage between worlds).
-- A **port arch, gateway, or colonial church facade** (the threshold between two
-  worlds).
-- A **butterfly** (her own suggestion, and apt: the placeholder comes from
-  Maria Merian's *Metamorphosis*, so metamorphosis is already in the lineage).
-- A **bridge, key, or doubled/Janus motif** (the translation layer made literal).
+- Concept in one line: Comprador is the intermediary, the port translator who let
+  two worlds trade; the app does the same for a Mac and a phone.
+- Motifs that would reduce well to a glyph, if she happens to land near them: a
+  pomegranate (continuity with the placeholder, and the crown gives a clean
+  silhouette); a port arch or gateway; a key or bridge; a butterfly (the
+  placeholder is from Merian's *Metamorphosis*). These are ours to *recognise*,
+  not hers to be *told*.
 
 ### One flag worth raising with her
 The template she has is iOS/iPadOS/watchOS. Comprador is a **Mac** app. For the
