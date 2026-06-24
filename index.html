@@ -207,13 +207,11 @@
   footer { text-align: center; padding: 40px 0 80px; color: var(--faint);
            font-size: 0.9rem; max-width: 40em; margin: 0 auto; }
   footer .platform { color: var(--muted); margin-bottom: 1.8em; }
-  footer .also a { color: var(--link); }
+  footer .privacy { font-size: 0.78rem; color: var(--faint); letter-spacing: 0.02em; }
   footer .links { margin: 0 0 1.6em; }
   footer .links a { margin: 0 10px; color: var(--muted); }
-  /* quiet, verifiable privacy line: no markup needed, same on every page */
-  footer::after { content: "No trackers. No third-party requests. Fonts and assets self-hosted.";
-                  display: block; margin-top: 2.4em; font-size: 0.78rem; color: var(--faint);
-                  letter-spacing: 0.02em; }
+  footer .links a.nav { color: var(--link); }
+  footer .links span.nav { margin: 0 10px; color: var(--faint); }
 
   /* ---- Fun Mode: swap the whole page to Fasthand. The control is an inline
      footer link, coloured to match the adjacent Download/Source/License links. ---- */
@@ -266,7 +264,7 @@
       <a class="btn" href="https://github.com/terraceonhigh/Comprador/releases/latest/download/Comprador.dmg">Download for Mac</a>
       <a class="btn ghost" href="https://github.com/terraceonhigh/Comprador">View source on GitHub</a>
     </div>
-    <p class="reqline">Free and open source · Apple Silicon · macOS 13 or later</p>
+    <p class="reqline">Free and open source · Apple Silicon · macOS 13 or later · <strong>Signed by Apple.</strong></p>
     <p class="seo-note">A modern Android File Transfer alternative</p>
 
     <div class="shot">
@@ -305,14 +303,16 @@
   </div>
 
   <footer>
-    <p class="platform">Apple Silicon, macOS 13 or later. <strong>Signed by Apple.</strong> </p>
     <p class="links">
-      <a href="https://github.com/terraceonhigh/Comprador/releases/latest">Download</a>
+      <span class="nav" aria-current="page">Home</span>
+      <a class="nav" href="compatibility.html">Compatibility</a>
+      <a class="nav" href="compare.html">Compare</a>
+      <a class="nav" href="honourable-mentions.html">Honourable mentions</a>
       <a href="https://github.com/terraceonhigh/Comprador">Source</a>
       <a href="https://github.com/terraceonhigh/Comprador/blob/master/LICENSE">License (GPLv3+)</a>
       <button id="funToggle" type="button" class="funlinks" aria-pressed="false">Fun mode</button>
     </p>
-    <p class="also"><em>Also worth knowing about:</em> <a href="https://github.com/sannidhyaroy/Soduto">Soduto</a>, a macOS client for KDE Connect, because symphony beats soliloquy</p>
+    <p class="privacy">No trackers, no third-party requests.</p>
   </footer>
 
 </main>
