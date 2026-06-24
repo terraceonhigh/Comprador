@@ -118,6 +118,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
   and browse both at once, each its own volume in the sidebar
 - Stream media in place: play or scrub a video straight off the phone
   without copying it to the Mac first
+- Scriptable from the shell: the mount is a real volume, so `rsync`, `cp`,
+  cron, and Hazel work on it directly (see [Automation](#automation))
 
 See [TODO.md](TODO.md) for the full roadmap.
 
@@ -128,9 +130,17 @@ phone as a real volume, so any tool that works on a folder works on it. `rsync`,
 `cp`, `find`, `ditto`, cron jobs, and Hazel rules all operate on the mount point
 directly.
 
-Eject from a script with `diskutil unmount` (or `umount`) on the mount path;
-Comprador notices the external unmount and shuts its bridge down cleanly. Find
-the path with `mount | grep Comprador`.
+Find the mount path with `mount | grep Comprador` (it lives under
+`~/Library/Application Support/Comprador/Volumes/<device>`), then drive it like
+any directory. For example, to back up a phone's camera roll:
+
+```sh
+rsync -a "$HOME/Library/Application Support/Comprador/Volumes/Pixel-6/DCIM/" \
+      "$HOME/Pictures/phone-backup/"
+```
+
+Eject from a script with `diskutil unmount` (or `umount`) on that path;
+Comprador notices the external unmount and shuts its bridge down cleanly.
 
 ## FAQ
 
