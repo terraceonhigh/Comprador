@@ -50,8 +50,11 @@ privileged helper — the earlier WebDAV server, the patched
 - **NFSv4 mount (Galatea), sub-second mount time.** No 90-second
   WebDAV preflight wait. The mount feels like a USB stick.
 - **Works with cameras too.** Anything libmtp recognizes as
-  MTP- or PTP-class. Tested with phones (Sony Xperia, Pixel)
-  and PTP cameras (Canon, Nikon, Sony, Fuji).
+  MTP- or PTP-class. Hardware-tested with phones (Sony Xperia,
+  Pixel), including a Pixel forced into PTP mode. PTP cameras
+  (Canon, Nikon, Sony, Fuji) are expected to work on the same
+  path but are not yet hardware-verified (see the verification
+  checklist below).
 
 ### Things that will get probed and our answers
 
@@ -242,6 +245,10 @@ specific and tickable.
       primary Sony Xperia 10 III.** v0.4.0 verified live on a
       **Pixel 6** (second vendor); ideally widen to three (a PTP
       camera, Samsung, or OnePlus).
+- [ ] **Built against a current libmtp.** Device support is libmtp's
+      per-device database, so `brew upgrade libmtp` before tagging a
+      release. `make` echoes the bundled libmtp version at build time;
+      record it in the release notes.
 
 ### Soft requirements (launch with these noted as caveats)
 
