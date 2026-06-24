@@ -1219,14 +1219,13 @@ architectural cleanup.
 
 ### Tier 1 — safe deletions
 
-- [ ] **Delete `bridge/cmd/ictest1/` and `bridge/cmd/ictest2/`**
-      plus their Makefile targets (`ictest1`, `ictest2`) and the
-      `ICTEST1_OUT` / `ICTEST2_OUT` variables.
+- [x] **Deleted `bridge/cmd/ictest1/` and `bridge/cmd/ictest2/`**
+      plus their Makefile targets and `ICTEST1_OUT` / `ICTEST2_OUT`
+      vars (done 2026-06-23, branch `ponytail/audit-cuts`; also dropped
+      `bridge/cmd/prefetch-probe`, mooted by the Galatea pivot).
       [DECISIONS.md "ImageCaptureCore investigation"](docs/DECISIONS.md)
-      explicitly marks these "deletable in a single commit once
-      the receipt in RESEARCH-IMAGECAPTURECORE.md is sufficient on
-      its own" — and it is. Net: ~350 lines of Swift gone, no
-      information loss.
+      marked these deletable once the RESEARCH-IMAGECAPTURECORE.md
+      receipt stood on its own, and it did.
 - [ ] **Delete `build/dir-diff.py` and `build/list-phone.py`.**
       Ad-hoc Python scripts from the 2026-05-11 directory-copy
       investigation, superseded by `test-md5.sh` as the canonical
