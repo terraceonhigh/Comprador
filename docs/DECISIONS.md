@@ -242,3 +242,35 @@ architecture per
 the cgo callback buffer-reuse fix
 ([TODO.md](../TODO.md) "Roadmap imperative") landing between them
 to unblock multi-device.
+
+## 2026-06-23: Expanding device compatibility
+
+Three decisions on how Comprador reaches more devices, taken after the
+compatibility page made explicit that support is decided by libmtp and the
+macOS USB-claim layer, not by us.
+
+**1. Keep libmtp current as a release practice.** Device support *is* libmtp's
+per-device database; the bridge adds none of its own. The build copies whatever
+`libmtp.9.dylib` Homebrew has installed, with no pinning. So the lever for "more
+devices over time" is simply shipping a current libmtp: `brew upgrade libmtp`
+before cutting a release. `BUNDLE_BRIDGE` in the Makefile now echoes the bundled
+libmtp version so each build records what it embedded, and PRE-LAUNCH carries the
+upgrade step. Declined a hard min-version gate as overkill for a solo release.
+
+**2. Declined vendor-specific MTP auto-detection.** Auto-detection fires on a
+known Android vendor ID OR a USB class-6 (Still Image / PTP) interface. The one
+gap is a device exposing MTP only via a vendor-specific (class FF) interface that
+isn't a known vendor. Detecting that robustly needs Microsoft OS String Descriptor
+control transfers: fragile, complex, and rare. Decided not to build it; decision 3
+covers the same gap with a deterministic, user-driven path instead.
+
+**3. Added a manual "Look for a device" menu.** A submenu lists every attached USB
+device; picking one force-connects it through the normal path
+(`handleDeviceAttached` to `DeviceSession.connect` to the bridge's
+`--device-loc-id`), bypassing the vendor/class filter, and libmtp does the real
+test. The submenu repopulates on open via `NSMenuDelegate`, so it is live even for
+a device auto-detection never reported. This covers the vendor-specific gap, a
+pre-launch attach that raced, and reconnect-after-eject without a replug (the
+manual action clears the post-eject suppression). Chosen over spawning the bridge
+with `--device-loc-id=0`, which is non-deterministic when several devices are
+attached.

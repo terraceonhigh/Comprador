@@ -102,7 +102,7 @@ define BUNDLE_BRIDGE
 	codesign --force --sign - "$(1)/Contents/Frameworks/libmtp.9.dylib"; \
 	codesign --force --sign - "$(1)/Contents/Frameworks/libusb-1.0.0.dylib"; \
 	codesign --force --sign - "$(1)/Contents/Resources/bridge"; \
-	echo "Bundled bridge + libmtp + libusb into $(1)"
+	echo "Bundled bridge + libmtp [$$(brew list --versions libmtp 2>/dev/null || echo '?')] + libusb into $(1)"
 endef
 
 app: bridge icon

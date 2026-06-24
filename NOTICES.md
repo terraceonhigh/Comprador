@@ -100,6 +100,9 @@ are embedded unmodified:
 - **Fasthand** — the optional "Fun Mode" display face.
   Copyright 2020 The Fasthand Project Authors
   (https://github.com/danhhong/Fasthand)
+- **Syne Mono** — the code voice: the headline's "tools", the inline commands, the snippet.
+  Copyright 2017 The Syne Project Authors
+  (https://gitlab.com/bonjour-monde/fonderie/syne-typeface)
 
 - **Source:** Google Fonts (https://fonts.google.com/)
 - **License text:** https://openfontlicense.org/

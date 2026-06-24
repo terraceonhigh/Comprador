@@ -1,10 +1,12 @@
 import Cocoa
 import ServiceManagement
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var deviceWatcher: DeviceWatcher!
     private var welcomeController: WelcomeWindowController?
+    /// The "Look for a device" submenu, repopulated on open via NSMenuDelegate.
+    private var lookMenu: NSMenu?
 
     /// Active device sessions keyed by USB Location ID. PLAN-MULTI-DEVICE.md
     /// step 3: data structure widened from a single optional to a dictionary,
@@ -166,6 +168,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
+        // Manual discovery: every attached USB device, so the user can force a
+        // mount attempt on one auto-detection skipped (a vendor-specific MTP
+        // device, a pre-launch attach, or a reconnect after eject without a
+        // replug). The submenu repopulates on open (menuNeedsUpdate); the bridge
+        // and libmtp do the real test, and a non-MTP pick fails into .error.
+        let lookItem = NSMenuItem(title: "Look for a device",
+                                  action: nil, keyEquivalent: "")
+        let sub = NSMenu()
+        sub.delegate = self
+        populateLookMenu(sub)
+        lookMenu = sub
+        lookItem.submenu = sub
+        menu.addItem(lookItem)
+
         let loginItem = NSMenuItem(title: "Start at Login",
                                    action: #selector(toggleLoginItem),
                                    keyEquivalent: "")
@@ -195,6 +211,46 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(buildItem)
 
         statusItem.menu = menu
+    }
+
+    /// Fills the "Look for a device" submenu with the USB devices attached right
+    /// now that don't already have a session. Called on submenu open so the list
+    /// is live even for a device auto-detection never reported.
+    private func populateLookMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let candidates = (deviceWatcher?.attachedUSBDevices() ?? [])
+            .filter { sessions[$0.locationID] == nil }
+        if candidates.isEmpty {
+            let none = NSMenuItem(title: "No other USB devices found",
+                                  action: nil, keyEquivalent: "")
+            none.isEnabled = false
+            menu.addItem(none)
+            return
+        }
+        for dev in candidates {
+            let item = NSMenuItem(title: dev.displayName,
+                                  action: #selector(lookForDevice(_:)),
+                                  keyEquivalent: "")
+            item.target = self
+            item.representedObject = dev
+            menu.addItem(item)
+        }
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        if menu === lookMenu { populateLookMenu(menu) }
+    }
+
+    /// Force a mount attempt on a USB device the auto-detector skipped. The user
+    /// picked it explicitly, so clear any post-eject suppression first, then run
+    /// the normal connect path; libmtp decides whether it actually mounts.
+    @objc private func lookForDevice(_ sender: Any?) {
+        guard let item = sender as? NSMenuItem,
+              let device = item.representedObject as? USBDevice else { return }
+        recentlyEjected.removeValue(forKey: device.locationID)
+        cprLog("Comprador: Manual connect requested for %@ (0x%04X:0x%04X)",
+              device.displayName, device.vendorID, device.productID)
+        handleDeviceAttached(device)
     }
 
     /// Copies the bridge/app build identifier to the system clipboard,

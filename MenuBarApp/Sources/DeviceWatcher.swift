@@ -202,6 +202,35 @@ class DeviceWatcher {
         return false
     }
 
+    /// Every USB device attached right now, regardless of vendor or interface
+    /// class. Backs the manual "Look for a device" menu so a user can force a
+    /// mount attempt on a device auto-detection skipped (a vendor-specific MTP
+    /// device, a pre-launch attach, or a reconnect after eject). The bridge and
+    /// libmtp do the real test on whichever one is picked.
+    func attachedUSBDevices() -> [USBDevice] {
+        var iter: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(kIOMainPortDefault,
+                                           IOServiceMatching("IOUSBHostDevice"),
+                                           &iter) == KERN_SUCCESS else {
+            return []
+        }
+        defer { IOObjectRelease(iter) }
+
+        var devices: [USBDevice] = []
+        while case let service = IOIteratorNext(iter), service != IO_OBJECT_NULL {
+            defer { IOObjectRelease(service) }
+            let d = extractDeviceInfo(from: service)
+            // Give nameless / unknown-vendor devices a legible menu label.
+            let name = d.displayName == "Unknown"
+                ? String(format: "USB device 0x%04X:0x%04X", d.vendorID, d.productID)
+                : d.displayName
+            devices.append(USBDevice(vendorID: d.vendorID, productID: d.productID,
+                                     vendorName: d.vendorName, locationID: d.locationID,
+                                     displayName: name))
+        }
+        return devices
+    }
+
     private func extractDeviceInfo(from service: io_service_t) -> USBDevice {
         let vendorID = UInt16(getIntProperty(service, key: "idVendor") ?? 0)
         let productID = UInt16(getIntProperty(service, key: "idProduct") ?? 0)
