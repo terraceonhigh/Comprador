@@ -191,6 +191,10 @@
   footer .also a { color: var(--link); }
   footer .links { margin: 0 0 1.6em; }
   footer .links a { margin: 0 10px; color: var(--muted); }
+  /* quiet, verifiable privacy line: no markup needed, same on every page */
+  footer::after { content: "No trackers. No third-party requests. Fonts and assets self-hosted.";
+                  display: block; margin-top: 2.4em; font-size: 0.78rem; color: var(--faint);
+                  letter-spacing: 0.02em; }
 
   /* ---- Fun Mode: swap the whole page to Fasthand. The control is an inline
      footer link, coloured to match the adjacent Download/Source/License links. ---- */
@@ -261,8 +265,8 @@
   </section>
 
   <section class="feature">
-    <h2>Your cameras too.</h2>
-    <p>DSLRs, mirrorless, point-and-shoots. Same place, same gestures.</p>
+    <h2>Not just one trick.</h2>
+    <p>Cameras, e-readers, smartwatches. Same place, same gestures.</p>
   </section>
 
   <div class="signoff">
