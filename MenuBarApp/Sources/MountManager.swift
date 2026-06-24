@@ -240,7 +240,7 @@ enum MountError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .mountFailed(let code):
-            return "WebDAV mount failed with error code \(code)"
+            return "Mount failed with error code \(code)"
         }
     }
 }

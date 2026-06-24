@@ -1,7 +1,7 @@
 import Foundation
 import UserNotifications
 
-/// Manages the lifecycle of the Go bridge process (WebDAV or NFS mode).
+/// Manages the lifecycle of the Go bridge process.
 class BridgeProcess {
     private var process: Process?
     private(set) var port: Int?
@@ -31,9 +31,7 @@ class BridgeProcess {
     /// Starts the bridge binary and waits for it to print PORT=N.
     /// Returns the port number on success.
     /// Throws if the bridge fails to start or doesn't respond within the timeout.
-    ///
-    /// `useNFS` is accepted for arg compatibility but is now a no-op — the
-    /// bridge always serves Galatea NFSv4. The caller mounts unprivileged via
+    /// The bridge always serves Galatea NFSv4; the caller mounts unprivileged via
     /// `MountManager.mountNFS(host:port:volumeName:)` (no helper needed).
     ///
     /// If `seizeForVendor` and `seizeForProduct` are non-zero, an IOKit
@@ -50,8 +48,7 @@ class BridgeProcess {
     /// two or more phones plugged in, the bridge would otherwise be
     /// non-deterministic about which one it claims. See
     /// docs/PLAN-MULTI-DEVICE.md §6 option A.
-    func start(useNFS: Bool = false,
-               seizeForVendor: UInt16 = 0,
+    func start(seizeForVendor: UInt16 = 0,
                seizeForProduct: UInt16 = 0,
                locationID: UInt32 = 0) async throws -> Int {
         let bridgePath = findBridgeBinary()
@@ -118,9 +115,6 @@ class BridgeProcess {
         p.executableURL = URL(fileURLWithPath: bridgePath)
         p.currentDirectoryURL = URL(fileURLWithPath: NSTemporaryDirectory())
         var args: [String] = []
-        if useNFS {
-            args.append("--nfs")
-        }
         if locationID != 0 {
             args.append(String(format: "--device-loc-id=0x%08x", locationID))
         }
@@ -193,7 +187,7 @@ class BridgeProcess {
         self.port = result.port
         self.host = result.host ?? "127.0.0.1"
         self.deviceName = result.device
-        self.proto = result.proto ?? "webdav"
+        self.proto = result.proto ?? "nfs"
         cprLog("Comprador: Bridge ready — proto=%@, addr=%@:%d, device: %@",
               self.proto, self.host, result.port, result.device ?? "unknown")
         return result.port

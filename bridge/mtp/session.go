@@ -86,13 +86,6 @@ func (m *ObjectMap) GetByID(id uint32) (*ObjectMeta, bool) {
 	return meta, ok
 }
 
-// InvalidateDir marks a directory as needing re-enumeration from the device.
-func (m *ObjectMap) InvalidateDir(dirPath string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.populated, strings.TrimSuffix(dirPath, "/"))
-}
-
 // IsPopulated returns whether a directory's children have been fetched
 // (at any point — does not consider freshness). For freshness-aware checks
 // use IsFresh.

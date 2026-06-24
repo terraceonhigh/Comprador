@@ -81,10 +81,6 @@ final class DeviceSession {
         mountManager.mountPath
     }
 
-    var bridgeProto: String? {
-        bridge?.proto
-    }
-
     /// Builds the connecting status line text. Pulled out of rebuildMenu so the
     /// timer tick can update the visible NSMenuItem in place — replacing the
     /// whole menu via rebuildMenu() does not redraw an already-open menu, so
@@ -171,9 +167,7 @@ final class DeviceSession {
                     DispatchQueue.main.async { [weak self] in self?.setConnectStatus(msg) }
                 }
 
-                let useNFS = true
                 let port = try await bp.start(
-                    useNFS: useNFS,
                     seizeForVendor: device.vendorID,
                     seizeForProduct: device.productID,
                     locationID: device.locationID

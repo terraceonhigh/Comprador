@@ -44,10 +44,4 @@ enum LoginItem {
             return false
         }
     }
-
-    /// Toggle the login item state.
-    @discardableResult
-    static func toggle() -> Bool {
-        isEnabled ? disable() : enable()
-    }
 }

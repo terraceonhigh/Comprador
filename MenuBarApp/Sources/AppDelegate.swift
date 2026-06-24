@@ -159,12 +159,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     // (Removed the "Finder takes about 90 seconds to
                     // attach the volume" hint. It was correct for the
                     // legacy WebDAV path where NetFSMountURLSync dominated
-                    // the cycle. The NFS path connects in a few seconds.
-                    // DeviceSession hardcodes useNFS = true now so the
-                    // hint was unconditionally misleading. The previous
-                    // `session.bridgeProto != "nfs"` gate let it slip
-                    // through during the pre-PROTO-parse window where
-                    // BridgeProcess.proto still defaulted to "webdav".)
+                    // the cycle; the NFS path connects in a few seconds.)
                 }
             }
         }
