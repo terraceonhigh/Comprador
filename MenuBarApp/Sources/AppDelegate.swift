@@ -77,6 +77,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         setupStatusItem()
         setupDeviceWatcher()
+        setupUnmountObserver()
         updateIcon(state: .idle)
         presentWelcomeIfNeeded()
     }
@@ -499,6 +500,59 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 rebuildMenu()
             }
         }
+    }
+
+    // MARK: - External unmount
+
+    // ponytail: NSWorkspace.didUnmount covers external eject (diskutil/umount,
+    // Disk Utility, Finder eject); DA disappeared-callback only if this proves
+    // unreliable for NFS. Without it, an external unmount orphans the bridge and
+    // leaves the menu/icon stale until the device is physically unplugged.
+    private func setupUnmountObserver() {
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(volumeDidUnmount(_:)),
+            name: NSWorkspace.didUnmountNotification,
+            object: nil)
+    }
+
+    @objc private func volumeDidUnmount(_ note: Notification) {
+        guard let path = Self.unmountedVolumePath(from: note) else { return }
+        // Match the unmounted volume to a live session. Skip if it's already
+        // tearing down: the app's own eject unmounts first, which fires this
+        // same notification while its teardown is in flight.
+        guard let (locID, session) = sessions.first(where: {
+            $0.value.mountPath?.standardizedFileURL == path.standardizedFileURL
+                && !$0.value.tearingDown
+        }) else { return }
+
+        cprLog("Comprador: External unmount of \(session.displayName), tearing down")
+        // Mirror the menu-eject cleanup: suppress the reconnect burst that
+        // bridge.stop() triggers, cancel any deferred detach teardown, then
+        // teardown + reset state.
+        recentlyEjected[locID] = Date()
+        pendingDetachTeardown[locID]?.cancel()
+        pendingDetachTeardown.removeValue(forKey: locID)
+        Task {
+            await session.teardown()
+            await MainActor.run {
+                sessions.removeValue(forKey: locID)
+                if sessions.isEmpty {
+                    updateIcon(state: .idle)
+                }
+                rebuildMenu()
+            }
+        }
+    }
+
+    private static func unmountedVolumePath(from note: Notification) -> URL? {
+        if let url = note.userInfo?[NSWorkspace.volumeURLUserInfoKey] as? URL {
+            return url
+        }
+        if let p = note.userInfo?["NSDevicePath"] as? String {
+            return URL(fileURLWithPath: p)
+        }
+        return nil
     }
 
     @objc private func quitApp() {

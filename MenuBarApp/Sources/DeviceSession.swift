@@ -49,7 +49,9 @@ final class DeviceSession {
     private var lastRecoveryAt: Date?
     private let maxRecoveries = 3
     private let recoveryWindow: TimeInterval = 120
-    private var tearingDown = false
+    // Read by AppDelegate's external-unmount observer to skip the app's own
+    // eject (which unmounts first, firing didUnmount while teardown is in flight).
+    private(set) var tearingDown = false
 
     // Status-text fields driving the connecting line in the menu.
     // `connectingStatusItem` is a weak handle to the NSMenuItem AppDelegate

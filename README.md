@@ -121,6 +121,17 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 
 See [TODO.md](TODO.md) for the full roadmap.
 
+## Automation
+
+There is no app-specific scripting API, and none is needed: Comprador mounts the
+phone as a real volume, so any tool that works on a folder works on it. `rsync`,
+`cp`, `find`, `ditto`, cron jobs, and Hazel rules all operate on the mount point
+directly.
+
+Eject from a script with `diskutil unmount` (or `umount`) on the mount path;
+Comprador notices the external unmount and shuts its bridge down cleanly. Find
+the path with `mount | grep Comprador`.
+
 ## FAQ
 
 **Where do my files actually live?**
