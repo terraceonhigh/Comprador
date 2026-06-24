@@ -1148,6 +1148,18 @@ Carried forward from DECISIONS.md, not blocking but real:
       partial confirmation was 49.6 MB transfer → 8.4 MB RSS —
       directional evidence but not the spec'd test.
 
+### CI / release pipeline (salvaged from the v0.4.0 ship handoff, 2026-06-23)
+
+- [ ] **Pin the Xcode version** in `.github/workflows/release.yml` and
+      `build-check.yml`. A macos-runner-image bump reintroduced Swift
+      toolchain skew once already and broke the v0.4.0 tag's release CI
+      (a weak-`self`-in-`@Sendable` capture the local toolchain only warned
+      on). Pinning stops a future runner bump from doing it again.
+- [ ] **`.forgejo/workflows/helper.yml` still tests the removed helper** and
+      will go red on master pushes. Gut it or repoint it (the bridge can't
+      build on Linux anyway: libmtp/darwin). See
+      [docs/archive/v0.4.0-ship-handoff.md](docs/archive/v0.4.0-ship-handoff.md).
+
 ---
 
 ## Post-v0.4.0 backlog — durable corpus stewardship
