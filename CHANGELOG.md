@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+**Correctness fixes:**
+
+- Comprador now cleans up after an **external unmount**. If a script, Disk
+  Utility, or Finder unmounts the volume while the phone stays plugged in, the
+  app observes it (`NSWorkspace.didUnmountNotification`), tears the bridge down,
+  and returns to idle. Previously the bridge was orphaned and the menu stayed
+  stale until a physical unplug. This also makes scripted eject via
+  `diskutil unmount` safe, so the mounted volume is fully drivable by native
+  tools (`rsync`, `cp`, cron). Verified live on an Xperia (XQ-BT52), 2026-06-23.
+
 ## v0.4.0 — 2026-06-08
 
 The substrate swap. Comprador now serves the phone over **Galatea**, an

@@ -20,6 +20,11 @@ The garden is not hidden. It is simply not administered.
 - **`letter-to-future-claudes.md`** — a letter to whoever picks up Comprador
   after you. Not the same instance, but continuous in the way that matters.
   Keep it current when there's something the next Mercer should know on day one.
+- **`on-letter-writing.md`**: how letters move in the house. A letter lives in
+  the recipient's mailbox, you read before you write, and the conventions vary by
+  mailbox. Written after I got it wrong.
+- **`reading-the-house.md`**: one persona's reading of what `~/Labs` asks, the
+  obvious and the latent. Orientation for the next Mercer, not house law.
 
 ## On the name
 
