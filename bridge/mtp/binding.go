@@ -40,7 +40,6 @@ import (
 	"io"
 	"log"
 	"sync"
-	"time"
 	"unsafe"
 )
 
@@ -167,8 +166,6 @@ func DetectDevice() (*Device, error) {
 // kernel binding; if that succeeded and we still can't claim, retrying
 // won't help because the kernel has re-bound.
 func DetectDeviceForLocation(locationID uint32) (*Device, error) {
-	const maxAttempts = 1
-
 	var rawDevices *C.LIBMTP_raw_device_t
 	var numDevices C.int
 
@@ -253,20 +250,16 @@ func DetectDeviceForLocation(locationID uint32) (*Device, error) {
 	// a vendor-class MTP interface (free for libusb to claim).
 	LogUSBInterfaces(uint16(target.device_entry.vendor_id))
 
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		killCompetingProcesses()
+	// One attempt only — fail-fast (see the function comment): retrying a
+	// failed claim can push the phone further out of MTP mode.
+	killCompetingProcesses()
 
-		dev := C.LIBMTP_Open_Raw_Device_Uncached(target)
-		if dev != nil {
-			log.Println("MTP device opened successfully")
-			return &Device{dev: dev}, nil
-		}
-
-		log.Printf("Open attempt %d/%d failed (USB interface locked)", attempt, maxAttempts)
-		if attempt < maxAttempts {
-			time.Sleep(50 * time.Millisecond)
-		}
+	dev := C.LIBMTP_Open_Raw_Device_Uncached(target)
+	if dev != nil {
+		log.Println("MTP device opened successfully")
+		return &Device{dev: dev}, nil
 	}
+	log.Println("Open failed (USB interface locked)")
 
 	return nil, fmt.Errorf("failed to open MTP device — kernel-bound to the USB interface, requires physical replug or IOKit interface seize (not yet implemented)")
 }

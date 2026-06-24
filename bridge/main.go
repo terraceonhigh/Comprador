@@ -21,10 +21,6 @@ import (
 var BuildID = "dev"
 
 func main() {
-	// --nfs is now a no-op: Galatea NFSv4 is the only serving mode (WebDAV was
-	// retired in v0.4.0). The flag is still accepted because the menu-bar app
-	// passes it; remove it from the app side before dropping it here.
-	_ = flag.Bool("nfs", true, "deprecated, ignored — NFSv4 is the only mode")
 	// --device-loc-id selects which physical MTP device this bridge
 	// instance claims, by macOS IOKit USB Location ID. Required when
 	// multiple MTP devices are plugged in; if 0/absent the first

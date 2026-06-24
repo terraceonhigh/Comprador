@@ -1,6 +1,4 @@
 BRIDGE_OUT   := build/bridge
-ICTEST1_OUT  := build/ictest1
-ICTEST2_OUT  := build/ictest2
 APP_NAME   := Comprador
 GO         := /opt/homebrew/bin/go
 DERIVED    := $(HOME)/Library/Developer/Xcode/DerivedData
@@ -23,7 +21,7 @@ BUILD_ID := $(shell git rev-parse --short HEAD 2>/dev/null)$(shell git diff --qu
 # with a tagged release.
 RELEASE_VERSION := 0.4.0
 
-.PHONY: bridge build-all bridge-test ictest1 ictest2 test-md5 prefetch-probe icon app app-debug app-signed app-notarized app-swiftc dev dev-nfs galatea-dev galatea-mount galatea-umount run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
+.PHONY: bridge build-all bridge-test test-md5 icon app app-debug app-signed app-notarized app-swiftc dev dev-nfs galatea-dev galatea-mount galatea-umount run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
 
 ICON_SRC := images/icon.png
 ICON_OUT := MenuBarApp/Resources/Comprador.icns
@@ -67,16 +65,6 @@ build-all:
 bridge-test:
 	cd bridge && CGO_CFLAGS="-I$(CURDIR)/bridge/cvendor" CGO_LDFLAGS="-L/opt/homebrew/lib" $(GO) test -v ./...
 
-# Research probe: Test 1 from docs/RESEARCH-IMAGECAPTURECORE.md.
-# Tests whether ICDevice.requestOpenSession coexists with ptpcamerad.
-# Output goes into RESEARCH-IMAGECAPTURECORE.md §Test 1 Results.
-ictest1:
-	@mkdir -p build
-	swiftc -framework ImageCaptureCore -framework Foundation \
-		bridge/cmd/ictest1/main.swift -o $(ICTEST1_OUT)
-	@echo "Built: $(ICTEST1_OUT)"
-	@echo "Run:   ./$(ICTEST1_OUT)"
-
 # Phone-side md5 verification of a directory transfer. Developer-only
 # (uses ADB; never bundled into the user-facing app). Compares Mac
 # source against on-phone md5sums computed by adb shell, bypassing the
@@ -92,30 +80,6 @@ test-md5:
 	  exit 64; \
 	fi
 	@COMPRADOR_TESTING_ADB=1 ./test-md5.sh "$(MAC_DIR)" "$(PHONE_DIR)"
-
-# Research probe: Test 2 from docs/RESEARCH-IMAGECAPTURECORE.md.
-# Measures sequential read throughput via requestReadDataFromFile.
-ictest2:
-	@mkdir -p build
-	swiftc -framework ImageCaptureCore -framework Foundation -framework CryptoKit \
-		bridge/cmd/ictest2/main.swift -o $(ICTEST2_OUT)
-	@echo "Built: $(ICTEST2_OUT)"
-	@echo "Run:   ./$(ICTEST2_OUT)"
-
-# Empirical probe for the prefetch redesign (docs/PLAN-PREFETCH-REDESIGN.md
-# Step 1). Measures whether LIBMTP_GetPartialObject is viable for the
-# chunked-yield design. Run with a phone connected in File Transfer mode;
-# auto-picks the first file > 100 MB on the device.
-#
-#   make prefetch-probe
-#   ./build/prefetch-probe                      # 4 MB chunks (default), 64 MB total
-#   ./build/prefetch-probe -chunk=16 -bytes=128 # 16 MB chunks, 128 MB total
-#   ./build/prefetch-probe -skip-control        # skip the full-object read
-prefetch-probe:
-	@mkdir -p build
-	cd bridge && $(GO) build -o ../build/prefetch-probe ./cmd/prefetch-probe
-	@echo "Built: build/prefetch-probe"
-	@echo "Run:   ./build/prefetch-probe (with a phone connected in File Transfer mode)"
 
 # Bundle bridge + all dylibs into an app directory, fix rpaths
 define BUNDLE_BRIDGE
