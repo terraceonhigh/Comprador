@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What works with Comprador · device compatibility</title>
+<meta name="description" content="Which devices work with Comprador on Mac: Android phones, PTP cameras, 2024 Kindles, Garmin music watches, the Nintendo Switch, and other MTP devices. What is verified, what should work, and what is not supported. Free and open source.">
+<link rel="canonical" href="https://terraceonhigh.github.io/Comprador/compatibility.html">
+<meta name="theme-color" content="#f4ebe1">
+<link rel="icon" href="images/icon.png">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="What works with Comprador · device compatibility">
+<meta property="og:description" content="Android phones, PTP cameras, 2024 Kindles, Garmin music watches, the Nintendo Switch, and other MTP devices in Finder on a Mac. What is verified, what should work, what is not.">
+<meta property="og:url" content="https://terraceonhigh.github.io/Comprador/compatibility.html">
+<meta property="og:image" content="https://terraceonhigh.github.io/Comprador/images/demo-light.png">
+<meta name="twitter:card" content="summary_large_image">
+
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="guide.css">
+<script src="script.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="index.html">Comprador</a>
+  <a class="btn small" href="https://github.com/terraceonhigh/Comprador/releases/latest/download/Comprador.dmg">Download</a>
+</header>
+
+<main>
+  <article class="guide">
+    <h1>What works with Comprador</h1>
+    <p class="lead">Comprador works with devices that speak <strong>MTP</strong> or
+      <strong>PTP</strong>, the two USB protocols most non-Apple phones, cameras, and media
+      devices use to expose their files. macOS reads neither on its own, which is the whole
+      reason this app exists.</p>
+
+    <p>What is actually supported is decided by <a href="https://github.com/libmtp/libmtp">libmtp</a>,
+      the open library Comprador uses to talk to the device, not by a fixed list we maintain. So
+      the honest rule is <em>most</em> MTP and PTP devices, not all of them. The trigger is always
+      the same: connect a cable that carries data and, if the device asks, choose
+      <strong>File Transfer</strong> (sometimes labelled MTP, PTP, or PC / Computer).</p>
+
+    <h2>The list</h2>
+    <table class="compare">
+      <thead>
+        <tr><th>Device</th><th>Examples</th><th class="me">Status</th><th>Notes</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="col">Android phones, tested</td>
+          <td>Google Pixel 6, Sony Xperia</td>
+          <td class="me y">Works</td>
+          <td>The two families we have run on real hardware.</td>
+        </tr>
+        <tr>
+          <td class="col">Android phones, other brands</td>
+          <td>Samsung, Motorola, OnePlus, Xiaomi, OPPO, LG, HTC</td>
+          <td class="me">Should work</td>
+          <td>Same MTP protocol as the tested phones. Tap File Transfer on the USB notification.</td>
+        </tr>
+        <tr>
+          <td class="col">Digital cameras</td>
+          <td>Canon, Nikon, Sony, Fujifilm</td>
+          <td class="me">Should work</td>
+          <td>PTP class. Choose PC / Computer mode; you see the camera's photos (DCIM), not full storage.</td>
+        </tr>
+        <tr>
+          <td class="col">Newer Kindles</td>
+          <td>2024 Paperwhite, Colorsoft, Scribe, basic Kindle</td>
+          <td class="me">Should work</td>
+          <td>The 2024 models switched to MTP. Pre-2024 Kindles mount as a plain USB drive and need nothing. <a href="kindle.html">More on Kindles</a>.</td>
+        </tr>
+        <tr>
+          <td class="col">Garmin music watches</td>
+          <td>Fenix, Epix, Forerunner music models</td>
+          <td class="me">Should work</td>
+          <td>Only the music watches use MTP. Many other Garmin units mount as plain USB. <a href="garmin.html">More on Garmin</a>.</td>
+        </tr>
+        <tr>
+          <td class="col">Nintendo Switch</td>
+          <td>Switch, Switch 2</td>
+          <td class="me">Should work</td>
+          <td>Screenshots and clips only; the Switch does not expose full storage. <a href="switch.html">More on the Switch</a>.</td>
+        </tr>
+        <tr>
+          <td class="col">Other MTP / PTP devices</td>
+          <td>MP3 players, other e-readers</td>
+          <td class="me">Should work</td>
+          <td>No specific model tested, but anything libmtp recognises should mount.</td>
+        </tr>
+        <tr>
+          <td class="col">iPhone, iPad</td>
+          <td>Any iOS device</td>
+          <td class="me n">No</td>
+          <td>They do not speak MTP. Use Photos, Image Capture, or Finder.</td>
+        </tr>
+        <tr>
+          <td class="col">Debugging-only access</td>
+          <td>Anything needing ADB</td>
+          <td class="me n">No</td>
+          <td>Comprador never uses ADB or developer mode, by design.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p class="note"><strong>Works</strong> means we have run it on hardware. <strong>Should
+      work</strong> means the device uses MTP or PTP and libmtp should mount it, but we have not
+      verified that exact model. If you try one we have not listed, tell us how it went.</p>
+
+    <h2>What won't work</h2>
+    <p>iPhones and iPads do not speak MTP or PTP, so Comprador can't see them; Apple's own tools
+      already do. There is no wireless mode, USB only. And Comprador never touches ADB or USB
+      debugging, so a device that exposes files only that way is out of scope on purpose.</p>
+
+    <h2>If your device doesn't show up</h2>
+    <p>Almost always it's the connection mode, not the device. In order of likelihood:</p>
+    <ol>
+      <li><strong>Choose File Transfer on the device.</strong> Phones default to charge-only;
+        cameras may sit in a photo-only mode. Pick File Transfer or MTP (on a camera, PC /
+        Computer), unlock the screen, and tap Allow if it asks.</li>
+      <li><strong>Use a cable that carries data.</strong> Many charging cables have no data
+        lines, so the device charges but never appears.</li>
+      <li><strong>Unplug and plug back in.</strong> macOS sometimes grabs a camera or phone for
+        Photos or Image Capture before Comprador can. Reconnecting clears that and lets
+        Comprador claim it.</li>
+      <li><strong>A very new or unusual device?</strong> Comprador talks to devices through
+        libmtp, the open library that knows how to speak to each one. A brand-new model may need
+        a libmtp update before it mounts cleanly.
+        <a href="https://github.com/terraceonhigh/Comprador/issues">Tell us the model</a> and
+        we'll look.</li>
+    </ol>
+    <p class="note">Still not listed? Click Comprador's menu bar icon and choose
+      <strong>Look for a device</strong> to force a try on any device that's plugged in.</p>
+
+    <div class="cta">
+      <a class="btn" href="https://github.com/terraceonhigh/Comprador/releases/latest/download/Comprador.dmg">Download for Mac</a>
+      <a class="btn ghost" href="index.html">What is Comprador?</a>
+    </div>
+  </article>
+
+  <footer>
+    <p class="platform">Apple Silicon, macOS 13 or later. <strong>Signed by Apple.</strong></p>
+    <p class="links">
+      <a href="https://github.com/terraceonhigh/Comprador/releases/latest">Download</a>
+      <a href="https://github.com/terraceonhigh/Comprador">Source</a>
+      <a href="https://github.com/terraceonhigh/Comprador/blob/master/LICENSE">License (GPLv3+)</a>
+      <button id="funToggle" type="button" class="funlinks" aria-pressed="false">Fun mode</button>
+    </p>
+    <p class="also"><em>Also worth knowing about:</em> <a href="https://github.com/sannidhyaroy/Soduto">Soduto</a>, a macOS client for KDE Connect, because, Apple or not, you want your devices in symphony.</p>
+  </footer>
+
+</main>
+</body>
+</html>

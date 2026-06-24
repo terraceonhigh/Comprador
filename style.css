@@ -110,6 +110,10 @@ footer .platform { color: var(--muted); margin-bottom: 1.8em; }
 footer .also a { color: var(--link); }
 footer .links { margin: 0 0 1.6em; }
 footer .links a { margin: 0 10px; color: var(--muted); }
+/* quiet, verifiable privacy line: no markup needed, same on every page */
+footer::after { content: "No trackers. No third-party requests. Fonts and assets self-hosted.";
+                display: block; margin-top: 2.4em; font-size: 0.78rem; color: var(--faint);
+                letter-spacing: 0.02em; }
 
 /* Fun Mode: swaps the whole page to Fasthand; the brand wordmark holds via --font-brand */
 html.fun { --font-body: "Fasthand", "Bona Nova", cursive; }
