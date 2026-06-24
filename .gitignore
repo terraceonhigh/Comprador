@@ -54,3 +54,7 @@ forGPT.md
 garden/marginalia/*
 !garden/marginalia/README.md
 !garden/marginalia/00-example.md
+
+# Garden library — the reading shelf is local-only. Epubs fetched for reading
+# (Project Gutenberg and the like) are not repo content; they only bloat it.
+garden/library/
