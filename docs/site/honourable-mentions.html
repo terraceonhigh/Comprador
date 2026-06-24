@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Honourable mentions · Comprador</title>
+<meta name="description" content="The tools and projects Comprador tips its hat to: OpenMTP, the project it forked from; libmtp, the engine it is built on; Soduto and KDE Connect for wireless; MacDroid; and Android File Transfer, the one that came before.">
+<link rel="canonical" href="https://terraceonhigh.github.io/Comprador/honourable-mentions.html">
+<meta name="theme-color" content="#f4ebe1">
+<link rel="icon" href="images/icon.png">
+
+<meta property="og:type" content="article">
+<meta property="og:title" content="Honourable mentions · Comprador">
+<meta property="og:description" content="The tools and projects Comprador tips its hat to — the one it forked from, the engine it is built on, and the ones that do a job it doesn't.">
+<meta property="og:url" content="https://terraceonhigh.github.io/Comprador/honourable-mentions.html">
+<meta property="og:image" content="https://terraceonhigh.github.io/Comprador/images/demo-light.png">
+<meta name="twitter:card" content="summary_large_image">
+
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="guide.css">
+<script src="script.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="index.html">Comprador</a>
+  <a class="btn small" href="https://github.com/terraceonhigh/Comprador/releases/latest">Download</a>
+</header>
+
+<main>
+  <article class="guide">
+    <h1>Honourable mentions</h1>
+    <p class="lead">Comprador isn't the only good way to move files between a phone and a Mac, and it
+      stands on open-source work that came before it. Honest brokerage means saying so. Here are the
+      projects we tip our hat to.</p>
+
+    <h2>The ones we stand on</h2>
+    <p><strong><a href="https://github.com/ganeshrvel/openmtp">OpenMTP</a></strong> is the project
+      Comprador was forked from. It's a free, open-source MTP app for macOS that gives you a dedicated
+      dual-pane file-manager window, and for years it was the answer for Android-on-Mac. Comprador took
+      a different shape — a Finder volume instead of a window, and a clean reimplementation underneath —
+      but the repository began as OpenMTP's, and the debt is real.</p>
+    <p><strong><a href="https://github.com/libmtp/libmtp">libmtp</a></strong> is the engine. It's the C
+      library that actually speaks the Media Transfer Protocol to your device — the decade-plus of
+      reverse-engineering and per-device quirk-handling that makes any of this possible. Comprador is,
+      in honest terms, a friendly face on libmtp's work. It ships bundled in the app, with its licence.</p>
+
+    <h2>Kindred libraries</h2>
+    <p>Comprador isn't the only project that pries a closed device open and hands everyone the result —
+      it belongs to a long tradition of it. <strong><a href="https://libimobiledevice.org/">libimobiledevice</a></strong>
+      did for the iPhone what libmtp did for MTP: a volunteer community reverse-engineered Apple's locked
+      sync protocols so any operating system could talk to an iPhone or iPad — no iTunes, no jailbreak —
+      and then gave the work away. <strong><a href="https://github.com/gphoto/libgphoto2">libgphoto2</a></strong>
+      does the same for digital cameras, the decades of protocol-wrangling behind gPhoto2. All three are
+      one act of generosity pointed at different hardware, freely licensed, and Comprador is a small
+      Mac-shaped continuation of it.</p>
+
+    <h2>For a job we don't do</h2>
+    <p><strong><a href="https://kdeconnect.kde.org/">KDE Connect</a></strong> and its macOS client
+      <strong><a href="https://github.com/sannidhyaroy/Soduto">Soduto</a></strong> move files over
+      Wi-Fi, not USB. Comprador is deliberately USB-only, so if you'd rather not reach for a cable — and
+      you want notifications, clipboard sync and remote control thrown in — this is the wireless half of
+      the story. Apple or not, you want your devices in symphony.</p>
+    <p><strong><a href="https://localsend.org/">LocalSend</a></strong> is the open-source way to do the
+      same across your own network — fling a file from phone to laptop, or between any two platforms, with
+      no account, no cloud, and nothing leaving the local Wi-Fi. Think AirDrop that doesn't care who made
+      your devices.</p>
+    <p><strong><a href="https://github.com/Genymobile/scrcpy">scrcpy</a></strong> does a different job
+      again: it mirrors and controls your Android screen from the Mac over USB, and it's some of the
+      most-loved free software in the Android world (Apache-2.0). Its one catch is the very thing Comprador
+      spares you — it speaks ADB, so you'll need Developer Options and USB debugging switched on. For files
+      that's friction we'd rather skip; for driving the whole phone from your desk, it's well worth it.</p>
+
+    <h2>The one that came before</h2>
+    <p><strong><a href="https://www.android.com/filetransfer/">Android File Transfer</a></strong> is
+      where almost everyone started, and the reason this whole category exists. Google quietly pulled its
+      download in early 2024, and it's now effectively gone: unmaintained, a 4&nbsp;GB file cap, and
+      increasingly broken on Apple Silicon. We mention it because it walked so the rest could mount.</p>
+
+    <p class="note">On Linux none of this is needed in the same way —
+      <a href="https://github.com/phatina/simple-mtpfs">simple-mtpfs</a>, jmtpfs, and GNOME's gvfs
+      already expose MTP devices through the file manager. Comprador exists because macOS doesn't.</p>
+
+    <h2>The look of the place</h2>
+    <p>Comprador wears two-hundred-year-old engravings, and we owe that to people long gone and to the
+      institutions that keep their work free. The butterfly on the pomegranate in the icon is a detail
+      from a 1705 plate by <strong>Maria Sibylla Merian</strong> — an early naturalist who documented
+      insect metamorphosis from life — engraved by <strong>Pieter Sluyter</strong>. The shifting backdrop
+      behind every page is the work of <strong>Filippo Morghen</strong>, an 18th-century Italian engraver,
+      from his series imagining fantastical life on the Moon.</p>
+    <p>Both reach us, scanned and unlocked, through the
+      <strong><a href="https://pdimagearchive.org/">Public Domain Image Archive</a></strong> and the
+      <strong><a href="https://www.biodiversitylibrary.org/">Biodiversity Heritage Library</a></strong>
+      with the Smithsonian. The works are public domain worldwide; the organizations that digitize and
+      release them are the reason a small free app can dress itself in museum-grade art for nothing. The
+      typefaces are the same kind of gift — Bona Nova, Igino Marini's IM Fell Double Pica SC, Fasthand and
+      Syne Mono, all offered freely under the SIL Open Font License. Full credits and licences are in the
+      project's <a href="https://github.com/terraceonhigh/Comprador/blob/master/NOTICES.md">third-party notices</a>.</p>
+
+    <div class="cta">
+      <a class="btn" href="https://github.com/terraceonhigh/Comprador/releases/latest">Download for Mac</a>
+      <a class="btn ghost" href="index.html">What is Comprador?</a>
+    </div>
+  </article>
+
+  <footer>
+    <p class="links">
+      <a class="nav" href="index.html">Home</a>
+      <a class="nav" href="compatibility.html">Compatibility</a>
+      <a class="nav" href="compare.html">Compare</a>
+      <span class="nav" aria-current="page">Honourable mentions</span>
+      <a href="https://github.com/terraceonhigh/Comprador">Source</a>
+      <a href="https://github.com/terraceonhigh/Comprador/blob/master/LICENSE">License (GPLv3+)</a>
+      <button id="funToggle" type="button" class="funlinks" aria-pressed="false">Fun mode</button>
+    </p>
+    <p class="privacy">No trackers, no third-party requests.</p>
+  </footer>
+
+</main>
+</body>
+</html>

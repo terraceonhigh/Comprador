@@ -107,7 +107,7 @@ main {
 footer { text-align: center; padding: 40px 0 80px; color: var(--faint);
          font-size: 0.9rem; max-width: 40em; margin: 0 auto; }
 footer .platform { color: var(--muted); margin-bottom: 1.8em; }
-footer .also a { color: var(--link); }
+footer .privacy { font-size: 0.78rem; color: var(--faint); letter-spacing: 0.02em; }
 footer .links { margin: 0 0 1.6em; }
 footer .links a { margin: 0 10px; color: var(--muted); }
 footer .links a.nav { color: var(--link); }
