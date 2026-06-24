@@ -104,7 +104,7 @@ are embedded unmodified:
   Copyright 2017 The Syne Project Authors
   (https://gitlab.com/bonjour-monde/fonderie/syne-typeface)
 
-- **Source:** Google Fonts (https://fonts.google.com/)
+- **Source:** OpenFont (https://openfont.org/)
 - **License text:** https://openfontlicense.org/
 
 Each family carries a Reserved Font Name under the OFL; Comprador embeds the
