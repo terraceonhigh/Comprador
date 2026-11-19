@@ -33,7 +33,9 @@ is covered by libmtp's LGPL-2.1-or-later license.
 
 ## Logo
 
-The Comprador app icon is by Sofia Montjoy, commissioned in 2026 for
+The Comprador app icon is by Sofia Montjoy
+([@sojoy.scribbles](https://www.instagram.com/sojoy.scribbles/) for art,
+[@sofi_amontjoy08](https://www.instagram.com/sofi_amontjoy08/)), commissioned in 2026 for
 Comprador: a round medallion of a butterfly on a vine, on an ochre disc
 with a green rim. The artwork was cropped to the medallion's bounds,
 centred on a transparent 1024x1024 canvas with a margin for the macOS
