@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## v0.5.0 — 2026-11-19
+
+**New look:**
+
+- A new app icon, commissioned from the artist **Sofia Montjoy**
+  ([@sojoy.scribbles](https://www.instagram.com/sojoy.scribbles/)): a butterfly
+  on a vine in an ochre medallion. It replaces the placeholder Merian engraving
+  in the app, the Dock and the website.
+
+**New:**
+
+- **Look for a device** menu: lists every attached USB device and
+  force-connects the one you pick, for phones and cameras that auto-detect
+  skips.
+
 **Correctness fixes:**
 
 - Comprador now cleans up after an **external unmount**. If a script, Disk
