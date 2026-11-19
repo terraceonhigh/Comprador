@@ -46,6 +46,11 @@ open Western lane first; revisit a bilingual README after the English launch pro
 - [x] Mux down `icon.png` for the web (384px / 254 KB via ffmpeg; repo-root
       `images/icon.png` left full-res for the `.icns` build).
 
+- [x] App icon commission (Sofia Montjoy): delivered 17 Jul 2026, integrated on branch
+      `night/2026-11-19/comprador-icon` (1024 master, 100 px margin; replaces the Merian placeholder).
+      Still open: squircle tile/shadow step in `make icon` (see docs/ICON-COMMISSION.md Part 3)
+      and a monochrome menu-bar glyph (not part of the delivery).
+
 ### PIVOT (2026-06-07): v0.3.4 prefetch is PARKED — we're moving to Galatea.
 
 The Architect chose to **pivot to Galatea now** (Phase 4 of the original
