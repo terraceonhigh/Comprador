@@ -14,7 +14,7 @@ Last updated 2026-06-22.
 
 ### Who and where
 - Artist: **Sofia Montjoy**, reached on Instagram.
-- Status: deal struck, deposit paid, Phase 1 (sketches) in her court.
+- Status: delivered 17 Jul 2026 (full-colour medallion, round, with a Procreate source); integrated on branch `night/2026-11-19/comprador-icon`.
 
 ### The concept communicated
 Verbatim themes from the thread, in the order they were given:
@@ -246,7 +246,7 @@ route is what the Makefile already does. Notarization does not inspect icons at
 all; it checks signing and hardened runtime only.
 
 ### Current wiring, for reference
-- Source: `images/icon.png`, 1660x1660 (the Merian pomegranate placeholder).
+- Source: `images/icon.png`, 1024x1024 (Sofia's medallion on transparent, 100 px margin; replaced the Merian placeholder).
 - Build: `make icon` runs `sips` then `iconutil` to produce
   `MenuBarApp/Resources/Comprador.icns` (gitignored), referenced via
   `CFBundleIconFile`. No asset catalog.

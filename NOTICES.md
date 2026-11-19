@@ -33,35 +33,20 @@ is covered by libmtp's LGPL-2.1-or-later license.
 
 ## Logo
 
-The Comprador app icon is derived from a plate in Maria Sibylla
-Merian's *Metamorphosis Insectorum Surinamensium* (1705), depicting
-the pomegranate (*Punica granatum*) with associated Surinamese
-butterflies and caterpillars. The plate is engraved "P. Sluyter
-Sculp." (Pieter Sluyter).
+The Comprador app icon is by Sofia Montjoy, commissioned in 2026 for
+Comprador: a round medallion of a butterfly on a vine, on an ochre disc
+with a green rim. The artwork was cropped to the medallion's bounds,
+centred on a transparent 1024x1024 canvas with a margin for the macOS
+icon grid, and committed as `images/icon.png`. The macOS `.icns` and
+standard app-icon size variants are generated at build time by
+`make icon` and are not committed (gitignored under
+`MenuBarApp/Resources/Comprador.icns`). The website copy is a 384 px
+downscale at `docs/site/images/icon.png`.
 
-- **Original work:** Maria Sibylla Merian, *Metamorphosis
-  Insectorum Surinamensium*, 1705
-- **Source institution:** Biodiversity Heritage Library / Smithsonian
-  Libraries and Archives
-- **Source URL:**
-  https://pdimagearchive.org/images/0b96d3ac-8cf3-4ffd-865f-f906a2fd7962/
-- **License of original:** Public Domain Worldwide (no additional
-  rights). The work is well out of copyright by age (Merian d. 1717,
-  Sluyter d. ~1730).
-
-**Modifications for Comprador:** the full plate was cropped to a
-square framing the brown eyespot-butterfly perched on the small red
-pomegranate flower (upper-center-left of the original). The
-intruding tip of the Blue Morpho wing in the upper-right corner of
-the crop region was retouched out so the eyespot-butterfly stands
-alone. The cropped square is committed as a single PNG at
-`images/icon.png` (1660×1660). The macOS `.icns` and standard
-app-icon size variants are generated at build time by `make icon`
-and are not committed (gitignored under
-`MenuBarApp/Resources/Comprador.icns`).
-
-These modifications introduce no new copyright restrictions; the
-derivative remains in the public domain.
+The earlier placeholder icon (a crop of a plate from Maria Sibylla
+Merian's *Metamorphosis Insectorum Surinamensium*, 1705, engraved by
+Pieter Sluyter; public domain, via Biodiversity Heritage Library /
+Smithsonian Libraries) is no longer used in the app or on the site.
 
 ---
 
