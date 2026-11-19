@@ -19,7 +19,7 @@ BUILD_ID := $(shell git rev-parse --short HEAD 2>/dev/null)$(shell git diff --qu
 # Bumped manually at release-cut time, alongside CHANGELOG.md and the tag.
 # Worktree-aware: dev builds report "<version>-dev" so they're never confused
 # with a tagged release.
-RELEASE_VERSION := 0.4.0
+RELEASE_VERSION := 0.5.0
 
 .PHONY: bridge build-all bridge-test test-md5 icon app app-debug app-signed app-notarized app-swiftc dev dev-nfs galatea-dev galatea-mount galatea-umount run run-swiftc dist dist-swiftc dist-dmg clean reset-onboarding
 
